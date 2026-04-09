@@ -1,27 +1,85 @@
 # SmartClaw
 
-A high-performance Go rewrite of Claude Code CLI for AI-assisted development.
+A self-improving AI agent that learns your workflow over time.
 
-**Smart** coding with AI-powered assistance.
+SmartClaw is not just another AI coding tool — it's an agent that gets smarter with every task. Inspired by the Hermes architecture, it features a learning loop that evaluates completed tasks, extracts reusable methods, and automatically creates skills. The more you use it, the better it understands how you work.
+
+## Core Philosophy
+
+**"越来越懂你的工作方式"** — Not "better at everything", but "better at *your* everything".
+
+Unlike generic AI assistants that forget everything between sessions, SmartClaw:
+- **Learns from completed tasks** — evaluates whether an approach is worth reusing, and if so, extracts it as a skill
+- **Remembers across sessions** — 4-layer memory system with SQLite + FTS5 full-text search
+- **Self-improves over time** — periodic nudges trigger the agent to consolidate memory and refine skills
+- **Understands your preferences** — passively tracks communication style, knowledge background, and common workflows
 
 ## Features
 
-- **🚀 Fast & Lightweight**: ~97,000 lines of Go code vs 512,000 lines of TypeScript
-- **🖥️ Modern TUI**: Terminal User Interface with bubbletea (NEW!)
+### Agent Capabilities
+- **🧠 Learning Loop**: Post-task evaluation → method extraction → skill creation → MEMORY.md auto-update
+- **💾 4-Layer Memory**: Prompt Memory (MEMORY.md/USER.md), Session Search (FTS5), Skill Procedural (lazy load), User Modeling
+- **🔔 Periodic Nudge**: System-triggered self-review every 10 turns (configurable)
+- **🔄 Smart Compaction**: Head protection + tool result pruning + source-traceable summaries
+
+### Development Tools
 - **🛠️ 57+ Built-in Tools**: File operations, code analysis, web tools, and more
+- **🖥️ Modern TUI**: Terminal User Interface with bubbletea
 - **💬 Interactive REPL**: Full conversation history with streaming responses
 - **🔌 Extensible**: MCP protocol, plugins, hooks, and skills support
 - **🔐 Secure**: Permission system with 4 modes
-- **💾 Persistent Sessions**: Save and resume conversations
 - **📊 Token Tracking**: Real-time cost estimation
-- **🎤 Voice Mode**: Speech-to-text support
+
+### Gateway & Cross-Platform
+- **🌐 Unified Gateway**: Message → Route → Memory → Execute → Learn → Deliver
+- **📱 Platform Adapters**: Terminal, Web UI, extensible to Telegram/Discord
+- **⏰ Cron Tasks**: Scheduled tasks as first-class agent tasks with full memory access
+- **🔗 Session Routing**: userID-based routing, not platform-based — switch devices without losing context
+
+## Architecture
+
+```
+Input → Reasoning → Tool Use → Memory → Output → Learning
+                                                   ↓
+                                          Evaluate: worth keeping?
+                                                   ↓ Yes
+                                          Extract: reusable method
+                                                   ↓
+                                          Write: skill to disk
+                                                   ↓
+                                     Next time: use saved skill
+```
+
+### 4-Layer Memory System
+
+| Layer | Name | Storage | Behavior |
+|-------|------|---------|----------|
+| L1 | Prompt Memory | `MEMORY.md` + `USER.md` | Auto-loaded every session, 3,575 char hard limit |
+| L2 | Session Search | SQLite + FTS5 | Agent searches relevant history, LLM-summarized before injection |
+| L3 | Skill Procedural | `~/.smartclaw/skills/` | Only loads skill name+description, full content on demand |
+| L4 | User Modeling | `user_observations` table | Passively tracks preferences, auto-updates USER.md |
+
+### Learning Loop
+
+```
+Task Complete
+    ↓
+Evaluator: "Was this approach worth reusing?" (LLM judgment)
+    ↓ Yes
+Extractor: "What's the reusable method?" (LLM extraction)
+    ↓
+SkillWriter: Write SKILL.md to ~/.smartclaw/skills/
+    ↓
+Update MEMORY.md with learned pattern
+    ↓
+Next similar task → discovered and used automatically
+```
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-cd go
 go build -o bin/smartclaw ./cmd/claw/
 ```
 
@@ -29,16 +87,16 @@ go build -o bin/smartclaw ./cmd/claw/
 
 ```bash
 # Start TUI mode (recommended)
-./bin/smartclawclaw tui
+./bin/smartclaw tui
 
 # Start simple REPL
-./bin/smartclawclaw repl
+./bin/smartclaw repl
 
 # Send a single prompt
-./bin/smartclawclaw prompt "Explain this code"
+./bin/smartclaw prompt "Explain this code"
 
 # Use a specific model
-./bin/smartclawclaw --model claude-sonnet-4-5 repl
+./bin/smartclaw --model claude-sonnet-4-5 repl
 ```
 
 ### Configuration
@@ -59,6 +117,18 @@ permission: ask
 log_level: info
 ```
 
+### Memory Configuration
+
+SmartClaw automatically creates and manages these files:
+
+- `~/.smartclaw/MEMORY.md` — System memory (auto-updated by learning loop)
+- `~/.smartclaw/USER.md` — User profile (auto-evolved from observations)
+- `~/.smartclaw/state.db` — SQLite database with FTS5 index
+- `~/.smartclaw/skills/` — Learned and bundled skills
+- `~/.smartclaw/cron/` — Scheduled task definitions
+
+You can edit `MEMORY.md` and `USER.md` directly — SmartClaw will reload them.
+
 ## Available Tools
 
 ### File Operations
@@ -78,26 +148,16 @@ log_level: info
 - `web_fetch` - Fetch URLs
 - `web_search` - Web search
 
-### Media Tools
-- `image` - Image processing
-- `pdf` - PDF extraction
-- `audio` - Audio processing
-
-### Batch Operations
-- `batch` - Execute multiple operations
-- `parallel` - Parallel execution
-- `pipeline` - Sequential pipeline
-
-### System Tools
+### Agent & Learning
+- `agent` - Spawn sub-agents for parallel tasks
+- `skill` - Load and manage skills
 - `session` - Session management
-- `agent` - Spawn sub-agents
-- `config` - Configuration management
 - `todowrite` - Todo list management
-- `skill` - Load skills
+- `config` - Configuration management
 
 ## Slash Commands
 
-### Core Commands
+### Core
 - `/help` - Show available commands
 - `/status` - Session status
 - `/exit` - Exit REPL
@@ -109,23 +169,11 @@ log_level: info
 - `/config` - Show configuration
 - `/set-api-key <key>` - Set API key
 
-### Session Management
+### Session
 - `/session` - List sessions
 - `/resume <id>` - Resume session
 - `/save` - Save current session
 - `/export` - Export session
-
-### Git Commands
-- `/git-status` - Git status
-- `/git-diff` - Show diff
-- `/git-commit <msg>` - Commit changes
-- `/git-branch` - List branches
-
-### MCP & Tools
-- `/mcp` - List MCP servers
-- `/mcp-add <name> <cmd>` - Add MCP server
-- `/mcp-remove <name>` - Remove MCP server
-- `/tools` - List available tools
 
 ### Diagnostics
 - `/doctor` - Run diagnostics
@@ -135,34 +183,25 @@ log_level: info
 ## Project Structure
 
 ```
-go/
-├── cmd/claw/           # CLI entry point
-├── internal/
-│   ├── api/            # Anthropic API client
-│   ├── auth/           # OAuth authentication
-│   ├── cache/          # Caching system
-│   ├── cli/            # CLI commands
-│   ├── commands/       # Slash commands
-│   ├── config/         # Configuration management
-│   ├── git/            # Git integration
-│   ├── history/        # Command history
-│   ├── hooks/          # Hook system
-│   ├── logger/         # Logging
-│   ├── mcp/            # MCP protocol
-│   ├── memory/         # Memory persistence
-│   ├── models/         # Model management
-│   ├── permissions/    # Permission engine
-│   ├── plugins/        # Plugin system
-│   ├── runtime/        # Runtime & sessions
-│   ├── sandbox/        # Sandbox isolation
-│   ├── skills/         # Skills system
-│   ├── template/       # Template system
-│   ├── tools/          # Tool implementations
-│   ├── voice/          # Voice mode
-│   └── watcher/        # File watching
-└── pkg/
-    ├── output/         # Terminal rendering
-    └── progress/       # Progress indicators
+internal/
+├── api/            # API client with prompt caching
+├── auth/           # OAuth authentication
+├── cache/          # Caching system
+├── cli/            # CLI commands
+├── commands/       # Slash commands
+├── config/         # Configuration management
+├── gateway/        # Unified gateway (router, delivery, cron)
+│   └── platform/   # Platform adapters (terminal, web)
+├── learning/       # Learning loop (evaluator, extractor, skill writer, nudge)
+├── memory/         # Memory manager (4-layer coordination)
+│   └── layers/     # L1 Prompt, L2 Session Search, L3 Skill, L4 User Model
+├── runtime/        # Query engine, compaction, session
+├── skills/         # Skills system (bundled + learned)
+├── store/          # SQLite persistence (WAL, FTS5, JSONL backup)
+├── tools/          # Tool implementations (57+)
+├── mcp/            # MCP protocol
+├── tui/            # Terminal UI
+└── web/            # Web UI + WebSocket server
 ```
 
 ## API Usage
@@ -175,109 +214,39 @@ import (
     "fmt"
     
     "github.com/instructkr/smartclaw/internal/api"
-    "github.com/instructkr/smartclaw/internal/tools"
+    "github.com/instructkr/smartclaw/internal/gateway"
+    "github.com/instructkr/smartclaw/internal/learning"
+    "github.com/instructkr/smartclaw/internal/memory"
+    "github.com/instructkr/smartclaw/internal/runtime"
 )
 
 func main() {
     client := api.NewClient("your-api-key")
-    
-    messages := []api.Message{
-        {Role: "user", Content: "Hello!"},
+    memManager, _ := memory.NewMemoryManager()
+    learningLoop := learning.NewLearningLoop(nil, memManager.GetPromptMemory(), "")
+
+    engineFactory := func() *runtime.QueryEngine {
+        return runtime.NewQueryEngine(client, runtime.QueryConfig{})
     }
-    
-    response, err := client.CreateMessage(messages, "")
+
+    gw := gateway.NewGateway(engineFactory, memManager, learningLoop)
+    defer gw.Close()
+
+    resp, err := gw.HandleMessage(context.Background(), "user-1", "terminal", "Hello!")
     if err != nil {
         panic(err)
     }
-    
-    fmt.Printf("Response: %v\n", response.Content)
-}
-```
-
-## Tool Development
-
-```go
-package main
-
-import (
-    "context"
-    "github.com/instructkr/smartclaw/internal/tools"
-)
-
-type MyTool struct{}
-
-func (t *MyTool) Name() string { return "my_tool" }
-func (t *MyTool) Description() string { return "My custom tool" }
-
-func (t *MyTool) InputSchema() map[string]interface{} {
-    return map[string]interface{}{
-        "type": "object",
-        "properties": map[string]interface{}{
-            "input": map[string]interface{}{"type": "string"},
-        },
-        "required": []string{"input"},
-    }
-}
-
-func (t *MyTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-    return map[string]interface{}{"result": "ok"}, nil
-}
-
-func init() {
-    tools.Register(&MyTool{})
-}
-```
-
-## MCP Integration
-
-```go
-package main
-
-import (
-    "context"
-    "github.com/instructkr/smartclaw/internal/mcp"
-)
-
-func main() {
-    client := mcp.NewClient()
-    
-    config := &mcp.McpServerConfig{
-        Name:    "my-server",
-        Command: "/path/to/server",
-        Args:    []string{"--port", "8080"},
-    }
-    
-    if err := client.Connect(context.Background(), config); err != nil {
-        panic(err)
-    }
-    defer client.Disconnect()
-    
-    tools, err := client.ListTools(context.Background())
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("Available tools: %v\n", tools)
+    fmt.Println(resp.Content)
 }
 ```
 
 ## Environment Variables
 
 - `ANTHROPIC_API_KEY` - API key for Anthropic
-- `CLAW_MODEL` - Default model to use
-- `CLAW_CONFIG` - Path to config file
-- `CLAW_SESSION_DIR` - Directory for session storage
-- `CLAW_LOG_LEVEL` - Log level (debug, info, warn, error)
-
-## Performance
-
-| Metric | TypeScript | Go | Improvement |
-|--------|------------|-----|-------------|
-| Lines of Code | 512,664 | ~7,500 | 98.5% reduction |
-| Files | 1,884 | ~52 | 97% reduction |
-| Binary Size | N/A | ~15MB | - |
-| Memory Usage | ~200MB | ~20MB | 90% reduction |
-| Startup Time | ~1s | ~10ms | 100x faster |
+- `SMARTCLAW_MODEL` - Default model to use
+- `SMARTCLAW_CONFIG` - Path to config file
+- `SMARTCLAW_SESSION_DIR` - Directory for session storage
+- `SMARTCLAW_LOG_LEVEL` - Log level (debug, info, warn, error)
 
 ## Testing
 
@@ -285,60 +254,30 @@ func main() {
 # Run all tests
 go test ./...
 
-# Run specific package tests
-go test ./internal/tools/...
+# Run specific package
+go test ./internal/learning/...
+go test ./internal/store/...
+go test ./internal/memory/layers/...
 
 # Run with coverage
 go test -cover ./...
 ```
 
-## Contributing
+## Roadmap
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests
-5. Submit a pull request
+- [x] Learning loop (evaluate → extract → write skill)
+- [x] 4-layer memory system
+- [x] SQLite + FTS5 persistent storage
+- [x] Smart compaction with source tracing
+- [x] Periodic nudge engine
+- [x] Unified gateway with session routing
+- [x] Cron tasks as first-class agent tasks
+- [x] Prompt caching optimization
+- [ ] LLM-based memory compression (EnforceLimit)
+- [ ] Cross-platform continuity (Telegram, Discord)
+- [ ] Long-term planning capabilities
+- [ ] Skill Hub (community skill sharing)
 
 ## License
 
 MIT License
-
-## Credits
-
-- Original Claude Code by Anthropic
-- Go rewrite by Claw Code contributors
-
-## Comparison with Original
-
-### What's Implemented
-- ✅ All core tools (25+)
-- ✅ Slash commands (25+)
-- ✅ MCP protocol
-- ✅ Permission system
-- ✅ Session persistence
-- ✅ OAuth authentication
-- ✅ Plugin system
-- ✅ Hooks system
-- ✅ Skills system
-- ✅ Voice mode
-- ✅ File watching
-- ✅ Caching
-- ✅ Memory system
-- ✅ Command history
-
-### What's Different
-- 🔄 Web search requires external API (stub implementation)
-- 🔄 LSP requires running LSP server
-- 🔄 PDF extraction requires external library
-- 🔄 Voice transcription requires external API
-
-## Roadmap
-
-- [ ] Enhanced web search with real API integration
-- [ ] Built-in LSP server support
-- [ ] Native PDF processing
-- [ ] Voice transcription with Whisper API
-- [ ] More example scripts
-- [ ] Performance benchmarks
-- [ ] Additional tests
