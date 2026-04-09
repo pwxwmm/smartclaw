@@ -10,18 +10,24 @@ import (
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/hooks"
 	"github.com/instructkr/smartclaw/internal/learning"
+	"github.com/instructkr/smartclaw/internal/memory"
+	"github.com/instructkr/smartclaw/internal/memory/layers"
+	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
 )
 
 type QueryEngine struct {
-	client       *api.Client
-	state        *QueryState
-	config       QueryConfig
-	mu           sync.RWMutex
-	tools        *tools.ToolRegistry
-	hookExecutor *tools.HookAwareExecutor
-	hookManager  *hooks.HookManager
-	learningLoop *learning.LearningLoop
+	client        *api.Client
+	state         *QueryState
+	config        QueryConfig
+	mu            sync.RWMutex
+	tools         *tools.ToolRegistry
+	hookExecutor  *tools.HookAwareExecutor
+	hookManager   *hooks.HookManager
+	learningLoop  *learning.LearningLoop
+	memoryManager *memory.MemoryManager
+	dataStore     *store.Store
+	sessionID     string
 }
 
 func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
@@ -63,8 +69,30 @@ func (e *QueryEngine) SetLearningLoop(loop *learning.LearningLoop) {
 	e.learningLoop = loop
 }
 
+func (e *QueryEngine) SetMemoryManager(mm *memory.MemoryManager) {
+	e.memoryManager = mm
+	if mm != nil {
+		e.dataStore = mm.GetStore()
+	}
+}
+
+func (e *QueryEngine) SetStore(s *store.Store) {
+	e.dataStore = s
+}
+
+func (e *QueryEngine) SetSessionID(id string) {
+	e.sessionID = id
+}
+
 func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, error) {
 	e.state.IncrementTurn()
+
+	if e.memoryManager != nil && e.config.SystemPrompt == "" {
+		memCtx := e.memoryManager.BuildSystemContext(ctx, input)
+		if memCtx != "" {
+			e.config.SystemPrompt = memCtx
+		}
+	}
 
 	userMsg := Message{
 		Role:      "user",
@@ -73,11 +101,13 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 	}
 	e.state.AddMessage(userMsg)
 
+	e.persistMessage("user", input)
+
 	messages := e.prepareMessages()
 
 	startTime := time.Now()
 
-	resp, err := e.client.CreateMessage(messages, "")
+	resp, err := e.client.CreateMessage(messages, e.config.SystemPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("API request failed: %w", err)
 	}
@@ -99,6 +129,8 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 	}
 	e.state.AddMessage(assistantMsg)
 
+	e.persistMessage("assistant", content)
+
 	apiUsage := resp.Usage
 	e.state.UpdateUsage(apiUsage)
 
@@ -111,6 +143,7 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 	}
 
 	e.triggerLearningIfNeeded(ctx, result)
+	e.trackUserObservations(input)
 
 	return result, nil
 }
@@ -312,4 +345,38 @@ func convertToLearningMessages(messages []Message) []learning.Message {
 		})
 	}
 	return result
+}
+
+func (e *QueryEngine) persistMessage(role, content string) {
+	if e.dataStore == nil || e.sessionID == "" {
+		return
+	}
+
+	msg := &store.Message{
+		SessionID: e.sessionID,
+		Role:      role,
+		Content:   content,
+		Timestamp: time.Now(),
+	}
+	if _, err := e.dataStore.InsertMessage(msg); err != nil {
+		slog.Warn("engine: failed to persist message", "error", err)
+	}
+}
+
+func (e *QueryEngine) trackUserObservations(input string) {
+	if e.memoryManager == nil {
+		return
+	}
+
+	userModel := e.memoryManager.GetUserModel()
+	if userModel == nil {
+		return
+	}
+
+	observations := layers.ExtractObservations("user", input)
+	if len(observations) > 0 {
+		if err := userModel.TrackPassive(context.Background(), observations); err != nil {
+			slog.Warn("engine: failed to track user observations", "error", err)
+		}
+	}
 }

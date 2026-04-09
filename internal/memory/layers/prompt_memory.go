@@ -177,19 +177,67 @@ func (pm *PromptMemory) UpdateUserProfile(profile string) error {
 	return nil
 }
 
-// EnforceLimit checks if combined content exceeds the character limit.
-// In this phase, it only logs a warning. Full LLM-based compression comes in Phase 3.
+type CompressFunc func(content string, maxChars int) (string, error)
+
 func (pm *PromptMemory) EnforceLimit() error {
 	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
 	combined := pm.memoryMD.Content() + "\n" + pm.userMD.Content()
-	if len(combined) > MaxPromptMemoryChars {
-		// Phase 3 will add LLM-based compression here.
-		// For now, truncate silently on next AutoLoad.
-		_ = combined
+	overLimit := len(combined) > MaxPromptMemoryChars
+	pm.mu.RUnlock()
+
+	if !overLimit {
+		return nil
+	}
+
+	return pm.compressMemory()
+}
+
+func (pm *PromptMemory) EnforceLimitWithCompressor(compress CompressFunc) error {
+	pm.mu.RLock()
+	combined := pm.memoryMD.Content() + "\n" + pm.userMD.Content()
+	overLimit := len(combined) > MaxPromptMemoryChars
+	pm.mu.RUnlock()
+
+	if !overLimit {
+		return nil
+	}
+
+	return pm.compressMemoryWithCompressor(compress)
+}
+
+func (pm *PromptMemory) compressMemory() error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	memContent := pm.memoryMD.Content()
+	targetChars := MaxPromptMemoryChars * 2 / 3
+	if len(memContent) > targetChars {
+		memContent = memContent[:targetChars]
+		if err := pm.memoryMD.Write(memContent); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (pm *PromptMemory) compressMemoryWithCompressor(compress CompressFunc) error {
+	pm.mu.RLock()
+	memContent := pm.memoryMD.Content()
+	pm.mu.RUnlock()
+
+	targetChars := MaxPromptMemoryChars * 2 / 3
+	if len(memContent) <= targetChars {
+		return nil
+	}
+
+	compressed, err := compress(memContent, targetChars)
+	if err != nil {
+		return pm.compressMemory()
+	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	return pm.memoryMD.Write(compressed)
 }
 
 // Reload re-reads both files from disk (useful after external edits or watcher events).

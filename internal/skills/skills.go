@@ -463,3 +463,55 @@ func (sm *SkillManager) GetContextAwareSkills(ctx context.Context, sessionID str
 
 	return sm.memoryIntegration.GetRelevantSkills(ctx, sessionID, skills)
 }
+
+func (sm *SkillManager) GetSkillSummaries() []SkillSummary {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	summaries := make([]SkillSummary, 0, len(sm.skills))
+	for _, s := range sm.skills {
+		if !s.Enabled {
+			continue
+		}
+		summaries = append(summaries, SkillSummary{
+			Name:        s.Name,
+			Description: s.Description,
+			Source:      s.Source,
+			Triggers:    s.Commands,
+			Tags:        s.Tags,
+		})
+	}
+	return summaries
+}
+
+func (sm *SkillManager) LoadSkillOnDemand(name string) (string, error) {
+	sm.mu.RLock()
+	skill, ok := sm.skills[name]
+	sm.mu.RUnlock()
+
+	if !ok {
+		return "", fmt.Errorf("skill not found: %s", name)
+	}
+
+	if skill.Content != "" {
+		return skill.Content, nil
+	}
+
+	if skill.Path != "" {
+		data, err := ioutil.ReadFile(skill.Path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read skill file: %w", err)
+		}
+		return string(data), nil
+	}
+
+	return "", fmt.Errorf("skill has no content or path: %s", name)
+}
+
+type SkillSummary struct {
+	Name        string
+	Description string
+	Source      string
+	Triggers    []string
+	Tags        []string
+}
