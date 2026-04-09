@@ -1,0 +1,443 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/auth"
+	"github.com/instructkr/smartclaw/internal/commands"
+	"github.com/instructkr/smartclaw/internal/runtime"
+	"github.com/instructkr/smartclaw/internal/tools"
+	"github.com/instructkr/smartclaw/internal/tui"
+)
+
+var replCmd = &cobra.Command{
+	Use:   "repl",
+	Short: "Start interactive REPL mode",
+	Long:  `Start an interactive REPL session with Claude AI.`,
+	Run:   runREPL,
+}
+
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Start TUI mode (Terminal User Interface)",
+	Long:  `Start SmartClaw with a modern terminal user interface.`,
+	Run:   runTUI,
+}
+
+func init() {
+	rootCmd.AddCommand(replCmd)
+	rootCmd.AddCommand(tuiCmd)
+	replCmd.Flags().Bool("simple", false, "Use simple CLI instead of TUI")
+}
+
+type REPLSession struct {
+	model        string
+	maxTokens    int
+	showThinking bool
+	session      *runtime.Session
+	sessionMgr   *runtime.SessionManager
+	apiClient    *api.Client
+	toolReg      *tools.ToolRegistry
+	cmdReg       *commands.CommandRegistry
+	ctxMgr       *runtime.ContextManager
+	totalTokens  int
+	totalCost    float64
+}
+
+func runREPL(cmd *cobra.Command, args []string) {
+	model := viper.GetString("model")
+	maxTokens := viper.GetInt("max_tokens")
+	if maxTokens == 0 {
+		maxTokens = 4096
+	}
+	showThinking := viper.GetBool("show_thinking")
+	skipPerms := viper.GetBool("dangerously_skip_permissions")
+	isOpenAI := viper.GetBool("openai")
+	apiKeyFlag := viper.GetString("api_key")
+	baseURLFlag := viper.GetString("url")
+
+	if baseURLFlag == "" {
+		baseURLFlag = viper.GetString("base_url")
+	}
+
+	session := &REPLSession{
+		model:        model,
+		maxTokens:    maxTokens,
+		showThinking: showThinking,
+		ctxMgr:       runtime.NewContextManager(100000),
+	}
+
+	sessionMgr, err := runtime.NewSessionManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create session manager: %v\n", err)
+		os.Exit(1)
+	}
+	session.sessionMgr = sessionMgr
+	session.session = sessionMgr.NewSession()
+
+	apiKey := apiKeyFlag
+	if apiKey == "" {
+		apiKey = auth.GetAPIKey()
+	}
+
+	baseURL := baseURLFlag
+	if baseURL == "" {
+		baseURL = auth.GetBaseURL()
+	}
+
+	if apiKey == "" {
+		fmt.Println("Warning: No API key set. Set ANTHROPIC_API_KEY or use /set-api-key")
+	} else {
+		session.apiClient = api.NewClientWithModel(apiKey, baseURL, model)
+		session.apiClient.SetOpenAI(isOpenAI)
+	}
+
+	session.toolReg = tools.GetRegistry()
+
+	fmt.Println("💡 SmartClaw REPL")
+	fmt.Printf("Model: %s\n", model)
+	if skipPerms {
+		fmt.Println("Permissions: DISABLED")
+	}
+	fmt.Println("Type /help for commands, /exit to quit")
+	fmt.Println()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("smart> ")
+
+		if !scanner.Scan() {
+			break
+		}
+
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		if strings.HasPrefix(input, "/") {
+			if session.handleSlashCommand(input) {
+				break
+			}
+			continue
+		}
+
+		session.handlePrompt(input)
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error reading input:", err)
+	}
+}
+
+func (s *REPLSession) handleSlashCommand(input string) bool {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return false
+	}
+
+	cmd := strings.TrimPrefix(parts[0], "/")
+	args := parts[1:]
+
+	switch cmd {
+	case "exit", "quit":
+		fmt.Println("Goodbye!")
+		return true
+	case "help":
+		s.printHelp()
+	case "status":
+		s.printStatus()
+	case "model":
+		if len(args) > 0 {
+			s.model = args[0]
+			fmt.Printf("Model set to: %s\n", s.model)
+		} else {
+			fmt.Printf("Current model: %s\n", s.model)
+		}
+	case "clear":
+		s.session.Clear()
+		s.ctxMgr.Clear()
+		fmt.Println("Session cleared")
+	case "cost":
+		s.printCost()
+	case "compact":
+		s.compact()
+	case "session":
+		s.listSessions()
+	case "resume":
+		if len(args) > 0 {
+			s.resumeSession(args[0])
+		} else {
+			fmt.Println("Usage: /resume <session-id>")
+		}
+	case "save":
+		if err := s.sessionMgr.Save(s.session); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to save session: %v\n", err)
+		} else {
+			fmt.Printf("Session saved: %s\n", s.session.ID)
+		}
+	case "tools":
+		s.listTools()
+	case "doctor":
+		s.runDoctor()
+	default:
+		fmt.Printf("Unknown command: /%s\n", cmd)
+		fmt.Println("Type /help for available commands")
+	}
+
+	return false
+}
+
+func (s *REPLSession) handlePrompt(input string) {
+	if s.apiClient == nil {
+		fmt.Println("Error: No API key configured. Use /set-api-key or set ANTHROPIC_API_KEY")
+		return
+	}
+
+	userMsg := runtime.Message{
+		Role:    "user",
+		Content: input,
+	}
+	s.session.AddMessage(userMsg)
+	s.ctxMgr.AddMessage(userMsg)
+
+	fmt.Println("\nThinking...")
+
+	messages := s.buildAPIMessages()
+
+	req := &api.MessageRequest{
+		Model:     s.model,
+		MaxTokens: s.maxTokens,
+		Messages:  messages,
+		Tools:     s.buildToolSchemas(),
+	}
+
+	var response strings.Builder
+	parser := api.NewStreamMessageParser()
+
+	var err error
+	if s.apiClient.IsOpenAI {
+		err = s.apiClient.StreamMessageOpenAI(context.Background(), req, func(event string, data []byte) error {
+			result, err := parser.HandleEvent(event, data)
+			if err != nil {
+				return err
+			}
+
+			if result.TextDelta != "" {
+				fmt.Print(result.TextDelta)
+				response.WriteString(result.TextDelta)
+			}
+
+			if s.showThinking && result.ThinkingDelta != "" {
+				fmt.Print(result.ThinkingDelta)
+			}
+
+			return nil
+		})
+	} else {
+		err = s.apiClient.StreamMessageSSE(context.Background(), req, func(event string, data []byte) error {
+			result, err := parser.HandleEvent(event, data)
+			if err != nil {
+				return err
+			}
+
+			if result.TextDelta != "" {
+				fmt.Print(result.TextDelta)
+				response.WriteString(result.TextDelta)
+			}
+
+			if s.showThinking && result.ThinkingDelta != "" {
+				fmt.Print(result.ThinkingDelta)
+			}
+
+			return nil
+		})
+	}
+
+	fmt.Println()
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+		return
+	}
+
+	fmt.Println()
+
+	assistantMsg := runtime.Message{
+		Role:    "assistant",
+		Content: response.String(),
+	}
+	s.session.AddMessage(assistantMsg)
+	s.ctxMgr.AddMessage(assistantMsg)
+
+	msg := parser.GetMessage()
+	s.totalTokens += msg.Usage.InputTokens + msg.Usage.OutputTokens
+	s.updateCost(msg.Usage.InputTokens, msg.Usage.OutputTokens)
+}
+
+func (s *REPLSession) handleToolCall(block api.ContentBlock) {
+	fmt.Printf("\n[Tool: %s]\n", block.Name)
+
+	result, err := s.toolReg.Execute(context.Background(), block.Name, block.Input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Tool error: %v\n", err)
+		return
+	}
+
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Printf("Result: %s\n", string(resultJSON))
+}
+
+func (s *REPLSession) buildAPIMessages() []api.Message {
+	messages := make([]api.Message, 0)
+	for _, msg := range s.session.Messages {
+		var content string
+		if str, ok := msg.Content.(string); ok {
+			content = str
+		}
+		messages = append(messages, api.Message{
+			Role:    msg.Role,
+			Content: content,
+		})
+	}
+	return messages
+}
+
+func (s *REPLSession) buildToolSchemas() []api.ToolDefinition {
+	toolList := s.toolReg.All()
+	schemas := make([]api.ToolDefinition, 0, len(toolList))
+	for _, t := range toolList {
+		schemas = append(schemas, api.ToolDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			InputSchema: t.InputSchema(),
+		})
+	}
+	return schemas
+}
+
+func (s *REPLSession) printHelp() {
+	fmt.Print(`
+Available commands:
+  /help              Show this help
+  /exit              Exit REPL
+  /status            Show session status
+  /model [name]      Show or set model
+  /clear             Clear session
+  /cost              Show token usage and cost
+  /compact           Compact session history
+  /save              Save current session
+  /session           List sessions
+  /resume <id>       Resume a session
+  /tools             List available tools
+  /doctor            Run diagnostics
+`)
+}
+
+func (s *REPLSession) printStatus() {
+	fmt.Printf("Model: %s\n", s.model)
+	fmt.Printf("Session ID: %s\n", s.session.ID)
+	fmt.Printf("Messages: %d\n", s.session.MessageCount())
+	fmt.Printf("Tokens: %d\n", s.totalTokens)
+	fmt.Printf("Cost: $%.4f\n", s.totalCost)
+}
+
+func (s *REPLSession) printCost() {
+	fmt.Printf("Total tokens: %d\n", s.totalTokens)
+	fmt.Printf("Estimated cost: $%.4f\n", s.totalCost)
+}
+
+func (s *REPLSession) updateCost(inputTokens, outputTokens int) {
+	inputCost := float64(inputTokens) * 0.000003
+	outputCost := float64(outputTokens) * 0.000015
+	s.totalCost += inputCost + outputCost
+}
+
+func (s *REPLSession) compact() {
+	s.ctxMgr.Trim()
+	fmt.Println("Session compacted")
+}
+
+func (s *REPLSession) listSessions() {
+	sessions, err := s.sessionMgr.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
+		return
+	}
+
+	if len(sessions) == 0 {
+		fmt.Println("No saved sessions")
+		return
+	}
+
+	fmt.Println("Saved sessions:")
+	for _, sess := range sessions {
+		fmt.Printf("  %s (%d messages)\n", sess.ID, sess.MessageCount())
+	}
+}
+
+func (s *REPLSession) resumeSession(id string) {
+	sess, err := s.sessionMgr.Load(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load session: %v\n", err)
+		return
+	}
+
+	s.session = sess
+	fmt.Printf("Resumed session: %s\n", id)
+}
+
+func (s *REPLSession) listTools() {
+	toolList := s.toolReg.All()
+	fmt.Println("Available tools:")
+	for _, t := range toolList {
+		fmt.Printf("  %-15s %s\n", t.Name(), t.Description())
+	}
+}
+
+func (s *REPLSession) runDoctor() {
+	_ = commands.GetRegistry().Execute("doctor", nil)
+}
+
+func runTUI(cmd *cobra.Command, args []string) {
+	model := viper.GetString("model")
+	isOpenAI := viper.GetBool("openai")
+	apiKeyFlag := viper.GetString("api_key")
+	baseURLFlag := viper.GetString("url")
+
+	if baseURLFlag == "" {
+		baseURLFlag = viper.GetString("base_url")
+	}
+
+	apiKey := apiKeyFlag
+	if apiKey == "" {
+		apiKey = auth.GetAPIKey()
+	}
+
+	baseURL := baseURLFlag
+	if baseURL == "" {
+		baseURL = auth.GetBaseURL()
+	}
+
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "Error: No API key set. Set ANTHROPIC_API_KEY environment variable or use --api-key flag")
+		os.Exit(1)
+	}
+
+	apiClient := api.NewClientWithModel(apiKey, baseURL, model)
+	apiClient.SetOpenAI(isOpenAI)
+
+	if err := tui.StartTUIWithClient(apiClient); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}

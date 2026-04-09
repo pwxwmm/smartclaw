@@ -1,0 +1,29 @@
+# Binaries
+claw
+smartclaw
+bin/
+*.exe
+
+# Go
+*.o
+*.a
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config/data
+.smartclaw/
+
+# Test
+*.test
+*.out
+coverage.txt
