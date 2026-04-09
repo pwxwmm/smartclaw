@@ -270,6 +270,19 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 	turnCount := e.state.GetTurnCount()
 	if nudge := e.learningLoop.MaybeNudge(turnCount); nudge != nil {
 		slog.Info("learning loop: nudge triggered", "turn", turnCount)
+
+		e.state.AddMessage(Message{
+			Role:    "system",
+			Content: nudge.Content,
+		})
+
+		go func() {
+			allMessages := e.state.GetMessages()
+			learningMessages := convertToLearningMessages(allMessages)
+			if err := e.learningLoop.OnNudge(ctx, "auto", learningMessages); err != nil {
+				slog.Error("learning loop: OnNudge failed", "error", err)
+			}
+		}()
 	}
 
 	go func() {

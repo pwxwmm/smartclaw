@@ -73,6 +73,7 @@ func NewMemoryManagerWithComponents(pm *layers.PromptMemory, s *store.Store, sm 
 }
 
 func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery string) string {
+	// Hermes prompt assembly order: MEMORY.md → USER.md → Session Search → Skills index
 	var parts []string
 
 	parts = append(parts, mm.promptMemory.AutoLoad())
@@ -86,6 +87,7 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 		}
 	}
 
+	// Layer 3: Skills index (only names + descriptions, full content loaded on demand)
 	if mm.skillMemory != nil {
 		skillPrompt := mm.skillMemory.BuildSkillPrompt()
 		if skillPrompt != "" {
@@ -97,7 +99,7 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 	for _, p := range parts {
 		total += len(p)
 	}
-	slog.Debug("memory manager: built system context", "chars", total)
+	slog.Debug("memory manager: built system context", "chars", total, "layers", len(parts))
 
 	return joinParts(parts)
 }
