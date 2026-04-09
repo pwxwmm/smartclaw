@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/hooks"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/tools"
 )
 
@@ -19,6 +21,7 @@ type QueryEngine struct {
 	tools        *tools.ToolRegistry
 	hookExecutor *tools.HookAwareExecutor
 	hookManager  *hooks.HookManager
+	learningLoop *learning.LearningLoop
 }
 
 func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
@@ -54,6 +57,10 @@ func (e *QueryEngine) SetHookManager(hookManager *hooks.HookManager) {
 // GetHookManager returns the current hook manager
 func (e *QueryEngine) GetHookManager() *hooks.HookManager {
 	return e.hookManager
+}
+
+func (e *QueryEngine) SetLearningLoop(loop *learning.LearningLoop) {
+	e.learningLoop = loop
 }
 
 func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, error) {
@@ -102,6 +109,8 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 		Duration:   duration,
 		Cost:       CalculateCost(apiUsage),
 	}
+
+	e.triggerLearningIfNeeded(ctx, result)
 
 	return result, nil
 }
@@ -200,6 +209,17 @@ func (e *QueryEngine) CompactIfNeeded() {
 			e.hookManager.ExecutePreCompact(context.Background())
 		}
 
+		turnCount := e.state.GetTurnCount()
+		if e.learningLoop != nil {
+			if nudge := e.learningLoop.MaybeNudge(turnCount); nudge != nil {
+				e.state.AddMessage(Message{
+					Role:    "system",
+					Content: nudge.Content,
+				})
+				slog.Info("learning loop: nudge injected before compaction", "turn", turnCount)
+			}
+		}
+
 		e.state.AddMessage(Message{
 			Role:    "system",
 			Content: "Context compacted",
@@ -233,4 +253,50 @@ func (e *QueryEngine) ExecuteStopHook(ctx context.Context, message string) []hoo
 		return nil
 	}
 	return e.hookManager.ExecuteStop(ctx, message)
+}
+
+func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *QueryResult) {
+	if e.learningLoop == nil || !e.learningLoop.IsEnabled() {
+		return
+	}
+
+	if string(result.StopReason) != "end_turn" && string(result.StopReason) != "stop_sequence" {
+		return
+	}
+
+	messages := e.state.GetMessages()
+	learningMessages := convertToLearningMessages(messages)
+
+	turnCount := e.state.GetTurnCount()
+	if nudge := e.learningLoop.MaybeNudge(turnCount); nudge != nil {
+		slog.Info("learning loop: nudge triggered", "turn", turnCount)
+	}
+
+	go func() {
+		learningResult := &learning.TaskResult{
+			StopReason: string(result.StopReason),
+			Duration:   result.Duration,
+			Cost:       result.Cost,
+			TokensUsed: result.Usage.InputTokens + result.Usage.OutputTokens,
+		}
+		if err := e.learningLoop.OnTaskComplete(ctx, "auto", learningMessages, learningResult); err != nil {
+			slog.Error("learning loop: OnTaskComplete failed", "error", err)
+		}
+	}()
+}
+
+func convertToLearningMessages(messages []Message) []learning.Message {
+	result := make([]learning.Message, 0, len(messages))
+	for _, m := range messages {
+		content, ok := m.Content.(string)
+		if !ok {
+			continue
+		}
+		result = append(result, learning.Message{
+			Role:      m.Role,
+			Content:   content,
+			Timestamp: m.Timestamp,
+		})
+	}
+	return result
 }
