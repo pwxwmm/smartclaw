@@ -12,6 +12,7 @@ type Message struct {
 	Role         string
 	Content      string
 	Tokens       int
+	ToolCalls    string
 	ToolName     string
 	ToolInput    string
 	ToolResult   string
@@ -30,10 +31,10 @@ type SearchResult struct {
 
 func (s *Store) InsertMessage(msg *Message) (int64, error) {
 	result, err := s.db.Exec(`
-		INSERT INTO messages (session_id, role, content, tokens, tool_name, tool_input, tool_result, finish_reason, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (session_id, role, content, tokens, tool_calls, tool_name, tool_input, tool_result, finish_reason, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, msg.SessionID, msg.Role, msg.Content, msg.Tokens,
-		nullStr(msg.ToolName), nullStr(msg.ToolInput), nullStr(msg.ToolResult),
+		nullStr(msg.ToolCalls), nullStr(msg.ToolName), nullStr(msg.ToolInput), nullStr(msg.ToolResult),
 		nullStr(msg.FinishReason), msg.Timestamp)
 	if err != nil {
 		return 0, fmt.Errorf("store: insert message: %w", err)
@@ -45,7 +46,7 @@ func (s *Store) InsertMessage(msg *Message) (int64, error) {
 
 func (s *Store) GetSessionMessages(sessionID string) ([]*Message, error) {
 	rows, err := s.db.Query(`
-		SELECT id, session_id, role, content, tokens, tool_name, tool_input, tool_result, finish_reason, timestamp
+		SELECT id, session_id, role, content, tokens, tool_calls, tool_name, tool_input, tool_result, finish_reason, timestamp
 		FROM messages WHERE session_id = ?
 		ORDER BY timestamp ASC
 	`, sessionID)
@@ -111,7 +112,7 @@ func (s *Store) GetRecentMessages(sessionID string, limit int) ([]*Message, erro
 	}
 
 	rows, err := s.db.Query(`
-		SELECT id, session_id, role, content, tokens, tool_name, tool_input, tool_result, finish_reason, timestamp
+		SELECT id, session_id, role, content, tokens, tool_calls, tool_name, tool_input, tool_result, finish_reason, timestamp
 		FROM messages WHERE session_id = ?
 		ORDER BY timestamp DESC LIMIT ?
 	`, sessionID, limit)
@@ -136,16 +137,17 @@ func scanMessages(rows *sql.Rows) ([]*Message, error) {
 	var messages []*Message
 	for rows.Next() {
 		msg := &Message{}
-		var toolName, toolInput, toolResult, finishReason sql.NullString
+		var toolCalls, toolName, toolInput, toolResult, finishReason sql.NullString
 		var ts sql.NullString
 
 		if err := rows.Scan(
 			&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.Tokens,
-			&toolName, &toolInput, &toolResult, &finishReason, &ts,
+			&toolCalls, &toolName, &toolInput, &toolResult, &finishReason, &ts,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan message: %w", err)
 		}
 
+		msg.ToolCalls = val(toolCalls)
 		msg.ToolName = val(toolName)
 		msg.ToolInput = val(toolInput)
 		msg.ToolResult = val(toolResult)

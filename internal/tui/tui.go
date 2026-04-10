@@ -15,7 +15,9 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/compact"
 	"github.com/instructkr/smartclaw/internal/memory"
+	"github.com/instructkr/smartclaw/internal/services"
 	"github.com/instructkr/smartclaw/internal/session"
 	"github.com/instructkr/smartclaw/internal/voice"
 )
@@ -63,7 +65,7 @@ type Model struct {
 	streaming          *StreamingOutput
 	imageViewer        *ImageViewer
 	apiClient          *api.Client
-	apiMu              sync.Mutex
+	apiMu              *sync.Mutex
 	messages           []api.Message
 	showThinking       bool
 	currentResponse    strings.Builder
@@ -85,6 +87,9 @@ type Model struct {
 	showCompletions    bool
 	completionPage     int
 	completionPageSize int
+	compactService     *compact.CompactService
+	autoCompactEnabled bool
+	sessionRecorder    *services.SessionRecorder
 }
 
 func InitialModel() Model {
@@ -185,6 +190,7 @@ func InitialModel() Model {
 		streaming:          streaming,
 		imageViewer:        imageViewer,
 		messages:           make([]api.Message, 0),
+		apiMu:              &sync.Mutex{},
 		showThinking:       viper.GetBool("show_thinking"),
 		markdown:           markdown,
 		viewportOffset:     0,
@@ -204,6 +210,8 @@ func InitialModel() Model {
 		showCompletions:    false,
 		completionPage:     0,
 		completionPageSize: 10,
+		compactService:     compact.NewCompactService(compact.DefaultCompactConfig("claude-sonnet-4-5", 200000)),
+		autoCompactEnabled: true,
 	}
 }
 
@@ -543,6 +551,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.contextManager.AddMessage("user", msg.text, 0)
 
+		if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
+			m.sessionRecorder.RecordMessage("user", msg.text)
+		}
+
 		m.streamingIdx = len(m.output) - 1
 		m.currentResponse.Reset()
 		m.loading = true
@@ -564,9 +576,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.contextManager.AddMessage("assistant", msg.text, msg.tokens)
+
+			if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
+				m.sessionRecorder.RecordMessage("assistant", msg.text)
+			}
 		}
 		m.tokens += msg.tokens
 		m.streamingIdx = -1
+
+		if m.autoCompactEnabled && m.compactService != nil {
+			if shouldCompact, warning := m.compactService.ShouldCompact(m.tokens); shouldCompact {
+				removed := m.contextManager.CompressOldMessages(5)
+				if removed > 0 {
+					AddOutput(&m, m.formatAssistantOutput(fmt.Sprintf(
+						"🔄 Auto-compacted: removed %d messages (%s)", removed, warning.Message)))
+				}
+			}
+		}
 	case CommandMsg:
 		return m, ProcessSlashCommand(msg.cmd, &m)
 	case OutputMsg:

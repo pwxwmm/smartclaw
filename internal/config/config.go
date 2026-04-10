@@ -33,6 +33,15 @@ type Config struct {
 	Theme        string                 `yaml:"theme"`
 	Language     string                 `yaml:"language"`
 	AutoSave     bool                   `yaml:"auto_save"`
+	Routing      RoutingConfig          `yaml:"routing"`
+}
+
+type RoutingConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Strategy     string `yaml:"strategy"`
+	FastModel    string `yaml:"fast_model"`
+	DefaultModel string `yaml:"default_model"`
+	HeavyModel   string `yaml:"heavy_model"`
 }
 
 type MCPServer struct {

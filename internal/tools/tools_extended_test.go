@@ -243,7 +243,7 @@ func TestPipelineTool(t *testing.T) {
 }
 
 func TestMcpTool(t *testing.T) {
-	tool := &McpTool{}
+	tool := &McpExecuteTool{}
 
 	if tool.Name() != "mcp" {
 		t.Errorf("Expected name 'mcp', got '%s'", tool.Name())
@@ -385,5 +385,140 @@ func TestRegistryAllEmpty(t *testing.T) {
 
 	if len(registry.Names()) != 0 {
 		t.Error("Expected empty names")
+	}
+}
+
+func TestREPLToolNameAndSchema(t *testing.T) {
+	tool := &REPLTool{}
+
+	if tool.Name() != "repl" {
+		t.Errorf("Expected name 'repl', got '%s'", tool.Name())
+	}
+
+	if tool.Description() == "" {
+		t.Error("Description should not be empty")
+	}
+
+	schema := tool.InputSchema()
+	if schema["type"] != "object" {
+		t.Error("Expected object type in schema")
+	}
+}
+
+func TestREPLToolMissingExpression(t *testing.T) {
+	tool := &REPLTool{}
+	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	if err == nil {
+		t.Error("Expected error for missing expression")
+	}
+}
+
+func TestREPLToolUnsupportedLanguage(t *testing.T) {
+	tool := &REPLTool{}
+	_, err := tool.Execute(context.Background(), map[string]interface{}{
+		"expression": "1+1",
+		"language":   "ruby",
+	})
+	if err == nil {
+		t.Error("Expected error for unsupported language")
+	}
+}
+
+func TestScheduleCronToolNameAndSchema(t *testing.T) {
+	tool := &ScheduleCronTool{}
+
+	if tool.Name() != "schedule_cron" {
+		t.Errorf("Expected name 'schedule_cron', got '%s'", tool.Name())
+	}
+
+	if tool.Description() == "" {
+		t.Error("Description should not be empty")
+	}
+}
+
+func TestScheduleCronToolScheduleMissingFields(t *testing.T) {
+	tool := &ScheduleCronTool{}
+	_, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action": "schedule",
+	})
+	if err == nil {
+		t.Error("Expected error for missing schedule field")
+	}
+}
+
+func TestScheduleCronToolListEmpty(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cron-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tool := &ScheduleCronTool{}
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action":   "schedule",
+		"schedule": "*/5 * * * *",
+		"command":  "echo hello",
+	})
+	if err != nil {
+		t.Errorf("Schedule failed: %v", err)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected map result, got %T", result)
+	}
+
+	if resultMap["status"] != "scheduled" {
+		t.Errorf("Expected status 'scheduled', got '%v'", resultMap["status"])
+	}
+}
+
+func TestScheduleCronToolDeleteMissingID(t *testing.T) {
+	tool := &ScheduleCronTool{}
+	_, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action": "delete",
+	})
+	if err == nil {
+		t.Error("Expected error for missing task_id")
+	}
+}
+
+func TestEnterWorktreeToolNameAndSchema(t *testing.T) {
+	tool := &EnterWorktreeTool{}
+
+	if tool.Name() != "enter_worktree" {
+		t.Errorf("Expected name 'enter_worktree', got '%s'", tool.Name())
+	}
+
+	if tool.Description() == "" {
+		t.Error("Description should not be empty")
+	}
+}
+
+func TestEnterWorktreeToolMissingPath(t *testing.T) {
+	tool := &EnterWorktreeTool{}
+	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	if err == nil {
+		t.Error("Expected error for missing path")
+	}
+}
+
+func TestExitWorktreeToolNameAndSchema(t *testing.T) {
+	tool := &ExitWorktreeTool{}
+
+	if tool.Name() != "exit_worktree" {
+		t.Errorf("Expected name 'exit_worktree', got '%s'", tool.Name())
+	}
+
+	if tool.Description() == "" {
+		t.Error("Description should not be empty")
+	}
+}
+
+func TestExitWorktreeToolMissingPath(t *testing.T) {
+	tool := &ExitWorktreeTool{}
+	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	if err == nil {
+		t.Error("Expected error for missing path")
 	}
 }

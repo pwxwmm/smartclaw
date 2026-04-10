@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
@@ -84,35 +86,37 @@ func (s *Store) JSONLDir() string {
 }
 
 func (s *Store) WriteWithRetry(query string, args ...interface{}) error {
-	return s.WriteWithRetryContext(nil, query, args...)
+	return s.WriteWithRetryContext(context.Background(), query, args...)
 }
 
-func (s *Store) WriteWithRetryContext(ctx interface{ Deadline() (time.Time, bool) }, query string, args ...interface{}) error {
+func (s *Store) WriteWithRetryContext(ctx context.Context, query string, args ...interface{}) error {
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		tx, err := s.db.Begin()
+		// Use BEGIN IMMEDIATE to acquire a reserved lock immediately,
+		// preventing concurrent writers from conflicting (gateway + CLI).
+		_, err := s.db.ExecContext(ctx, "BEGIN IMMEDIATE")
 		if err != nil {
 			if isLockedError(err) && attempt < maxRetries-1 {
-				jitter := time.Duration(50+attempt*100) * time.Millisecond
+				jitter := time.Duration(50+rand.Intn(150)) * time.Millisecond * time.Duration(1<<attempt)
 				time.Sleep(jitter)
 				continue
 			}
-			return fmt.Errorf("store: begin tx: %w", err)
+			return fmt.Errorf("store: begin immediate: %w", err)
 		}
 
-		if _, err := tx.Exec(query, args...); err != nil {
-			tx.Rollback()
+		if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+			s.db.ExecContext(ctx, "ROLLBACK")
 			if isLockedError(err) && attempt < maxRetries-1 {
-				jitter := time.Duration(50+attempt*100) * time.Millisecond
+				jitter := time.Duration(50+rand.Intn(150)) * time.Millisecond * time.Duration(1<<attempt)
 				time.Sleep(jitter)
 				continue
 			}
 			return fmt.Errorf("store: exec: %w", err)
 		}
 
-		if err := tx.Commit(); err != nil {
+		if _, err := s.db.ExecContext(ctx, "COMMIT"); err != nil {
 			if isLockedError(err) && attempt < maxRetries-1 {
-				jitter := time.Duration(50+attempt*100) * time.Millisecond
+				jitter := time.Duration(50+rand.Intn(150)) * time.Millisecond * time.Duration(1<<attempt)
 				time.Sleep(jitter)
 				continue
 			}

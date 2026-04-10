@@ -23,6 +23,7 @@ type JSONLEntry struct {
 	Role         string    `json:"role"`
 	Content      string    `json:"content"`
 	Tokens       int       `json:"tokens"`
+	ToolCalls    string    `json:"tool_calls,omitempty"`
 	ToolName     string    `json:"tool_name,omitempty"`
 	FinishReason string    `json:"finish_reason,omitempty"`
 	Timestamp    time.Time `json:"timestamp"`
@@ -52,6 +53,7 @@ func (w *JSONLWriter) Append(msg *Message) error {
 		Role:         msg.Role,
 		Content:      msg.Content,
 		Tokens:       msg.Tokens,
+		ToolCalls:    msg.ToolCalls,
 		ToolName:     msg.ToolName,
 		FinishReason: msg.FinishReason,
 		Timestamp:    msg.Timestamp,

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 type Tool interface {
@@ -24,9 +25,17 @@ func (t *BaseTool) InputSchema() map[string]interface{} { return t.inputSchema }
 
 type ToolRegistry struct {
 	tools map[string]Tool
+	cache *ResultCache
 }
 
 func NewRegistry() *ToolRegistry {
+	return &ToolRegistry{
+		tools: make(map[string]Tool),
+		cache: NewResultCache(100, 5*time.Minute),
+	}
+}
+
+func NewRegistryWithoutCache() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]Tool),
 	}
@@ -65,7 +74,61 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[strin
 	if tool == nil {
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
-	return tool.Execute(ctx, input)
+
+	if r.cache != nil {
+		if result, ok := r.cache.Get(name, input); ok {
+			return result, nil
+		}
+	}
+
+	result, err := tool.Execute(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.cache != nil {
+		depFiles := extractDepFiles(name, input)
+		r.cache.Set(name, input, result, depFiles)
+	}
+
+	return result, nil
+}
+
+func (r *ToolRegistry) SetCache(cache *ResultCache) {
+	r.cache = cache
+}
+
+func (r *ToolRegistry) GetCache() *ResultCache {
+	return r.cache
+}
+
+func (r *ToolRegistry) InvalidateCache(paths []string) {
+	if r.cache != nil {
+		r.cache.Invalidate(paths)
+	}
+}
+
+func extractDepFiles(toolName string, input map[string]interface{}) []string {
+	var files []string
+
+	pathKeys := []string{"path", "file_path", "filepath", "filename", "directory", "dir"}
+	for _, key := range pathKeys {
+		if v, ok := input[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				files = append(files, s)
+			}
+		}
+	}
+
+	if toolName == "glob" || toolName == "grep" || toolName == "ast_grep" {
+		if v, ok := input["path"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				files = append(files, s)
+			}
+		}
+	}
+
+	return files
 }
 
 var defaultRegistry *ToolRegistry
@@ -101,7 +164,7 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&ParallelTool{})
 	defaultRegistry.Register(&PipelineTool{})
 	defaultRegistry.Register(&PowerShellTool{})
-	defaultRegistry.Register(&McpTool{})
+	defaultRegistry.Register(&McpExecuteTool{})
 	defaultRegistry.Register(&ListMcpResourcesTool{})
 	defaultRegistry.Register(&ReadMcpResourceTool{})
 	defaultRegistry.Register(&ScheduleCronTool{})
@@ -115,6 +178,15 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&REPLTool{})
 	defaultRegistry.Register(&TeamCreateTool{})
 	defaultRegistry.Register(&TeamDeleteTool{})
+	defaultRegistry.Register(&TeamShareMemoryTool{})
+	defaultRegistry.Register(&TeamGetMemoriesTool{})
+	defaultRegistry.Register(&TeamSearchMemoriesTool{})
+	defaultRegistry.Register(&TeamSyncTool{})
+	defaultRegistry.Register(&TeamShareSessionTool{})
+	defaultRegistry.Register(&GitAITool{})
+	defaultRegistry.Register(&GitStatusTool{})
+	defaultRegistry.Register(&GitDiffTool{})
+	defaultRegistry.Register(&GitLogTool{})
 	defaultRegistry.Register(&EnterPlanModeTool{})
 	defaultRegistry.Register(&SyntheticOutputTool{})
 	defaultRegistry.Register(&ExitPlanModeTool{})

@@ -287,3 +287,137 @@ func TestJSONLWriter(t *testing.T) {
 		t.Error("JSONL file should be created")
 	}
 }
+
+func TestUpsertAndGetSkill(t *testing.T) {
+	s := newTestStore(t)
+
+	skill := &SkillRecord{
+		Name:        "test-skill",
+		Description: "A test skill",
+		Content:     "# Test Skill\nDescription",
+		Source:      "learned",
+		UseCount:    0,
+	}
+
+	if err := s.UpsertSkill(skill); err != nil {
+		t.Fatalf("UpsertSkill: %v", err)
+	}
+
+	skills, err := s.GetAllLearnedSkills()
+	if err != nil {
+		t.Fatalf("GetAllLearnedSkills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name != "test-skill" {
+		t.Errorf("Name = %q, want %q", skills[0].Name, "test-skill")
+	}
+}
+
+func TestIncrementSkillUseCount(t *testing.T) {
+	s := newTestStore(t)
+
+	skill := &SkillRecord{
+		Name:    "use-count-test",
+		Source:  "learned",
+		Content: "test",
+	}
+	if err := s.UpsertSkill(skill); err != nil {
+		t.Fatalf("UpsertSkill: %v", err)
+	}
+
+	if err := s.IncrementSkillUseCount("use-count-test"); err != nil {
+		t.Fatalf("IncrementSkillUseCount: %v", err)
+	}
+	if err := s.IncrementSkillUseCount("use-count-test"); err != nil {
+		t.Fatalf("IncrementSkillUseCount 2: %v", err)
+	}
+
+	skills, _ := s.GetAllLearnedSkills()
+	if len(skills) != 1 || skills[0].UseCount != 2 {
+		t.Errorf("UseCount = %d, want 2", skills[0].UseCount)
+	}
+}
+
+func TestGetStaleSkills(t *testing.T) {
+	s := newTestStore(t)
+
+	skill := &SkillRecord{
+		Name:    "stale-skill",
+		Source:  "learned",
+		Content: "test",
+	}
+	if err := s.UpsertSkill(skill); err != nil {
+		t.Fatalf("UpsertSkill: %v", err)
+	}
+
+	stale, err := s.GetStaleSkills(24 * time.Hour)
+	if err != nil {
+		t.Fatalf("GetStaleSkills: %v", err)
+	}
+	if len(stale) != 1 {
+		t.Errorf("expected 1 stale skill, got %d", len(stale))
+	}
+	if stale[0].Name != "stale-skill" {
+		t.Errorf("stale skill name = %q, want %q", stale[0].Name, "stale-skill")
+	}
+}
+
+func TestDeleteSkill(t *testing.T) {
+	s := newTestStore(t)
+
+	skill := &SkillRecord{
+		Name:    "delete-test",
+		Source:  "learned",
+		Content: "test",
+	}
+	if err := s.UpsertSkill(skill); err != nil {
+		t.Fatalf("UpsertSkill: %v", err)
+	}
+
+	if err := s.DeleteSkill("delete-test"); err != nil {
+		t.Fatalf("DeleteSkill: %v", err)
+	}
+
+	skills, _ := s.GetAllLearnedSkills()
+	if len(skills) != 0 {
+		t.Errorf("expected 0 skills after delete, got %d", len(skills))
+	}
+}
+
+func TestToolCallsColumn(t *testing.T) {
+	s := newTestStore(t)
+
+	session := &Session{
+		ID:        "toolcalls-test-session",
+		UserID:    "user-1",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.UpsertSession(session); err != nil {
+		t.Fatalf("UpsertSession: %v", err)
+	}
+
+	msg := &Message{
+		SessionID: "toolcalls-test-session",
+		Role:      "assistant",
+		Content:   "I will run a tool",
+		ToolCalls: `[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"ls -la"}}]`,
+		Timestamp: time.Now(),
+	}
+	if _, err := s.InsertMessage(msg); err != nil {
+		t.Fatalf("InsertMessage with tool_calls: %v", err)
+	}
+
+	got, err := s.GetSessionMessages("toolcalls-test-session")
+	if err != nil {
+		t.Fatalf("GetSessionMessages: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(got))
+	}
+	if got[0].ToolCalls != msg.ToolCalls {
+		t.Errorf("ToolCalls = %q, want %q", got[0].ToolCalls, msg.ToolCalls)
+	}
+}

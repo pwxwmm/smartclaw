@@ -34,7 +34,7 @@ func (bc *BridgeConnection) Connect() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	addr := fmt.Sprintf("%s:%d", bc.Config.Host, bc.Config.Port)
+	addr := net.JoinHostPort(bc.Config.Host, fmt.Sprintf("%d", bc.Config.Port))
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to bridge: %w", err)

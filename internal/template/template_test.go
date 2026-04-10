@@ -8,65 +8,34 @@ import (
 )
 
 func TestNewTemplateManager(t *testing.T) {
-	tm := NewTemplateManager()
+	tm := NewTemplateManagerWithPath(t.TempDir())
 	if tm == nil {
 		t.Fatal("Expected non-nil template manager")
 	}
 
-	if tm.templates == nil {
-		t.Error("Expected templates map to be initialized")
+	builtIn := tm.List()
+	if len(builtIn) < 10 {
+		t.Errorf("Expected at least 10 built-in templates, got %d", len(builtIn))
 	}
 }
 
-func TestTemplateManagerLoad(t *testing.T) {
-	tmpFile, err := os.CreateTemp("", "template-*.txt")
+func TestGetBuiltIn(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
+
+	tmpl, err := tm.Get("code-review")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Expected no error getting built-in template, got %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-
-	content := "Hello, {{.Name}}!"
-	tmpFile.WriteString(content)
-	tmpFile.Close()
-
-	tm := NewTemplateManager()
-	err = tm.Load(tmpFile.Name())
-	if err != nil {
-		t.Fatalf("Expected no error loading template, got %v", err)
-	}
-
-	if len(tm.templates) != 1 {
-		t.Errorf("Expected 1 template, got %d", len(tm.templates))
-	}
-}
-
-func TestTemplateManagerGet(t *testing.T) {
-	tmpFile, err := os.CreateTemp("", "test-*.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := tmpFile.Name()
-	defer os.Remove(path)
-
-	tmpFile.WriteString("test content")
-	tmpFile.Close()
-
-	tm := NewTemplateManager()
-	tm.Load(path)
-
-	expectedName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	tmpl, err := tm.Get(expectedName)
-	if err != nil {
-		t.Fatalf("Expected no error getting template, got %v", err)
-	}
-
 	if tmpl == nil {
 		t.Fatal("Expected non-nil template")
 	}
+	if !tmpl.IsBuiltIn {
+		t.Error("Expected IsBuiltIn to be true")
+	}
 }
 
-func TestTemplateManagerGetNonexistent(t *testing.T) {
-	tm := NewTemplateManager()
+func TestGetNonexistent(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
 
 	_, err := tm.Get("nonexistent")
 	if err == nil {
@@ -74,86 +43,234 @@ func TestTemplateManagerGetNonexistent(t *testing.T) {
 	}
 }
 
-func TestTemplateManagerList(t *testing.T) {
-	tm := NewTemplateManager()
+func TestRender(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
 
-	list := tm.List()
-	if len(list) != 0 {
-		t.Errorf("Expected empty list, got %d", len(list))
+	result, err := tm.Render("commit-message", map[string]string{"diff": "added new feature"})
+	if err != nil {
+		t.Fatalf("Expected no error rendering template, got %v", err)
+	}
+	if result == "" {
+		t.Error("Expected non-empty rendered content")
+	}
+	if !contains(result, "added new feature") {
+		t.Error("Expected rendered content to contain the diff")
 	}
 }
 
-func TestTemplateManagerExecute(t *testing.T) {
-	tmpFile, err := os.CreateTemp("", "test-*.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := tmpFile.Name()
-	defer os.Remove(path)
+func TestRenderWithMissingRequired(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
 
-	content := "Hello, {{.Name}}!"
-	tmpFile.WriteString(content)
-	tmpFile.Close()
-
-	tm := NewTemplateManager()
-	tm.Load(path)
-
-	expectedName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	result, err := tm.Execute(expectedName, map[string]string{"Name": "World"})
-	if err != nil {
-		t.Fatalf("Expected no error executing template, got %v", err)
-	}
-
-	if result != "Hello, World!" {
-		t.Errorf("Expected 'Hello, World!', got '%s'", result)
+	_, err := tm.Render("debug", map[string]string{})
+	if err == nil {
+		t.Error("Expected error for missing required variable")
 	}
 }
 
-func TestTemplate(t *testing.T) {
-	tmpl := Template{
-		Name:        "test",
-		Description: "Test template",
-		Content:     "Hello, {{.Name}}",
+func TestRenderWithDefaults(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
+
+	result, err := tm.Render("debug", map[string]string{
+		"code":     "fmt.Println()",
+		"language": "go",
+	})
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if result == "" {
+		t.Error("Expected non-empty rendered content")
+	}
+}
+
+func TestCreateAndDelete(t *testing.T) {
+	tmpDir := t.TempDir()
+	tm := NewTemplateManagerWithPath(tmpDir)
+
+	custom := &Template{
+		ID:          "my-custom",
+		Name:        "My Custom",
+		Description: "A custom template",
+		Content:     "Hello {{name}}!",
 		Variables: []Variable{
-			{Name: "Name", Description: "Name to greet", Required: true},
+			{Name: "name", Description: "Name", Required: true},
 		},
 	}
 
-	if tmpl.Name != "test" {
-		t.Errorf("Expected name 'test', got '%s'", tmpl.Name)
+	err := tm.Create(custom)
+	if err != nil {
+		t.Fatalf("Expected no error creating template, got %v", err)
 	}
 
-	if len(tmpl.Variables) != 1 {
-		t.Errorf("Expected 1 variable, got %d", len(tmpl.Variables))
+	retrieved, err := tm.Get("my-custom")
+	if err != nil {
+		t.Fatalf("Expected no error getting template, got %v", err)
 	}
-}
-
-func TestVariable(t *testing.T) {
-	variable := Variable{
-		Name:        "name",
-		Description: "User name",
-		Default:     "World",
-		Required:    true,
+	if retrieved.Name != "My Custom" {
+		t.Errorf("Expected name 'My Custom', got '%s'", retrieved.Name)
+	}
+	if retrieved.IsBuiltIn {
+		t.Error("Expected IsBuiltIn to be false")
 	}
 
-	if variable.Name != "name" {
-		t.Errorf("Expected name 'name', got '%s'", variable.Name)
+	if _, err := os.Stat(filepath.Join(tmpDir, "my-custom.json")); os.IsNotExist(err) {
+		t.Error("Expected template file to be persisted")
 	}
 
-	if variable.Default != "World" {
-		t.Errorf("Expected default 'World', got '%s'", variable.Default)
+	err = tm.Delete("my-custom")
+	if err != nil {
+		t.Fatalf("Expected no error deleting template, got %v", err)
 	}
 
-	if !variable.Required {
-		t.Error("Expected required to be true")
-	}
-}
-
-func TestTemplateManagerExecuteNonexistent(t *testing.T) {
-	tm := NewTemplateManager()
-
-	_, err := tm.Execute("nonexistent", map[string]string{})
+	_, err = tm.Get("my-custom")
 	if err == nil {
-		t.Error("Expected error for nonexistent template")
+		t.Error("Expected error getting deleted template")
 	}
+}
+
+func TestCreateDuplicate(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
+
+	err := tm.Create(&Template{ID: "code-review", Name: "Dup"})
+	if err == nil {
+		t.Error("Expected error creating duplicate template")
+	}
+}
+
+func TestDeleteBuiltIn(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
+
+	err := tm.Delete("code-review")
+	if err == nil {
+		t.Error("Expected error deleting built-in template")
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	tmpDir := t.TempDir()
+	tm := NewTemplateManagerWithPath(tmpDir)
+
+	tm.Create(&Template{ID: "custom-tpl", Name: "Original", Content: "v1"})
+
+	err := tm.Update("custom-tpl", &Template{Name: "Updated", Content: "v2"})
+	if err != nil {
+		t.Fatalf("Expected no error updating template, got %v", err)
+	}
+
+	retrieved, _ := tm.Get("custom-tpl")
+	if retrieved.Name != "Updated" {
+		t.Errorf("Expected name 'Updated', got '%s'", retrieved.Name)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
+
+	results := tm.Search("review")
+	if len(results) == 0 {
+		t.Error("Expected search results for 'review'")
+	}
+}
+
+func TestListByCategory(t *testing.T) {
+	tm := NewTemplateManagerWithPath(t.TempDir())
+
+	categories := tm.ListByCategory()
+	if len(categories) == 0 {
+		t.Error("Expected categories")
+	}
+}
+
+func TestExportImport(t *testing.T) {
+	tmpDir := t.TempDir()
+	tm := NewTemplateManagerWithPath(tmpDir)
+
+	jsonExport, err := tm.ExportTemplate("code-review", "json")
+	if err != nil {
+		t.Fatalf("Expected no error exporting template, got %v", err)
+	}
+	if jsonExport == "" {
+		t.Error("Expected non-empty export")
+	}
+
+	mdExport, err := tm.ExportTemplate("code-review", "md")
+	if err != nil {
+		t.Fatalf("Expected no error exporting template as markdown, got %v", err)
+	}
+	if mdExport == "" {
+		t.Error("Expected non-empty markdown export")
+	}
+
+	jsonExport = strings.Replace(jsonExport, `"id": "code-review"`, `"id": "imported-review"`, 1)
+	jsonExport = strings.Replace(jsonExport, `"isBuiltIn": true`, `"isBuiltIn": false`, 1)
+
+	tm2 := NewTemplateManagerWithPath(t.TempDir())
+	err = tm2.ImportTemplate(jsonExport, "json")
+	if err != nil {
+		t.Fatalf("Expected no error importing template, got %v", err)
+	}
+
+	imported, err := tm2.Get("imported-review")
+	if err != nil {
+		t.Fatalf("Expected imported template to exist, got error: %v", err)
+	}
+	if imported.IsBuiltIn {
+		t.Error("Expected imported template to not be built-in")
+	}
+}
+
+func TestExtractVariables(t *testing.T) {
+	content := "Hello {{name}}, welcome to {{project}}!"
+	vars := ExtractVariables(content)
+
+	if len(vars) != 2 {
+		t.Fatalf("Expected 2 variables, got %d", len(vars))
+	}
+	if vars[0].Name != "name" {
+		t.Errorf("Expected first var 'name', got '%s'", vars[0].Name)
+	}
+	if vars[1].Name != "project" {
+		t.Errorf("Expected second var 'project', got '%s'", vars[1].Name)
+	}
+}
+
+func TestExtractVariablesNoDups(t *testing.T) {
+	content := "{{name}} and {{name}} again"
+	vars := ExtractVariables(content)
+
+	if len(vars) != 1 {
+		t.Errorf("Expected 1 unique variable, got %d", len(vars))
+	}
+}
+
+func TestCustomTemplatePersistsAcrossManagers(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tm1 := NewTemplateManagerWithPath(tmpDir)
+	tm1.Create(&Template{
+		ID:      "persist-test",
+		Name:    "Persist Test",
+		Content: "test {{var}}",
+	})
+
+	tm2 := NewTemplateManagerWithPath(tmpDir)
+	tmpl, err := tm2.Get("persist-test")
+	if err != nil {
+		t.Fatalf("Expected template to persist, got error: %v", err)
+	}
+	if tmpl.Name != "Persist Test" {
+		t.Errorf("Expected name 'Persist Test', got '%s'", tmpl.Name)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
+}
+
+func containsStr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

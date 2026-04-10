@@ -217,7 +217,7 @@ func (tms *TeamMemorySync) SearchMemories(ctx context.Context, query string) ([]
 	defer tms.mu.RUnlock()
 
 	var result []*Memory
-	query = query // strings.ToLower(query)
+	query = strings.ToLower(query)
 
 	for _, m := range tms.memories {
 		if strings.Contains(m.Title, query) || strings.Contains(m.Content, query) {

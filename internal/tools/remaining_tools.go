@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -47,111 +50,145 @@ func (t *PowerShellTool) Execute(ctx context.Context, input map[string]interface
 	}, err
 }
 
-type McpTool struct{}
-
-func (t *McpTool) Name() string        { return "mcp" }
-func (t *McpTool) Description() string { return "Execute MCP server tool" }
-
-func (t *McpTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"server":    map[string]interface{}{"type": "string"},
-			"tool":      map[string]interface{}{"type": "string"},
-			"arguments": map[string]interface{}{},
-		},
-		"required": []string{"server", "tool"},
-	}
-}
-
-func (t *McpTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	server, _ := input["server"].(string)
-	tool, _ := input["tool"].(string)
-	if server == "" || tool == "" {
-		return nil, ErrRequiredField("server and tool")
-	}
-
-	return map[string]interface{}{
-		"server": server,
-		"tool":   tool,
-		"status": "not implemented",
-	}, nil
-}
-
-type ListMcpResourcesTool struct{}
-
-func (t *ListMcpResourcesTool) Name() string        { return "list_mcp_resources" }
-func (t *ListMcpResourcesTool) Description() string { return "List MCP server resources" }
-
-func (t *ListMcpResourcesTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"server": map[string]interface{}{"type": "string"},
-		},
-		"required": []string{"server"},
-	}
-}
-
-func (t *ListMcpResourcesTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	server, _ := input["server"].(string)
-	return map[string]interface{}{
-		"server":    server,
-		"resources": []interface{}{},
-	}, nil
-}
-
-type ReadMcpResourceTool struct{}
-
-func (t *ReadMcpResourceTool) Name() string        { return "read_mcp_resource" }
-func (t *ReadMcpResourceTool) Description() string { return "Read MCP server resource" }
-
-func (t *ReadMcpResourceTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"server": map[string]interface{}{"type": "string"},
-			"uri":    map[string]interface{}{"type": "string"},
-		},
-		"required": []string{"server", "uri"},
-	}
-}
-
-func (t *ReadMcpResourceTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	server, _ := input["server"].(string)
-	uri, _ := input["uri"].(string)
-	return map[string]interface{}{
-		"server":  server,
-		"uri":     uri,
-		"content": "",
-	}, nil
-}
-
 type ScheduleCronTool struct{}
 
-func (t *ScheduleCronTool) Name() string        { return "schedule_cron" }
-func (t *ScheduleCronTool) Description() string { return "Schedule a cron job" }
+func (t *ScheduleCronTool) Name() string { return "schedule_cron" }
+func (t *ScheduleCronTool) Description() string {
+	return "Schedule, list, or delete cron jobs. Actions: schedule, list, delete"
+}
 
 func (t *ScheduleCronTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"schedule": map[string]interface{}{"type": "string"},
-			"command":  map[string]interface{}{"type": "string"},
+			"action":   map[string]interface{}{"type": "string", "description": "Action: schedule, list, delete", "default": "schedule"},
+			"schedule": map[string]interface{}{"type": "string", "description": "Cron schedule expression (e.g. '*/5 * * * *')"},
+			"command":  map[string]interface{}{"type": "string", "description": "Command or instruction to run"},
+			"task_id":  map[string]interface{}{"type": "string", "description": "Task ID for delete action"},
 		},
-		"required": []string{"schedule", "command"},
+		"required": []string{"action"},
 	}
 }
 
 func (t *ScheduleCronTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+	action, _ := input["action"].(string)
+	if action == "" {
+		action = "schedule"
+	}
+
+	cronDir, err := getCronDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to access cron directory: %w", err)
+	}
+
+	switch action {
+	case "schedule":
+		return t.scheduleCron(input, cronDir)
+	case "list":
+		return t.listCrons(cronDir)
+	case "delete":
+		return t.deleteCron(input, cronDir)
+	default:
+		return nil, fmt.Errorf("unknown action: %s (valid: schedule, list, delete)", action)
+	}
+}
+
+func (t *ScheduleCronTool) scheduleCron(input map[string]interface{}, cronDir string) (interface{}, error) {
 	schedule, _ := input["schedule"].(string)
 	command, _ := input["command"].(string)
+	if schedule == "" {
+		return nil, ErrRequiredField("schedule")
+	}
+	if command == "" {
+		return nil, ErrRequiredField("command")
+	}
+
+	if err := os.MkdirAll(cronDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create cron directory: %w", err)
+	}
+
+	taskID := fmt.Sprintf("cron_%d", time.Now().UnixNano())
+	task := map[string]interface{}{
+		"id":          taskID,
+		"schedule":    schedule,
+		"instruction": command,
+		"enabled":     true,
+		"created_at":  time.Now().Format(time.RFC3339),
+	}
+
+	taskJSON, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal cron task: %w", err)
+	}
+
+	path := filepath.Join(cronDir, taskID+".json")
+	if err := os.WriteFile(path, taskJSON, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write cron task: %w", err)
+	}
+
 	return map[string]interface{}{
+		"id":       taskID,
 		"schedule": schedule,
 		"command":  command,
 		"status":   "scheduled",
-		"id":       fmt.Sprintf("cron_%d", time.Now().Unix()),
+		"path":     path,
 	}, nil
+}
+
+func (t *ScheduleCronTool) listCrons(cronDir string) (interface{}, error) {
+	entries, err := os.ReadDir(cronDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]interface{}{"tasks": []interface{}{}, "count": 0}, nil
+		}
+		return nil, fmt.Errorf("failed to read cron directory: %w", err)
+	}
+
+	var tasks []map[string]interface{}
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(cronDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var task map[string]interface{}
+		if err := json.Unmarshal(data, &task); err != nil {
+			continue
+		}
+		tasks = append(tasks, task)
+	}
+
+	return map[string]interface{}{
+		"tasks": tasks,
+		"count": len(tasks),
+	}, nil
+}
+
+func (t *ScheduleCronTool) deleteCron(input map[string]interface{}, cronDir string) (interface{}, error) {
+	taskID, _ := input["task_id"].(string)
+	if taskID == "" {
+		return nil, ErrRequiredField("task_id")
+	}
+
+	path := filepath.Join(cronDir, taskID+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to delete cron task: %w", err)
+	}
+
+	return map[string]interface{}{
+		"id":     taskID,
+		"status": "deleted",
+	}, nil
+}
+
+func getCronDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".smartclaw", "cron"), nil
 }
 
 type RemoteTriggerTool struct{}
@@ -208,14 +245,18 @@ func (t *SendMessageTool) Execute(ctx context.Context, input map[string]interfac
 
 type EnterWorktreeTool struct{}
 
-func (t *EnterWorktreeTool) Name() string        { return "enter_worktree" }
-func (t *EnterWorktreeTool) Description() string { return "Enter git worktree" }
+func (t *EnterWorktreeTool) Name() string { return "enter_worktree" }
+func (t *EnterWorktreeTool) Description() string {
+	return "Create and enter a git worktree. Creates a new working directory linked to a branch."
+}
 
 func (t *EnterWorktreeTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"path": map[string]interface{}{"type": "string"},
+			"path":    map[string]interface{}{"type": "string", "description": "Path for the new worktree"},
+			"branch":  map[string]interface{}{"type": "string", "description": "Branch name (creates new branch if -b prefix used)"},
+			"workdir": map[string]interface{}{"type": "string", "description": "Working directory of the git repo"},
 		},
 		"required": []string{"path"},
 	}
@@ -223,27 +264,84 @@ func (t *EnterWorktreeTool) InputSchema() map[string]interface{} {
 
 func (t *EnterWorktreeTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
 	path, _ := input["path"].(string)
+	if path == "" {
+		return nil, ErrRequiredField("path")
+	}
+
+	workdir, _ := input["workdir"].(string)
+	if workdir == "" {
+		workdir = "."
+	}
+
+	args := []string{"worktree", "add"}
+	if branch, ok := input["branch"].(string); ok && branch != "" {
+		args = append(args, "-b", branch)
+	}
+	args = append(args, path)
+
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = workdir
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(output)))
+	}
+
+	absPath, _ := filepath.Abs(path)
 	return map[string]interface{}{
-		"path":   path,
-		"status": "not implemented",
+		"path":    absPath,
+		"status":  "created",
+		"message": strings.TrimSpace(string(output)),
 	}, nil
 }
 
 type ExitWorktreeTool struct{}
 
-func (t *ExitWorktreeTool) Name() string        { return "exit_worktree" }
-func (t *ExitWorktreeTool) Description() string { return "Exit git worktree" }
+func (t *ExitWorktreeTool) Name() string { return "exit_worktree" }
+func (t *ExitWorktreeTool) Description() string {
+	return "Remove a git worktree and clean up"
+}
 
 func (t *ExitWorktreeTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
+		"type": "object",
+		"properties": map[string]interface{}{
+			"path":    map[string]interface{}{"type": "string", "description": "Path of the worktree to remove"},
+			"workdir": map[string]interface{}{"type": "string", "description": "Working directory of the main git repo"},
+			"force":   map[string]interface{}{"type": "boolean", "description": "Force removal even with uncommitted changes"},
+		},
 	}
 }
 
 func (t *ExitWorktreeTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+	path, _ := input["path"].(string)
+	workdir, _ := input["workdir"].(string)
+	if workdir == "" {
+		workdir = "."
+	}
+
+	args := []string{"worktree", "remove"}
+	if force, ok := input["force"].(bool); ok && force {
+		args = append(args, "--force")
+	}
+	if path != "" {
+		args = append(args, path)
+	} else {
+		return nil, ErrRequiredField("path")
+	}
+
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = workdir
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git worktree remove failed: %s", strings.TrimSpace(string(output)))
+	}
+
 	return map[string]interface{}{
-		"status": "not implemented",
+		"path":    path,
+		"status":  "removed",
+		"message": strings.TrimSpace(string(output)),
 	}, nil
 }
 
@@ -347,15 +445,18 @@ func (t *ToolSearchTool) Execute(ctx context.Context, input map[string]interface
 
 type REPLTool struct{}
 
-func (t *REPLTool) Name() string        { return "repl" }
-func (t *REPLTool) Description() string { return "Interactive REPL for evaluating expressions" }
+func (t *REPLTool) Name() string { return "repl" }
+func (t *REPLTool) Description() string {
+	return "Evaluate an expression in a sandboxed REPL (JavaScript via Node.js or Python)"
+}
 
 func (t *REPLTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"expression": map[string]interface{}{"type": "string"},
-			"language":   map[string]interface{}{"type": "string", "default": "javascript"},
+			"expression": map[string]interface{}{"type": "string", "description": "Expression to evaluate"},
+			"language":   map[string]interface{}{"type": "string", "default": "javascript", "description": "Language: javascript or python"},
+			"timeout":    map[string]interface{}{"type": "integer", "default": 10000, "description": "Timeout in milliseconds"},
 		},
 		"required": []string{"expression"},
 	}
@@ -363,64 +464,62 @@ func (t *REPLTool) InputSchema() map[string]interface{} {
 
 func (t *REPLTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
 	expr, _ := input["expression"].(string)
+	if expr == "" {
+		return nil, ErrRequiredField("expression")
+	}
+
 	lang, _ := input["language"].(string)
+	if lang == "" {
+		lang = "javascript"
+	}
+
+	timeout := 10000
+	if t, ok := input["timeout"].(int); ok && t > 0 {
+		timeout = t
+	}
+	if timeout > 30000 {
+		timeout = 30000
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	switch lang {
+	case "javascript", "js", "node":
+		cmd = exec.CommandContext(ctx, "node", "-e", expr)
+	case "python", "py", "python3":
+		cmd = exec.CommandContext(ctx, "python3", "-c", expr)
+	default:
+		return nil, fmt.Errorf("unsupported language: %s (supported: javascript, python)", lang)
+	}
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	timedOut := false
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			timedOut = true
+		}
+	}
 
 	return map[string]interface{}{
 		"expression": expr,
 		"language":   lang,
-		"result":     "REPL evaluation not implemented",
-	}, nil
-}
-
-type TeamCreateTool struct{}
-
-func (t *TeamCreateTool) Name() string        { return "team_create" }
-func (t *TeamCreateTool) Description() string { return "Create a new team/workspace" }
-
-func (t *TeamCreateTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"name":        map[string]interface{}{"type": "string"},
-			"description": map[string]interface{}{"type": "string"},
-		},
-		"required": []string{"name"},
-	}
-}
-
-func (t *TeamCreateTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	name, _ := input["name"].(string)
-	desc, _ := input["description"].(string)
-
-	return map[string]interface{}{
-		"id":          fmt.Sprintf("team_%d", time.Now().Unix()),
-		"name":        name,
-		"description": desc,
-		"created":     true,
-	}, nil
-}
-
-type TeamDeleteTool struct{}
-
-func (t *TeamDeleteTool) Name() string        { return "team_delete" }
-func (t *TeamDeleteTool) Description() string { return "Delete a team/workspace" }
-
-func (t *TeamDeleteTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{"type": "string"},
-		},
-		"required": []string{"id"},
-	}
-}
-
-func (t *TeamDeleteTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	id, _ := input["id"].(string)
-
-	return map[string]interface{}{
-		"id":      id,
-		"deleted": true,
+		"result":     strings.TrimSpace(stdout.String()),
+		"error":      strings.TrimSpace(stderr.String()),
+		"exitCode":   exitCode,
+		"timedOut":   timedOut,
 	}, nil
 }
 
@@ -504,34 +603,5 @@ func (t *ExitPlanModeTool) Execute(ctx context.Context, input map[string]interfa
 		"mode":      "normal",
 		"summary":   summary,
 		"activated": false,
-	}, nil
-}
-
-type McpAuthTool struct{}
-
-func (t *McpAuthTool) Name() string        { return "mcp_auth" }
-func (t *McpAuthTool) Description() string { return "Authenticate with an MCP server using OAuth" }
-
-func (t *McpAuthTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"server": map[string]interface{}{"type": "string"},
-		},
-		"required": []string{"server"},
-	}
-}
-
-func (t *McpAuthTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	server, _ := input["server"].(string)
-	if server == "" {
-		return nil, ErrRequiredField("server")
-	}
-
-	return map[string]interface{}{
-		"status":  "auth_url",
-		"server":  server,
-		"message": "OAuth flow initiated. Please complete authentication in your browser.",
-		"authUrl": fmt.Sprintf("https://example.com/oauth/%s", server),
 	}, nil
 }

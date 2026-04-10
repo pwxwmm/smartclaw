@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role          TEXT NOT NULL,
     content       TEXT NOT NULL,
     tokens        INTEGER DEFAULT 0,
+    tool_calls    TEXT,
     tool_name     TEXT,
     tool_input    TEXT,
     tool_result   TEXT,
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS skills (
     content     TEXT,
     source      TEXT DEFAULT 'learned',
     use_count   INTEGER DEFAULT 0,
+    last_used_at DATETIME,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -79,4 +81,35 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_skills_source ON skills(source);
 CREATE INDEX IF NOT EXISTS idx_observations_category ON user_observations(category, key);
+
+CREATE TABLE IF NOT EXISTS skill_invocations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id    TEXT NOT NULL,
+    session_id  TEXT,
+    invoked_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skill_outcomes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id    TEXT NOT NULL,
+    session_id  TEXT,
+    outcome     TEXT NOT NULL,
+    recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_invocations_skill ON skill_invocations(skill_id);
+CREATE INDEX IF NOT EXISTS idx_skill_outcomes_skill ON skill_outcomes(skill_id, outcome);
+
+CREATE TABLE IF NOT EXISTS message_edges (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL REFERENCES sessions(id),
+    node_id     TEXT NOT NULL,
+    parent_id   TEXT,
+    branch_name TEXT,
+    role        TEXT NOT NULL,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_edges_session ON message_edges(session_id, node_id);
+CREATE INDEX IF NOT EXISTS idx_message_edges_parent ON message_edges(session_id, parent_id);
 `

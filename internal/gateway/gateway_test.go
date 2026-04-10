@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -206,6 +207,55 @@ func (m *mockAdapter) Send(userID string, response *GatewayResponse) error {
 
 func (m *mockAdapter) Name() string {
 	return m.name
+}
+
+func TestFrozenSnapshot(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := store.NewStoreWithDir(dir)
+	if err != nil {
+		t.Fatalf("NewStoreWithDir: %v", err)
+	}
+
+	pm, err := layers.NewPromptMemoryWithDir(dir)
+	if err != nil {
+		t.Fatalf("NewPromptMemoryWithDir: %v", err)
+	}
+
+	mm := memory.NewMemoryManagerWithComponents(pm, s, nil)
+
+	mm.FreezeSnapshot("session-1")
+
+	snapshot := mm.GetSnapshot("session-1")
+	if snapshot == nil {
+		t.Fatal("snapshot should exist after FreezeSnapshot")
+	}
+
+	originalMemory := snapshot.MemoryContent
+
+	_ = pm.UpdateMemory("# Changed Memory\nThis should not affect snapshot")
+
+	snapshot2 := mm.GetSnapshot("session-1")
+	if snapshot2.MemoryContent != originalMemory {
+		t.Error("snapshot should not change after memory update during session")
+	}
+
+	ctx2 := context.Background()
+	ctxWithSnapshot := mm.BuildSystemContextWithSnapshot(ctx2, "test query", "session-1")
+	ctxWithoutSnapshot := mm.BuildSystemContext(ctx2, "test query")
+
+	if ctxWithSnapshot == "" {
+		t.Error("context with snapshot should not be empty")
+	}
+	if ctxWithoutSnapshot == "" {
+		t.Error("context without snapshot should not be empty")
+	}
+
+	mm.ClearSnapshot("session-1")
+	snapshot3 := mm.GetSnapshot("session-1")
+	if snapshot3 != nil {
+		t.Error("snapshot should be nil after ClearSnapshot")
+	}
 }
 
 func TestMain(m *testing.M) {

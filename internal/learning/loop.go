@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/store"
 )
 
 type Message struct {
@@ -30,15 +32,18 @@ type PromptMemoryWriter interface {
 	UpdateMemory(content string) error
 	UpdateUserProfile(profile string) error
 	AutoLoad() string
+	EnforceLimit() error
 }
 
 type LearningLoop struct {
-	evaluator   *Evaluator
-	extractor   *Extractor
-	skillWriter *SkillWriter
-	nudgeEngine *NudgeEngine
-	promptMem   PromptMemoryWriter
-	enabled     bool
+	evaluator    *Evaluator
+	extractor    *Extractor
+	skillWriter  *SkillWriter
+	skillAuditor *SkillAuditor
+	skillTracker *SkillTracker
+	nudgeEngine  *NudgeEngine
+	promptMem    PromptMemoryWriter
+	enabled      bool
 }
 
 func NewLearningLoop(llmClient LLMClient, promptMem PromptMemoryWriter, skillsDir string) *LearningLoop {
@@ -54,6 +59,20 @@ func NewLearningLoop(llmClient LLMClient, promptMem PromptMemoryWriter, skillsDi
 		nudgeEngine: NewNudgeEngine(DefaultNudgeConfig()),
 		promptMem:   promptMem,
 		enabled:     true,
+	}
+}
+
+func (l *LearningLoop) SetSkillAuditor(auditor *SkillAuditor) {
+	l.skillAuditor = auditor
+}
+
+func (l *LearningLoop) SetSkillTracker(tracker *SkillTracker) {
+	l.skillTracker = tracker
+}
+
+func (l *LearningLoop) SetStore(s *store.Store) {
+	if l.skillAuditor == nil && s != nil {
+		l.skillAuditor = NewSkillAuditor(s, l.skillWriter.GetSkillsDir())
 	}
 }
 
@@ -89,10 +108,26 @@ func (l *LearningLoop) OnTaskComplete(ctx context.Context, sessionID string, mes
 		return fmt.Errorf("learning loop write skill: %w", err)
 	}
 
+	if l.skillAuditor != nil {
+		l.skillAuditor.RecordSkillUse(skill.Name)
+	}
+
+	if l.skillTracker != nil {
+		if err := l.skillTracker.RecordInvocation(skill.Name, sessionID); err != nil {
+			slog.Warn("learning loop: failed to record skill invocation", "error", err)
+		}
+		if err := l.skillTracker.RecordOutcome(skill.Name, OutcomeSuccess, sessionID); err != nil {
+			slog.Warn("learning loop: failed to record skill outcome", "error", err)
+		}
+	}
+
 	if l.promptMem != nil {
 		if err := l.promptMem.AppendToSection("Learned Patterns",
 			fmt.Sprintf("- %s: %s", skill.Name, skill.Description)); err != nil {
 			slog.Error("learning loop: failed to update MEMORY.md", "error", err)
+		}
+		if err := l.promptMem.EnforceLimit(); err != nil {
+			slog.Warn("learning loop: EnforceLimit failed", "error", err)
 		}
 	}
 
@@ -107,6 +142,18 @@ func (l *LearningLoop) OnNudge(ctx context.Context, sessionID string, messages [
 
 	slog.Info("learning loop: nudge triggered", "session", sessionID, "messages", len(messages))
 
+	if l.skillAuditor != nil {
+		auditResult, err := l.skillAuditor.AuditStaleSkills(DefaultAuditConfig())
+		if err != nil {
+			slog.Warn("learning loop: skill audit failed", "error", err)
+		} else if len(auditResult.Evicted) > 0 {
+			slog.Info("learning loop: evicted stale skills", "count", len(auditResult.Evicted), "names", auditResult.Evicted)
+			if l.promptMem != nil {
+				_ = l.promptMem.EnforceLimit()
+			}
+		}
+	}
+
 	evaluation, err := l.evaluator.Evaluate(ctx, messages, nil)
 	if err != nil {
 		return fmt.Errorf("learning loop nudge evaluate: %w", err)
@@ -119,12 +166,31 @@ func (l *LearningLoop) OnNudge(ctx context.Context, sessionID string, messages [
 		}
 
 		if err := l.skillWriter.WriteSkill(skill); err != nil {
-			return fmt.Errorf("learning loop nudge write: %w", err)
+			return fmt.Errorf("learning loop nudge write skill: %w", err)
+		}
+
+		if l.skillAuditor != nil {
+			l.skillAuditor.RecordSkillUse(skill.Name)
+		}
+
+		if l.skillTracker != nil {
+			if err := l.skillTracker.RecordInvocation(skill.Name, sessionID); err != nil {
+				slog.Warn("learning loop: failed to record nudge skill invocation", "error", err)
+			}
+			if err := l.skillTracker.RecordOutcome(skill.Name, OutcomeSuccess, sessionID); err != nil {
+				slog.Warn("learning loop: failed to record nudge skill outcome", "error", err)
+			}
 		}
 
 		if l.promptMem != nil {
 			_ = l.promptMem.AppendToSection("Learned Patterns",
 				fmt.Sprintf("- %s: %s", skill.Name, skill.Description))
+		}
+	}
+
+	if l.promptMem != nil {
+		if err := l.promptMem.EnforceLimit(); err != nil {
+			slog.Warn("learning loop: nudge EnforceLimit failed", "error", err)
 		}
 	}
 

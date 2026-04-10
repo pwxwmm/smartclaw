@@ -13,6 +13,9 @@ type SessionRouter struct {
 }
 
 func NewSessionRouter(s *store.Store) *SessionRouter {
+	if s == nil {
+		slog.Warn("router: SQLite unavailable, session routing will create new sessions each time")
+	}
 	return &SessionRouter{store: s}
 }
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/services"
+	"github.com/instructkr/smartclaw/internal/tools"
 )
 
 func initColorProfile() {
@@ -445,12 +448,16 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 		if len(args) == 0 {
 			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
 				"Session Management Commands:\n"+
-					"  /session new         - Create new session\n"+
-					"  /session list        - List all sessions\n"+
-					"  /session load <id>   - Load a session\n"+
-					"  /session save        - Save current session\n"+
-					"  /session delete <id> - Delete a session\n"+
-					"  /session export <id> - Export session (markdown/json)\n\n"+
+					"  /session new          - Create new session\n"+
+					"  /session list         - List all sessions\n"+
+					"  /session load <id>    - Load a session\n"+
+					"  /session save         - Save current session\n"+
+					"  /session delete <id>  - Delete a session\n"+
+					"  /session export <id>  - Export session (markdown/json)\n"+
+					"  /session record start - Start recording session\n"+
+					"  /session record stop  - Stop recording session\n"+
+					"  /session record status- Show recording status\n"+
+					"  /session replay <file>- Replay a recording\n\n"+
 					"Current session: %s\n"+
 					"Messages: %d",
 				m.currentSession.ID, len(m.currentSession.Messages))))
@@ -604,6 +611,88 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 				"Session exported to: %s\nFormat: %s",
 				fullPath, format)))
 
+		case "record":
+			if len(args) < 2 {
+				AddOutput(m, m.formatError("Usage: /session record <start|stop|status>"))
+				return nil
+			}
+
+			switch args[1] {
+			case "start":
+				if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
+					AddOutput(m, m.formatError("Already recording. Use /session record stop first."))
+					return nil
+				}
+				recorder, err := services.NewSessionRecorder("")
+				if err != nil {
+					AddOutput(m, m.formatError(fmt.Sprintf("Failed to create recorder: %v", err)))
+					return nil
+				}
+				if err := recorder.Start(); err != nil {
+					AddOutput(m, m.formatError(fmt.Sprintf("Failed to start recording: %v", err)))
+					return nil
+				}
+				m.sessionRecorder = recorder
+				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Recording started: %s", recorder.GetPath())))
+
+			case "stop":
+				if m.sessionRecorder == nil || !m.sessionRecorder.IsRecording() {
+					AddOutput(m, m.formatError("Not currently recording."))
+					return nil
+				}
+				path := m.sessionRecorder.GetPath()
+				if err := m.sessionRecorder.Stop(); err != nil {
+					AddOutput(m, m.formatError(fmt.Sprintf("Failed to stop recording: %v", err)))
+					return nil
+				}
+				m.sessionRecorder = nil
+				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Recording stopped. Saved to: %s", path)))
+
+			case "status":
+				if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
+					AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+						"Recording: active\nFile: %s\nEntries: %d",
+						m.sessionRecorder.GetPath(),
+						len(m.sessionRecorder.GetEntries()))))
+				} else {
+					AddOutput(m, m.formatAssistantOutput("Recording: inactive"))
+				}
+
+			default:
+				AddOutput(m, m.formatError("Usage: /session record <start|stop|status>"))
+			}
+
+		case "replay":
+			if len(args) < 2 {
+				AddOutput(m, m.formatError("Usage: /session replay <recording-file>"))
+				return nil
+			}
+			playback, err := services.NewPlayback(args[1])
+			if err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to open recording: %v", err)))
+				return nil
+			}
+			defer playback.Close()
+
+			if err := playback.Load(); err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to load recording: %v", err)))
+				return nil
+			}
+
+			entries := playback.GetAll()
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Replay: %s (%d entries)\n\n", args[1], len(entries)))
+			for _, entry := range entries {
+				role, _ := entry.Data["role"].(string)
+				content, _ := entry.Data["content"].(string)
+				if role != "" && content != "" {
+					sb.WriteString(fmt.Sprintf("[%s] %s\n", role, content))
+				} else {
+					sb.WriteString(fmt.Sprintf("[%s] %v\n", entry.Type, entry.Data))
+				}
+			}
+			AddOutput(m, m.formatAssistantOutput(sb.String()))
+
 		default:
 			AddOutput(m, m.formatError(fmt.Sprintf("Unknown session command: %s", args[0])))
 		}
@@ -622,6 +711,15 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 
 	case "/compact":
 		ProcessCompactCommand(m, args)
+
+	case "/git":
+		ProcessGitCommand(m, args)
+
+	case "/lsp":
+		ProcessLSPCommand(m, args)
+
+	case "/team":
+		ProcessTeamCommand(m, args)
 
 	default:
 		AddOutput(m, m.formatError(fmt.Sprintf("Unknown command: %s. Type /help for available commands.", command)))
@@ -1600,26 +1698,54 @@ func ProcessCompactCommand(m *Model, args []string) {
 		}
 
 	case "auto":
-		AddOutput(m, m.formatAssistantOutput("Auto-compact configuration (coming soon)\n\nUse /compact now to manually compact."))
+		m.autoCompactEnabled = !m.autoCompactEnabled
+		status := "disabled"
+		if m.autoCompactEnabled {
+			status = "enabled"
+		}
+		threshold := m.contextManager.maxTokens * 70 / 100
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+			"Auto-compact %s\n\n"+
+				"When enabled, context will be automatically compacted when token usage\n"+
+				"exceeds the threshold (~%d tokens, 70%% of %d).\n\n"+
+				"Use /compact now to manually compact at any time.",
+			status,
+			threshold,
+			m.contextManager.maxTokens)))
 
 	case "status":
+		state := m.compactService.GetState()
+		autoLabel := "disabled"
+		if m.autoCompactEnabled {
+			autoLabel = "enabled"
+		}
 		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
 			"Compact Statistics:\n"+
 				"  Total messages: %d\n"+
 				"  Kept messages: %d\n"+
 				"  Current tokens: %d\n"+
 				"  Max tokens: %d\n"+
-				"  Usage: %.1f%%",
+				"  Usage: %.1f%%\n"+
+				"  Auto-compact: %s\n"+
+				"  Total tokens saved: %d\n"+
+				"  Last compact: %s",
 			m.contextManager.GetMessageCount(),
 			countKeptMessages(m),
 			m.contextManager.GetTokenCount(),
 			m.contextManager.maxTokens,
-			float64(m.contextManager.GetTokenCount())/float64(m.contextManager.maxTokens)*100)))
+			float64(m.contextManager.GetTokenCount())/float64(m.contextManager.maxTokens)*100,
+			autoLabel,
+			state.TotalTokensSaved,
+			state.LastCompactTime.Format("15:04:05"))))
 
 	case "config":
+		autoStatus := "disabled"
+		if m.autoCompactEnabled {
+			autoStatus = "enabled"
+		}
 		AddOutput(m, m.formatAssistantOutput(
 			"Compact Configuration:\n"+
-				"  Auto-compact: enabled\n"+
+				"  Auto-compact: "+autoStatus+"\n"+
 				"  Warning threshold: 70%\n"+
 				"  Error threshold: 90%\n"+
 				"  Keep recent: 5 messages\n\n"+
@@ -1644,4 +1770,674 @@ func countKeptMessages(m *Model) int {
 		}
 	}
 	return count
+}
+
+func ProcessGitCommand(m *Model, args []string) {
+	if m.gitManager == nil {
+		AddOutput(m, m.formatError("Git manager not initialized"))
+		return
+	}
+
+	if !m.gitManager.IsGitRepo() {
+		AddOutput(m, m.formatError("Not a git repository. Navigate to a git repository first."))
+		return
+	}
+
+	if len(args) == 0 {
+		status, err := m.gitManager.GetStatus()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get git status: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(m.gitManager.FormatStatus(status)))
+		return
+	}
+
+	switch args[0] {
+	case "status", "st":
+		status, err := m.gitManager.GetStatus()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get status: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(m.gitManager.FormatStatus(status)))
+
+	case "diff":
+		cached := false
+		if len(args) >= 2 && (args[1] == "cached" || args[1] == "staged") {
+			cached = true
+		}
+		diff, err := m.gitManager.Diff(cached)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get diff: %v", err)))
+			return
+		}
+		if diff == "" {
+			AddOutput(m, m.formatAssistantOutput("No changes to show"))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(diff))
+
+	case "log":
+		count := 10
+		if len(args) >= 2 {
+			fmt.Sscanf(args[1], "%d", &count)
+		}
+		commits, err := m.gitManager.GetLog(count)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get log: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(m.gitManager.FormatLog(commits)))
+
+	case "branches", "br":
+		branches, err := m.gitManager.GetBranches()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get branches: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(m.gitManager.FormatBranches(branches)))
+
+	case "add":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /git add <file1> [file2] ...  or /git add ."))
+			return
+		}
+		files := args[1:]
+		if err := m.gitManager.Add(files); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to add files: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Staged %d file(s): %s", len(files), strings.Join(files, ", "))))
+
+	case "commit":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /git commit <message>"))
+			return
+		}
+		message := strings.Join(args[1:], " ")
+		if err := m.gitManager.Commit(message); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to commit: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Committed: %s", message)))
+
+	case "ai-commit":
+		status, err := m.gitManager.GetStatus()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get status: %v", err)))
+			return
+		}
+		if len(status.Staged) == 0 && len(status.Unstaged) == 0 {
+			AddOutput(m, m.formatError("No changes to commit. Use /git add <files> first."))
+			return
+		}
+		if len(status.Staged) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No staged changes. Staging all modified files..."))
+			if err := m.gitManager.Add([]string{"."}); err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to stage files: %v", err)))
+				return
+			}
+		}
+		diff, err := m.gitManager.Diff(true)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get staged diff: %v", err)))
+			return
+		}
+		files := status.Staged
+		if len(files) == 0 {
+			files = status.Unstaged
+		}
+		commitMsg := generateAICommitMessage(diff, files)
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("📝 Generated commit message:\n  %s\n\nCommitting...", commitMsg)))
+		if err := m.gitManager.Commit(commitMsg); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to commit: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Committed: %s", commitMsg)))
+
+	case "ai-review":
+		diff, err := m.gitManager.Diff(false)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get diff: %v", err)))
+			return
+		}
+		if diff == "" {
+			stagedDiff, _ := m.gitManager.Diff(true)
+			if stagedDiff == "" {
+				AddOutput(m, m.formatAssistantOutput("No changes to review"))
+				return
+			}
+			diff = stagedDiff
+		}
+		review := generateAIReview(diff)
+		AddOutput(m, m.formatAssistantOutput(review))
+
+	case "push":
+		status, _ := m.gitManager.GetStatus()
+		setUpstream := !status.HasUpstream
+		branch := status.Branch
+		if len(args) >= 2 {
+			branch = args[1]
+		}
+		if err := m.gitManager.Push(setUpstream, branch); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to push: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Pushed to %s", branch)))
+
+	case "pull":
+		if err := m.gitManager.Pull(); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to pull: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput("✓ Pulled latest changes"))
+
+	case "checkout", "co":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /git checkout <branch>"))
+			return
+		}
+		if err := m.gitManager.Checkout(args[1]); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to checkout: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Switched to branch: %s", args[1])))
+
+	case "branch":
+		if len(args) >= 2 && args[1] != "list" && args[1] != "ls" {
+			if err := m.gitManager.CreateBranch(args[1]); err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to create branch: %v", err)))
+				return
+			}
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Created and switched to branch: %s", args[1])))
+			return
+		}
+		branches, err := m.gitManager.GetBranches()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get branches: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(m.gitManager.FormatBranches(branches)))
+
+	default:
+		AddOutput(m, m.formatAssistantOutput(
+			"Git Commands:\n"+
+				"  /git                     - Show git status\n"+
+				"  /git status              - Detailed status\n"+
+				"  /git diff [cached]       - Show diff\n"+
+				"  /git log [count]         - Show commit log\n"+
+				"  /git branches            - List branches\n"+
+				"  /git add <files>         - Stage files\n"+
+				"  /git commit <message>    - Commit with message\n"+
+				"  /git ai-commit           - AI-generated commit message\n"+
+				"  /git ai-review           - AI review of changes\n"+
+				"  /git push [branch]       - Push changes\n"+
+				"  /git pull                - Pull latest\n"+
+				"  /git checkout <branch>   - Switch branch\n"+
+				"  /git branch <name>       - Create new branch"))
+	}
+}
+
+func generateAICommitMessage(diff string, files []string) string {
+	commitType := "chore"
+	scope := ""
+	subject := "update files"
+
+	if len(files) > 0 {
+		scope = extractGitScope(files[0])
+	}
+
+	lines := strings.Split(diff, "\n")
+	added, removed := 0, 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			added++
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			removed++
+		}
+	}
+
+	for _, f := range files {
+		lower := strings.ToLower(f)
+		switch {
+		case strings.Contains(lower, "test") || strings.HasSuffix(lower, "_test.go"):
+			commitType = "test"
+			subject = fmt.Sprintf("add/update tests for %s", scope)
+		case strings.Contains(lower, ".md") || strings.Contains(lower, "doc"):
+			commitType = "docs"
+			subject = fmt.Sprintf("update documentation for %s", scope)
+		case strings.Contains(lower, "fix") || strings.Contains(lower, "bug"):
+			commitType = "fix"
+			subject = fmt.Sprintf("fix issue in %s", scope)
+		case strings.HasSuffix(lower, ".go") || strings.HasSuffix(lower, ".ts") || strings.HasSuffix(lower, ".py"):
+			commitType = "feat"
+			subject = fmt.Sprintf("update %s", scope)
+		}
+	}
+
+	if added > 0 && removed == 0 {
+		subject = fmt.Sprintf("add %s", scope)
+	} else if removed > 0 && added == 0 {
+		subject = fmt.Sprintf("remove code from %s", scope)
+	}
+
+	if scope != "" {
+		return fmt.Sprintf("%s(%s): %s", commitType, scope, subject)
+	}
+	return fmt.Sprintf("%s: %s", commitType, subject)
+}
+
+func generateAIReview(diff string) string {
+	var findings []string
+	lines := strings.Split(diff, "\n")
+
+	for i, line := range lines {
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(line, "+"), " ")
+		lower := strings.ToLower(trimmed)
+
+		switch {
+		case strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key"):
+			findings = append(findings, fmt.Sprintf("🔴 [SECURITY] Line %d: Potential secret or credential exposed", i+1))
+		case strings.Contains(lower, "todo") || strings.Contains(lower, "fixme") || strings.Contains(lower, "hack"):
+			findings = append(findings, fmt.Sprintf("🟡 [QUALITY] Line %d: TODO/FIXME/HACK comment found", i+1))
+		case strings.Contains(lower, "panic("):
+			findings = append(findings, fmt.Sprintf("🟡 [ERROR-HANDLING] Line %d: Unhandled panic() call", i+1))
+		}
+	}
+
+	if len(findings) == 0 {
+		return "🌿 AI Review: No obvious issues found in the current changes.\n\nConsider reviewing manually for:\n- Logic correctness\n- Edge cases\n- Performance implications"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("🌿 AI Review Results:\n\n")
+	for _, f := range findings {
+		sb.WriteString(f + "\n")
+	}
+	sb.WriteString(fmt.Sprintf("\n%d finding(s) in %d lines of diff", len(findings), len(lines)))
+	return sb.String()
+}
+
+func extractGitScope(filePath string) string {
+	parts := strings.Split(filePath, "/")
+	if len(parts) > 1 {
+		return parts[len(parts)-2]
+	}
+	name := parts[0]
+	ext := strings.LastIndex(name, ".")
+	if ext > 0 {
+		name = name[:ext]
+	}
+	if name == "" {
+		return "general"
+	}
+	return name
+}
+
+func ProcessLSPCommand(m *Model, args []string) {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput(
+			"LSP Status:\n\n"+
+				"Available language servers:\n"+
+				"  .go   → gopls\n"+
+				"  .ts   → typescript-language-server\n"+
+				"  .tsx  → typescript-language-server\n"+
+				"  .js   → typescript-language-server\n"+
+				"  .py   → pylsp\n"+
+				"  .rs   → rust-analyzer\n\n"+
+				"Commands:\n"+
+				"  /lsp servers           - List active LSP servers\n"+
+				"  /lsp definition <file> <line> <char>  - Go to definition\n"+
+				"  /lsp references <file> <line> <char>  - Find references\n"+
+				"  /lsp symbols <file>    - Document symbols\n"+
+				"  /lsp hover <file> <line> <char>       - Hover info\n"+
+				"  /lsp completion <file> <line> <char>  - Completions\n"+
+				"  /lsp stop              - Stop all LSP servers"))
+		return
+	}
+
+	switch args[0] {
+	case "servers", "list", "ls":
+		AddOutput(m, m.formatAssistantOutput(
+			"Active LSP Servers:\n\n"+
+				"Cached clients are managed per file extension.\n"+
+				"Use /lsp stop to shut down all servers."))
+
+	case "definition", "def":
+		if len(args) < 4 {
+			AddOutput(m, m.formatError("Usage: /lsp definition <file> <line> <character>"))
+			return
+		}
+		result, err := executeLSPOperation(args[1], "definition", args[2:])
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("LSP definition failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Definition:\n%v", result)))
+
+	case "references", "refs":
+		if len(args) < 4 {
+			AddOutput(m, m.formatError("Usage: /lsp references <file> <line> <character>"))
+			return
+		}
+		result, err := executeLSPOperation(args[1], "references", args[2:])
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("LSP references failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("References:\n%v", result)))
+
+	case "symbols", "sym":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /lsp symbols <file>"))
+			return
+		}
+		result, err := executeLSPOperation(args[1], "symbols", nil)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("LSP symbols failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Symbols:\n%v", result)))
+
+	case "hover":
+		if len(args) < 4 {
+			AddOutput(m, m.formatError("Usage: /lsp hover <file> <line> <character>"))
+			return
+		}
+		result, err := executeLSPOperation(args[1], "hover", args[2:])
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("LSP hover failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Hover:\n%v", result)))
+
+	case "completion", "comp":
+		if len(args) < 4 {
+			AddOutput(m, m.formatError("Usage: /lsp completion <file> <line> <character>"))
+			return
+		}
+		result, err := executeLSPOperation(args[1], "completion", args[2:])
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("LSP completion failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Completions:\n%v", result)))
+
+	case "stop":
+		tools.CloseAllLSPPClients()
+		AddOutput(m, m.formatAssistantOutput("✓ All LSP servers stopped"))
+
+	default:
+		AddOutput(m, m.formatAssistantOutput(
+			"LSP Commands:\n"+
+				"  /lsp                     - Show LSP status\n"+
+				"  /lsp servers             - List active servers\n"+
+				"  /lsp definition <f> <l> <c>  - Go to definition\n"+
+				"  /lsp references <f> <l> <c>  - Find references\n"+
+				"  /lsp symbols <file>      - Document symbols\n"+
+				"  /lsp hover <f> <l> <c>  - Hover info\n"+
+				"  /lsp completion <f> <l> <c>  - Completions\n"+
+				"  /lsp stop                - Stop all servers"))
+	}
+}
+
+func executeLSPOperation(filePath, operation string, posArgs []string) (interface{}, error) {
+	rootPath := "."
+	client, err := tools.GetOrCreateLSPClient(filePath, rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var line, character int
+	if len(posArgs) >= 2 {
+		fmt.Sscanf(posArgs[0], "%d", &line)
+		fmt.Sscanf(posArgs[1], "%d", &character)
+	}
+
+	switch operation {
+	case "definition":
+		return client.GotoDefinition(ctx, filePath, line, character)
+	case "references":
+		return client.FindReferences(ctx, filePath, line, character)
+	case "symbols":
+		return client.DocumentSymbols(ctx, filePath)
+	case "hover":
+		return client.Hover(ctx, filePath, line, character)
+	case "completion":
+		return client.Completion(ctx, filePath, line, character)
+	default:
+		return nil, fmt.Errorf("unknown LSP operation: %s", operation)
+	}
+}
+
+func ProcessTeamCommand(m *Model, args []string) {
+	registry := tools.GetTeamRegistry()
+
+	if len(args) == 0 {
+		teamIDs := registry.List()
+		if len(teamIDs) == 0 {
+			AddOutput(m, m.formatAssistantOutput(
+				"Team Collaboration:\n\n"+
+					"No teams created yet.\n\n"+
+					"Commands:\n"+
+					"  /team create <name> [desc]      - Create a team\n"+
+					"  /team list                      - List teams\n"+
+					"  /team info <id>                 - Show team details\n"+
+					"  /team share <id> <content>      - Share a memory\n"+
+					"  /team memories <id>             - List team memories\n"+
+					"  /team search <id> <query>       - Search memories\n"+
+					"  /team sync <id>                 - Sync with remote\n"+
+					"  /team config <id>               - Configure sync\n"+
+					"  /team delete <id>               - Delete a team"))
+			return
+		}
+
+		var sb strings.Builder
+		sb.WriteString("Teams:\n\n")
+		for _, id := range teamIDs {
+			sb.WriteString(fmt.Sprintf("  • %s\n", id))
+		}
+		sb.WriteString("\nUse /team info <id> for details")
+		AddOutput(m, m.formatAssistantOutput(sb.String()))
+		return
+	}
+
+	switch args[0] {
+	case "create", "new":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /team create <name> [description]"))
+			return
+		}
+		name := args[1]
+		desc := ""
+		if len(args) >= 3 {
+			desc = strings.Join(args[2:], " ")
+		}
+
+		result, err := executeTeamTool("team_create", map[string]interface{}{
+			"name": name, "description": desc,
+		})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to create team: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Created team: %s (ID: %s)", name, result.(map[string]interface{})["id"])))
+
+	case "list", "ls":
+		teamIDs := registry.List()
+		if len(teamIDs) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No teams. Use /team create <name> to create one."))
+			return
+		}
+		var sb strings.Builder
+		sb.WriteString("Teams:\n\n")
+		for _, id := range teamIDs {
+			sb.WriteString(fmt.Sprintf("  • %s\n", id))
+		}
+		AddOutput(m, m.formatAssistantOutput(sb.String()))
+
+	case "info":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /team info <team-id>"))
+			return
+		}
+		teamID := args[1]
+		tms, ok := registry.Get(teamID)
+		if !ok {
+			AddOutput(m, m.formatError(fmt.Sprintf("Team not found: %s", teamID)))
+			return
+		}
+		stats := tms.GetStats()
+		team := tms.GetTeam()
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Team: %s\n", teamID))
+		if team != nil {
+			sb.WriteString(fmt.Sprintf("  Name: %s\n", team.Name))
+			sb.WriteString(fmt.Sprintf("  Description: %s\n", team.Description))
+			sb.WriteString(fmt.Sprintf("  Members: %d\n", len(team.Members)))
+		}
+		sb.WriteString(fmt.Sprintf("  Total memories: %v\n", stats["total_memories"]))
+		sb.WriteString(fmt.Sprintf("  Sync enabled: %v\n", stats["sync_enabled"]))
+		sb.WriteString(fmt.Sprintf("  Last sync: %v\n", stats["last_sync"]))
+		AddOutput(m, m.formatAssistantOutput(sb.String()))
+
+	case "share":
+		if len(args) < 3 {
+			AddOutput(m, m.formatError("Usage: /team share <team-id> <content> [title]"))
+			return
+		}
+		teamID := args[1]
+		content := strings.Join(args[2:], " ")
+		title := fmt.Sprintf("Shared note (%s)", time.Now().Format("15:04"))
+
+		_, err := executeTeamTool("team_share_memory", map[string]interface{}{
+			"team_id": teamID, "title": title, "content": content, "type": "code", "visibility": "team",
+		})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to share memory: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Shared memory with team %s", teamID)))
+
+	case "memories":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /team memories <team-id>"))
+			return
+		}
+		teamID := args[1]
+		result, err := executeTeamTool("team_get_memories", map[string]interface{}{
+			"team_id": teamID,
+		})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get memories: %v", err)))
+			return
+		}
+		resMap := result.(map[string]interface{})
+		memories := resMap["memories"].([]map[string]interface{})
+		if len(memories) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No memories in this team"))
+			return
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Team Memories (%d):\n\n", len(memories)))
+		for _, mem := range memories {
+			sb.WriteString(fmt.Sprintf("  • [%s] %s (%s)\n", mem["type"], mem["title"], mem["id"]))
+		}
+		AddOutput(m, m.formatAssistantOutput(sb.String()))
+
+	case "search":
+		if len(args) < 3 {
+			AddOutput(m, m.formatError("Usage: /team search <team-id> <query>"))
+			return
+		}
+		teamID := args[1]
+		query := strings.Join(args[2:], " ")
+		result, err := executeTeamTool("team_search_memories", map[string]interface{}{
+			"team_id": teamID, "query": query,
+		})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Search failed: %v", err)))
+			return
+		}
+		resMap := result.(map[string]interface{})
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Found %v results for '%s'", resMap["count"], query)))
+
+	case "sync":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /team sync <team-id>"))
+			return
+		}
+		teamID := args[1]
+		_, err := executeTeamTool("team_sync", map[string]interface{}{
+			"team_id": teamID,
+		})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Sync failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Synced team %s", teamID)))
+
+	case "config":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /team config <team-id> [api_endpoint] [api_key]"))
+			return
+		}
+		teamID := args[1]
+		if len(args) < 4 {
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+				"Usage: /team config %s <api_endpoint> <api_key>\n\nSet the remote sync endpoint and API key for the team.", teamID)))
+			return
+		}
+		apiEndpoint := args[2]
+		apiKey := args[3]
+		_, err := executeTeamTool("team_sync", map[string]interface{}{
+			"team_id": teamID, "api_endpoint": apiEndpoint, "api_key": apiKey,
+		})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Config failed: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Configured team %s with endpoint %s", teamID, apiEndpoint)))
+
+	case "delete", "rm":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /team delete <team-id>"))
+			return
+		}
+		_, err := executeTeamTool("team_delete", map[string]interface{}{"id": args[1]})
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to delete team: %v", err)))
+			return
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Deleted team: %s", args[1])))
+
+	default:
+		AddOutput(m, m.formatAssistantOutput(
+			"Team Commands:\n"+
+				"  /team                     - Show team status\n"+
+				"  /team create <name>       - Create a team\n"+
+				"  /team list                - List teams\n"+
+				"  /team info <id>           - Show team details\n"+
+				"  /team share <id> <content> - Share a memory\n"+
+				"  /team memories <id>       - List team memories\n"+
+				"  /team search <id> <query> - Search memories\n"+
+				"  /team sync <id>           - Sync with remote\n"+
+				"  /team config <id> <ep> <key> - Configure sync\n"+
+				"  /team delete <id>         - Delete a team"))
+	}
+}
+
+func executeTeamTool(toolName string, input map[string]interface{}) (interface{}, error) {
+	registry := tools.GetRegistry()
+	tool := registry.Get(toolName)
+	if tool == nil {
+		return nil, fmt.Errorf("tool not found: %s", toolName)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return tool.Execute(ctx, input)
 }

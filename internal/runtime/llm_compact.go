@@ -46,7 +46,7 @@ func (lc *LLMCompactor) CompactWithLLM(messages []Message, maxTokens int) []Mess
 		return messages
 	}
 
-	prunedMiddle := pruneOldToolResults(middle)
+	prunedMiddle := pruneOldToolResults(middle, defaultMaxToolResultChars)
 
 	summary := lc.updatePreviousSummary(prunedMiddle, headEnd)
 

@@ -95,6 +95,21 @@ func (p *SSEParser) Parse() <-chan SSEEvent {
 func (c *Client) StreamMessageSSE(ctx context.Context, req *MessageRequest, handler func(event string, data []byte) error) error {
 	req.Stream = true
 
+	// Convert string system to []SystemBlock with cache_control if needed
+	if req.System != nil {
+		if sysStr, ok := req.System.(string); ok && sysStr != "" {
+			req.System = []SystemBlock{
+				{
+					Type: "text",
+					Text: sysStr,
+					CacheControl: &CacheControl{
+						Type: "ephemeral",
+					},
+				},
+			}
+		}
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
@@ -108,6 +123,7 @@ func (c *Client) StreamMessageSSE(ctx context.Context, req *MessageRequest, hand
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", c.APIKey)
 	httpReq.Header.Set("anthropic-version", DefaultVersion)
+	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("User-Agent", "claude-code/2.1.86")
 	httpReq.Header.Set("client-name", "claude-code")

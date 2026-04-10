@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -92,8 +93,29 @@ type Message = MessageParam
 
 // CreateMessage sends a message to the API
 func (c *Client) CreateMessage(messages []Message, system string) (*MessageResponse, error) {
+	var systemParam interface{}
+	if system != "" {
+		systemParam = []SystemBlock{
+			{
+				Type:         "text",
+				Text:         system,
+				CacheControl: &CacheControl{Type: "ephemeral"},
+			},
+		}
+	}
+	return c.CreateMessageWithSystem(context.Background(), messages, systemParam)
+}
+
+// CreateMessageWithSystem sends a message with a pre-built system parameter
+func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message, system interface{}) (*MessageResponse, error) {
 	if c.IsOpenAI {
-		return c.CreateMessageOpenAI(messages, system)
+		var systemStr string
+		if sb, ok := system.([]SystemBlock); ok && len(sb) > 0 {
+			systemStr = sb[0].Text
+		} else if s, ok := system.(string); ok {
+			systemStr = s
+		}
+		return c.CreateMessageOpenAI(messages, systemStr)
 	}
 
 	req := MessageRequest{
@@ -109,7 +131,7 @@ func (c *Client) CreateMessage(messages []Message, system string) (*MessageRespo
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", c.buildEndpointURL("/v1/messages"), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.buildEndpointURL("/v1/messages"), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -117,6 +139,7 @@ func (c *Client) CreateMessage(messages []Message, system string) (*MessageRespo
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", c.APIKey)
 	httpReq.Header.Set("anthropic-version", DefaultVersion)
+	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 	httpReq.Header.Set("User-Agent", "claude-code/2.1.86")
 	httpReq.Header.Set("client-name", "claude-code")
 	httpReq.Header.Set("x-client", "Claude Code")
@@ -148,7 +171,7 @@ func (c *Client) CreateMessage(messages []Message, system string) (*MessageRespo
 
 // StreamMessage sends a message and streams the response
 func (c *Client) StreamMessage(messages []Message, system string, onEvent func(event string, data []byte)) error {
-	req := MessageRequest{
+	req := &MessageRequest{
 		Model:     c.Model,
 		MaxTokens: 4096,
 		Messages:  messages,
@@ -156,33 +179,25 @@ func (c *Client) StreamMessage(messages []Message, system string, onEvent func(e
 		Stream:    true,
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+	// Convert string system to []SystemBlock with cache_control if needed
+	if req.System != nil {
+		if sysStr, ok := req.System.(string); ok && sysStr != "" {
+			req.System = []SystemBlock{
+				{
+					Type: "text",
+					Text: sysStr,
+					CacheControl: &CacheControl{
+						Type: "ephemeral",
+					},
+				},
+			}
+		}
 	}
 
-	httpReq, err := http.NewRequest("POST", c.buildEndpointURL("/v1/messages"), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.APIKey)
-	httpReq.Header.Set("anthropic-version", DefaultVersion)
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// TODO: Implement SSE parsing
-	// For now, just read the whole response
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	onEvent("message", respBody)
-	return nil
+	return c.StreamMessageSSE(context.Background(), req, func(event string, data []byte) error {
+		if onEvent != nil {
+			onEvent(event, data)
+		}
+		return nil
+	})
 }

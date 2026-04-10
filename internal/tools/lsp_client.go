@@ -562,6 +562,125 @@ func (c *LSPClient) Close() error {
 	return nil
 }
 
+// DidChange notifies the server that a file was modified
+func (c *LSPClient) DidChange(ctx context.Context, filePath, content string) error {
+	params := map[string]interface{}{
+		"textDocument": map[string]interface{}{
+			"uri":     "file://" + filePath,
+			"version": time.Now().Unix(),
+		},
+		"contentChanges": []map[string]interface{}{
+			{
+				"text": content,
+			},
+		},
+	}
+
+	_, err := c.sendNotification(ctx, "textDocument/didChange", params)
+	return err
+}
+
+// Completion requests code completions at a position
+func (c *LSPClient) Completion(ctx context.Context, filePath string, line, character int) (interface{}, error) {
+	params := map[string]interface{}{
+		"textDocument": map[string]interface{}{
+			"uri": "file://" + filePath,
+		},
+		"position": map[string]interface{}{
+			"line":      line - 1,
+			"character": character - 1,
+		},
+	}
+
+	resp, err := c.sendRequest(ctx, "textDocument/completion", params)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("completion error: %s", resp.Error.Message)
+	}
+
+	return c.parseCompletion(resp.Result), nil
+}
+
+// parseCompletion parses completion results
+func (c *LSPClient) parseCompletion(result interface{}) interface{} {
+	if result == nil {
+		return map[string]interface{}{
+			"items": []interface{}{},
+		}
+	}
+
+	if list, ok := result.(map[string]interface{}); ok {
+		if items, ok := list["items"].([]interface{}); ok {
+			return map[string]interface{}{
+				"items": items,
+				"count": len(items),
+			}
+		}
+		return list
+	}
+
+	if items, ok := result.([]interface{}); ok {
+		return map[string]interface{}{
+			"items": items,
+			"count": len(items),
+		}
+	}
+
+	return map[string]interface{}{
+		"items": []interface{}{},
+	}
+}
+
+// CompletionItem resolves additional information for a completion item
+func (c *LSPClient) ResolveCompletionItem(ctx context.Context, item interface{}) (interface{}, error) {
+	params := map[string]interface{}{
+		"data": item,
+	}
+
+	resp, err := c.sendRequest(ctx, "completionItem/resolve", params)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("resolve error: %s", resp.Error.Message)
+	}
+
+	return resp.Result, nil
+}
+
+// LSPDiagnostic represents a diagnostic from the LSP server
+type LSPDiagnostic struct {
+	Range    LSPRange `json:"range"`
+	Severity int      `json:"severity"`
+	Code     string   `json:"code,omitempty"`
+	Source   string   `json:"source,omitempty"`
+	Message  string   `json:"message"`
+}
+
+// LSPRange represents a range in a document
+type LSPRange struct {
+	Start LSPPosition `json:"start"`
+	End   LSPPosition `json:"end"`
+}
+
+// LSPPosition represents a position in a document
+type LSPPosition struct {
+	Line      int `json:"line"`
+	Character int `json:"character"`
+}
+
+// DiagnosticSeverity constants
+const (
+	DiagnosticError       = 1
+	DiagnosticWarning     = 2
+	DiagnosticInformation = 3
+	DiagnosticHint        = 4
+)
+
 // LSPClientCache caches LSP clients by file extension
 var lspClientCache = make(map[string]*LSPClient)
 var lspClientMutex sync.Mutex
@@ -583,7 +702,6 @@ func GetOrCreateLSPClient(filePath, rootPath string) (*LSPClient, error) {
 		return nil, err
 	}
 
-	// Initialize with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -594,4 +712,17 @@ func GetOrCreateLSPClient(filePath, rootPath string) (*LSPClient, error) {
 
 	lspClientCache[ext] = client
 	return client, nil
+}
+
+// CloseAllLSPPClients closes all cached LSP clients
+func CloseAllLSPPClients() {
+	lspClientMutex.Lock()
+	defer lspClientMutex.Unlock()
+
+	for ext, client := range lspClientCache {
+		if client != nil {
+			client.Close()
+		}
+		delete(lspClientCache, ext)
+	}
 }

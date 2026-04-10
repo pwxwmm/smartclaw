@@ -149,6 +149,54 @@ func (uml *UserModelingLayer) GetModel() *UserModel {
 	return uml.model
 }
 
+func (uml *UserModelingLayer) BuildStaticBlock() string {
+	uml.mu.RLock()
+	defer uml.mu.RUnlock()
+
+	if uml.model == nil {
+		return ""
+	}
+
+	hasContent := len(uml.model.Preferences) > 0 ||
+		uml.model.CommunicationStyle != "" ||
+		len(uml.model.KnowledgeBg) > 0 ||
+		len(uml.model.CommonPatterns) > 0
+
+	if !hasContent {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## User Model\n")
+
+	if len(uml.model.Preferences) > 0 {
+		sb.WriteString("Preferences:\n")
+		for k, v := range uml.model.Preferences {
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", k, v))
+		}
+	}
+
+	if uml.model.CommunicationStyle != "" {
+		sb.WriteString(fmt.Sprintf("Communication: %s\n", uml.model.CommunicationStyle))
+	}
+
+	if len(uml.model.KnowledgeBg) > 0 {
+		sb.WriteString("Knowledge:\n")
+		for _, k := range uml.model.KnowledgeBg {
+			sb.WriteString(fmt.Sprintf("- %s\n", k))
+		}
+	}
+
+	if len(uml.model.CommonPatterns) > 0 {
+		sb.WriteString("Patterns:\n")
+		for _, p := range uml.model.CommonPatterns {
+			sb.WriteString(fmt.Sprintf("- %s (freq: %d)\n", p.Pattern, p.Frequency))
+		}
+	}
+
+	return sb.String()
+}
+
 type Observation struct {
 	Category   string
 	Key        string

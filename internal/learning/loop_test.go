@@ -49,6 +49,10 @@ func (m *mockPromptMemory) AutoLoad() string {
 	return m.memory + "\n" + m.profile
 }
 
+func (m *mockPromptMemory) EnforceLimit() error {
+	return nil
+}
+
 func TestNudgeEngine_MaybeNudge(t *testing.T) {
 	ne := NewNudgeEngine(NudgeConfig{Interval: 10, FlushMinTurns: 6})
 

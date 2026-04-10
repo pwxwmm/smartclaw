@@ -7,6 +7,11 @@ import (
 	"github.com/instructkr/smartclaw/internal/store"
 )
 
+const (
+	defaultMaxToolResultChars    = 2000
+	aggressiveMaxToolResultChars = 500
+)
+
 // Range represents a range of original messages that were compressed into a summary.
 // Used for source tracing — enables going back to the original conversation.
 type Range struct {
@@ -21,6 +26,20 @@ type CompactionResult struct {
 	Summary      string
 	SourceRanges []Range
 	KeptMessages []Message
+}
+
+type CompactConfig struct {
+	MaxTokens           int
+	MaxToolResultChars  int
+	AggressiveThreshold float64
+}
+
+func DefaultCompactConfig(maxTokens int) CompactConfig {
+	return CompactConfig{
+		MaxTokens:           maxTokens,
+		MaxToolResultChars:  defaultMaxToolResultChars,
+		AggressiveThreshold: 1.5,
+	}
 }
 
 func CountTokens(text string) int {
@@ -46,6 +65,15 @@ func ShouldCompact(messages []Message, maxTokens int) bool {
 // It preserves head system messages, compresses the middle into a summary with a source range,
 // and keeps a tail section selected by token budget rather than a fixed count.
 func Compact(messages []Message, maxTokens int) []Message {
+	return CompactWithConfig(messages, DefaultCompactConfig(maxTokens))
+}
+
+func CompactWithConfig(messages []Message, cfg CompactConfig) []Message {
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 8000
+	}
+
 	if !ShouldCompact(messages, maxTokens) {
 		return messages
 	}
@@ -78,7 +106,17 @@ func Compact(messages []Message, maxTokens int) []Message {
 		return messages
 	}
 
-	prunedMiddle := pruneOldToolResults(middle)
+	totalTokens := CountMessagesTokens(messages)
+	overBudgetRatio := float64(totalTokens) / float64(maxTokens)
+	maxToolChars := cfg.MaxToolResultChars
+	if maxToolChars <= 0 {
+		maxToolChars = defaultMaxToolResultChars
+	}
+	if overBudgetRatio > cfg.AggressiveThreshold {
+		maxToolChars = aggressiveMaxToolResultChars
+	}
+
+	prunedMiddle := pruneOldToolResults(middle, maxToolChars)
 
 	summary := summarizeOldMessages(prunedMiddle)
 
@@ -187,8 +225,11 @@ func findHeadBoundary(messages []Message) int {
 	return 0
 }
 
-func pruneOldToolResults(messages []Message) []Message {
-	maxToolResultChars := 500
+func pruneOldToolResults(messages []Message, maxToolResultChars int) []Message {
+	if maxToolResultChars <= 0 {
+		maxToolResultChars = defaultMaxToolResultChars
+	}
+
 	pruned := make([]Message, 0, len(messages))
 
 	for _, msg := range messages {
@@ -199,9 +240,10 @@ func pruneOldToolResults(messages []Message) []Message {
 		}
 
 		if msg.Role == "tool" && len(content) > maxToolResultChars {
+			truncated := smartTruncate(content, maxToolResultChars)
 			pruned = append(pruned, Message{
 				Role:      msg.Role,
-				Content:   content[:maxToolResultChars] + "\n...[truncated]",
+				Content:   truncated,
 				Timestamp: msg.Timestamp,
 				UUID:      msg.UUID,
 			})
@@ -212,6 +254,39 @@ func pruneOldToolResults(messages []Message) []Message {
 	}
 
 	return pruned
+}
+
+func smartTruncate(content string, maxLen int) string {
+	if len(content) <= maxLen {
+		return content
+	}
+
+	headLen := maxLen * 2 / 3
+	tailLen := maxLen / 6
+	if headLen+tailLen > maxLen {
+		headLen = maxLen - tailLen
+	}
+
+	head := content[:headLen]
+	tail := content[len(content)-tailLen:]
+
+	lines := strings.Split(content[:maxLen], "\n")
+	var lastStructural string
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed != "" && !strings.HasPrefix(trimmed, " ") {
+			lastStructural = trimmed
+			break
+		}
+	}
+
+	result := head
+	if lastStructural != "" {
+		result += "\n...[last context: " + truncateCompact(lastStructural, 80) + "]...\n"
+	}
+	result += tail
+
+	return result
 }
 
 func sanitizeToolPairs(messages []Message) []Message {

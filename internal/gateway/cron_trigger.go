@@ -8,10 +8,24 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/store"
 )
+
+type CronConfig struct {
+	Timeout      time.Duration
+	JSONLDir     string
+	TickInterval time.Duration
+}
+
+func defaultCronConfig() CronConfig {
+	return CronConfig{
+		Timeout:      5 * time.Minute,
+		TickInterval: 1 * time.Minute,
+	}
+}
 
 type CronTask struct {
 	ID          string `json:"id"`
@@ -25,23 +39,44 @@ type CronTask struct {
 }
 
 type CronTrigger struct {
-	store   *store.Store
-	gateway *Gateway
-	cronDir string
-	stopCh  chan struct{}
-	running bool
-	mu      sync.Mutex
+	store     *store.Store
+	gateway   *Gateway
+	cronDir   string
+	lockDir   string
+	stopCh    chan struct{}
+	running   bool
+	mu        sync.Mutex
+	lockFiles map[string]*os.File
+	config    CronConfig
 }
 
 func NewCronTrigger(s *store.Store, gw *Gateway) *CronTrigger {
+	return NewCronTriggerWithConfig(s, gw, defaultCronConfig())
+}
+
+func NewCronTriggerWithConfig(s *store.Store, gw *Gateway, cfg CronConfig) *CronTrigger {
 	home, _ := os.UserHomeDir()
 	cronDir := filepath.Join(home, ".smartclaw", "cron")
 
+	if s == nil {
+		slog.Warn("cron: SQLite unavailable, cron tasks use JSON file persistence only")
+	}
+
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = defaultCronConfig().Timeout
+	}
+	if cfg.TickInterval <= 0 {
+		cfg.TickInterval = defaultCronConfig().TickInterval
+	}
+
 	return &CronTrigger{
-		store:   s,
-		gateway: gw,
-		cronDir: cronDir,
-		stopCh:  make(chan struct{}),
+		store:     s,
+		gateway:   gw,
+		cronDir:   cronDir,
+		lockDir:   filepath.Join(home, ".smartclaw", "cron", ".locks"),
+		stopCh:    make(chan struct{}),
+		lockFiles: make(map[string]*os.File),
+		config:    cfg,
 	}
 }
 
@@ -97,7 +132,7 @@ func (ct *CronTrigger) Stop() {
 }
 
 func (ct *CronTrigger) runLoop() {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(ct.config.TickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -123,21 +158,76 @@ func (ct *CronTrigger) tick() {
 			continue
 		}
 
+		if !ct.acquireLock(task.ID) {
+			slog.Info("cron: skipping task, another instance is running", "id", task.ID)
+			continue
+		}
+
 		slog.Info("cron: executing task", "id", task.ID)
 
 		if ct.gateway != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			_, err := ct.gateway.HandleMessage(ctx, task.UserID, task.Platform, task.Instruction)
+			sessionID := fmt.Sprintf("cron_%s_%s", task.ID, time.Now().Format("20060102_150405"))
+			ctx, cancel := context.WithTimeout(context.Background(), ct.config.Timeout)
+			resp, err := ct.gateway.HandleMessageWithSession(ctx, task.UserID, task.Platform, task.Instruction, sessionID)
 			cancel()
 
 			if err != nil {
 				slog.Warn("cron: task execution failed", "id", task.ID, "error", err)
+			} else if resp != nil {
+				ct.deliverResult(task, resp)
 			}
 		}
 
 		task.LastRunAt = time.Now().Format(time.RFC3339)
 		ct.saveTask(task)
+		ct.releaseLock(task.ID)
 	}
+}
+
+func (ct *CronTrigger) acquireLock(taskID string) bool {
+	os.MkdirAll(ct.lockDir, 0755)
+
+	lockPath := filepath.Join(ct.lockDir, taskID+".lock")
+
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		slog.Warn("cron: failed to open lock file", "id", taskID, "error", err)
+		return false
+	}
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return false
+	}
+
+	ct.mu.Lock()
+	ct.lockFiles[taskID] = f
+	ct.mu.Unlock()
+
+	return true
+}
+
+func (ct *CronTrigger) releaseLock(taskID string) {
+	ct.mu.Lock()
+	f, ok := ct.lockFiles[taskID]
+	if ok {
+		delete(ct.lockFiles, taskID)
+	}
+	ct.mu.Unlock()
+
+	if !ok || f == nil {
+		return
+	}
+
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
+}
+
+func (ct *CronTrigger) deliverResult(task *CronTask, resp *GatewayResponse) {
+	if ct.gateway == nil {
+		return
+	}
+	ct.gateway.GetDelivery().Deliver(task.UserID, task.Platform, resp)
 }
 
 func (ct *CronTrigger) loadDueTasks() ([]*CronTask, error) {

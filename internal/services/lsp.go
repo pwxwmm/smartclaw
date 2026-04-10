@@ -6,6 +6,20 @@ import (
 	"sync"
 )
 
+// LSPClient defines the interface for LSP client operations
+type LSPClient interface {
+	Initialize(ctx context.Context, rootPath string) error
+	DidOpen(ctx context.Context, filePath, languageID, content string) error
+	DidChange(ctx context.Context, filePath, content string) error
+	GotoDefinition(ctx context.Context, filePath string, line, character int) (interface{}, error)
+	FindReferences(ctx context.Context, filePath string, line, character int) (interface{}, error)
+	DocumentSymbols(ctx context.Context, filePath string) (interface{}, error)
+	Hover(ctx context.Context, filePath string, line, character int) (interface{}, error)
+	Rename(ctx context.Context, filePath string, line, character int, newName string) (interface{}, error)
+	Completion(ctx context.Context, filePath string, line, character int) (interface{}, error)
+	Close() error
+}
+
 type DiagnosticRegistry struct {
 	diagnostics map[string][]Diagnostic
 	mu          sync.RWMutex
@@ -71,6 +85,22 @@ func (r *DiagnosticRegistry) HasErrors(file string) bool {
 	return false
 }
 
+func (r *DiagnosticRegistry) SetDiagnostics(file string, diags []Diagnostic) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.diagnostics[file] = diags
+}
+
+type LSPServerInstance struct {
+	ID       string
+	Language string
+	Command  string
+	Args     []string
+	Status   string
+	Client   LSPClient
+}
+
 type LSPServerManager struct {
 	servers map[string]*LSPServerInstance
 	mu      sync.RWMutex
@@ -80,14 +110,6 @@ func NewLSPServerManager() *LSPServerManager {
 	return &LSPServerManager{
 		servers: make(map[string]*LSPServerInstance),
 	}
-}
-
-type LSPServerInstance struct {
-	ID       string
-	Language string
-	Command  string
-	Args     []string
-	Status   string
 }
 
 func (m *LSPServerManager) Start(ctx context.Context, language, command string, args []string) (*LSPServerInstance, error) {
@@ -108,6 +130,23 @@ func (m *LSPServerManager) Start(ctx context.Context, language, command string, 
 	return server, nil
 }
 
+func (m *LSPServerManager) StartWithClient(ctx context.Context, language string, client LSPClient) (*LSPServerInstance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	id := fmt.Sprintf("lsp_%s_%d", language, len(m.servers))
+
+	server := &LSPServerInstance{
+		ID:       id,
+		Language: language,
+		Status:   "running",
+		Client:   client,
+	}
+
+	m.servers[id] = server
+	return server, nil
+}
+
 func (m *LSPServerManager) Stop(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -115,6 +154,10 @@ func (m *LSPServerManager) Stop(id string) error {
 	server, exists := m.servers[id]
 	if !exists {
 		return fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client != nil {
+		server.Client.Close()
 	}
 
 	server.Status = "stopped"
@@ -146,11 +189,110 @@ func (m *LSPServerManager) StopAll() error {
 	defer m.mu.Unlock()
 
 	for id, server := range m.servers {
+		if server.Client != nil {
+			server.Client.Close()
+		}
 		server.Status = "stopped"
 		delete(m.servers, id)
 	}
 
 	return nil
+}
+
+func (m *LSPServerManager) GotoDefinition(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+	m.mu.RLock()
+	server, exists := m.servers[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client == nil {
+		return nil, fmt.Errorf("server %s has no LSP client attached", id)
+	}
+
+	return server.Client.GotoDefinition(ctx, filePath, line, character)
+}
+
+func (m *LSPServerManager) FindReferences(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+	m.mu.RLock()
+	server, exists := m.servers[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client == nil {
+		return nil, fmt.Errorf("server %s has no LSP client attached", id)
+	}
+
+	return server.Client.FindReferences(ctx, filePath, line, character)
+}
+
+func (m *LSPServerManager) Hover(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+	m.mu.RLock()
+	server, exists := m.servers[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client == nil {
+		return nil, fmt.Errorf("server %s has no LSP client attached", id)
+	}
+
+	return server.Client.Hover(ctx, filePath, line, character)
+}
+
+func (m *LSPServerManager) DocumentSymbols(ctx context.Context, id, filePath string) (interface{}, error) {
+	m.mu.RLock()
+	server, exists := m.servers[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client == nil {
+		return nil, fmt.Errorf("server %s has no LSP client attached", id)
+	}
+
+	return server.Client.DocumentSymbols(ctx, filePath)
+}
+
+func (m *LSPServerManager) Completion(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+	m.mu.RLock()
+	server, exists := m.servers[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client == nil {
+		return nil, fmt.Errorf("server %s has no LSP client attached", id)
+	}
+
+	return server.Client.Completion(ctx, filePath, line, character)
+}
+
+func (m *LSPServerManager) Rename(ctx context.Context, id, filePath string, line, character int, newName string) (interface{}, error) {
+	m.mu.RLock()
+	server, exists := m.servers[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("server not found: %s", id)
+	}
+
+	if server.Client == nil {
+		return nil, fmt.Errorf("server %s has no LSP client attached", id)
+	}
+
+	return server.Client.Rename(ctx, filePath, line, character, newName)
 }
 
 type LSPConfig struct {

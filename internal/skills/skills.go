@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/memory/layers"
 )
 
 type Skill struct {
@@ -41,6 +44,8 @@ type SkillManager struct {
 	skillsDir         string
 	watcher           *SkillWatcher
 	memoryIntegration *MemoryIntegration
+	skillMemory       *layers.SkillProceduralMemory
+	lazyLoad          bool
 }
 
 type SkillWatcher struct {
@@ -66,6 +71,100 @@ func NewSkillManager() *SkillManager {
 	sm.loadLocalSkills()
 
 	return sm
+}
+
+func NewSkillManagerLazy() *SkillManager {
+	home, _ := os.UserHomeDir()
+	skillsDir := filepath.Join(home, ".smartclaw", "skills")
+
+	sm := &SkillManager{
+		skills:        make(map[string]*Skill),
+		bundledSkills: make(map[string]*Skill),
+		mcpBuilders:   make([]McpSkillBuilder, 0),
+		skillsDir:     skillsDir,
+		lazyLoad:      true,
+	}
+
+	bundledSummaries := sm.buildBundledSummaries()
+	sm.skillMemory = layers.NewSkillProceduralMemory(skillsDir, bundledSummaries)
+	if err := sm.skillMemory.LoadIndex(); err != nil {
+		slog.Warn("skill manager: failed to load skill memory index", "error", err)
+	}
+
+	sm.loadBundledSkillSummaries()
+	sm.loadLocalSkillSummaries()
+
+	return sm
+}
+
+func (sm *SkillManager) buildBundledSummaries() map[string]*layers.SkillSummary {
+	summaries := make(map[string]*layers.SkillSummary, len(BundledSkillDefinitions))
+	for name, bundled := range BundledSkillDefinitions {
+		summaries[name] = &layers.SkillSummary{
+			Name:        bundled.Name,
+			Description: bundled.Description,
+			Tags:        bundled.Tags,
+			Triggers:    bundled.Triggers,
+			Source:      "bundled",
+		}
+	}
+	return summaries
+}
+
+func (sm *SkillManager) loadBundledSkillSummaries() {
+	for name, bundledSkill := range BundledSkillDefinitions {
+		skill := &Skill{
+			Name:        bundledSkill.Name,
+			Description: bundledSkill.Description,
+			Commands:    bundledSkill.Triggers,
+			Tools:       bundledSkill.Tools,
+			Tags:        bundledSkill.Tags,
+			Source:      "bundled",
+			Enabled:     true,
+			LoadedAt:    time.Now(),
+			Metadata:    make(map[string]interface{}),
+		}
+		sm.bundledSkills[name] = skill
+		sm.skills[name] = skill
+	}
+}
+
+func (sm *SkillManager) loadLocalSkillSummaries() {
+	os.MkdirAll(sm.skillsDir, 0755)
+
+	entries, err := os.ReadDir(sm.skillsDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		skillPath := filepath.Join(sm.skillsDir, entry.Name(), "SKILL.md")
+		data, err := ioutil.ReadFile(skillPath)
+		if err != nil {
+			continue
+		}
+
+		name := entry.Name()
+		description := extractDescription(string(data))
+		commands := extractCommands(string(data))
+		tags := extractList(string(data), "## Tags")
+
+		skill := &Skill{
+			Name:        name,
+			Description: description,
+			Commands:    commands,
+			Tags:        tags,
+			Source:      "local",
+			Enabled:     true,
+			LoadedAt:    time.Now(),
+			Metadata:    make(map[string]interface{}),
+		}
+		sm.skills[name] = skill
+	}
 }
 
 func (sm *SkillManager) loadBundledSkills() {
@@ -268,6 +367,10 @@ func (sm *SkillManager) Reload(name string) error {
 }
 
 func (sm *SkillManager) GetContent(name string) (string, error) {
+	if sm.lazyLoad && sm.skillMemory != nil {
+		return sm.skillMemory.GetFullSkill(name)
+	}
+
 	skill := sm.Get(name)
 	if skill == nil {
 		return "", fmt.Errorf("skill not found: %s", name)
@@ -449,19 +552,36 @@ func (sm *SkillManager) GetMemoryIntegration() *MemoryIntegration {
 	return sm.memoryIntegration
 }
 
+func (sm *SkillManager) SetSkillMemory(spm *layers.SkillProceduralMemory) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.skillMemory = spm
+}
+
+func (sm *SkillManager) GetSkillMemory() *layers.SkillProceduralMemory {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.skillMemory
+}
+
 func (sm *SkillManager) GetContextAwareSkills(ctx context.Context, sessionID string) []*Skill {
 	sm.mu.RLock()
 	skills := make([]*Skill, 0, len(sm.skills))
 	for _, s := range sm.skills {
 		skills = append(skills, s)
 	}
+	skillMem := sm.skillMemory
 	sm.mu.RUnlock()
 
-	if sm.memoryIntegration == nil {
+	if sm.memoryIntegration == nil && skillMem == nil {
 		return skills
 	}
 
-	return sm.memoryIntegration.GetRelevantSkills(ctx, sessionID, skills)
+	if sm.memoryIntegration != nil {
+		return sm.memoryIntegration.GetRelevantSkills(ctx, sessionID, skills)
+	}
+
+	return skills
 }
 
 func (sm *SkillManager) GetSkillSummaries() []SkillSummary {
@@ -485,6 +605,10 @@ func (sm *SkillManager) GetSkillSummaries() []SkillSummary {
 }
 
 func (sm *SkillManager) LoadSkillOnDemand(name string) (string, error) {
+	if sm.lazyLoad && sm.skillMemory != nil {
+		return sm.skillMemory.GetFullSkill(name)
+	}
+
 	sm.mu.RLock()
 	skill, ok := sm.skills[name]
 	sm.mu.RUnlock()

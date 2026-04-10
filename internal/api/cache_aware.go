@@ -1,27 +1,59 @@
 package api
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 type CacheAwareClient struct {
-	client     *Client
-	lastSystem string
-	cacheValid bool
-	mu         sync.RWMutex
+	client       *Client
+	lastSystem   string
+	cacheValid   bool
+	cacheEnabled bool
+	mu           sync.RWMutex
 }
 
 func NewCacheAwareClient(client *Client) *CacheAwareClient {
-	return &CacheAwareClient{client: client}
+	return &CacheAwareClient{
+		client:       client,
+		cacheEnabled: true,
+	}
 }
 
-func (cac *CacheAwareClient) CreateMessage(messages []Message, system string) (*MessageResponse, error) {
+func (cac *CacheAwareClient) CreateMessage(ctx context.Context, messages []Message, system string) (*MessageResponse, error) {
 	cac.mu.Lock()
 	if cac.lastSystem != system {
 		cac.cacheValid = false
 		cac.lastSystem = system
 	}
+	cacheEnabled := cac.cacheEnabled
 	cac.mu.Unlock()
 
-	return cac.client.CreateMessage(messages, system)
+	var systemParam interface{}
+	if system != "" {
+		cc := &CacheControl{Type: "ephemeral"}
+		if !cacheEnabled {
+			cc = nil
+		}
+		systemParam = []SystemBlock{
+			{
+				Type:         "text",
+				Text:         system,
+				CacheControl: cc,
+			},
+		}
+	}
+
+	resp, err := cac.client.CreateMessageWithSystem(ctx, messages, systemParam)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Usage.CacheRead > 0 {
+		cac.SetCacheValid()
+	}
+
+	return resp, nil
 }
 
 func (cac *CacheAwareClient) MarkCacheInvalid() {
@@ -56,4 +88,30 @@ func (cac *CacheAwareClient) OnModelChanged() {
 
 func (cac *CacheAwareClient) OnContextFileChanged() {
 	cac.MarkCacheInvalid()
+}
+
+func (cac *CacheAwareClient) SetCacheEnabled(enabled bool) {
+	cac.mu.Lock()
+	defer cac.mu.Unlock()
+	cac.cacheEnabled = enabled
+}
+
+func (cac *CacheAwareClient) IsCacheEnabled() bool {
+	cac.mu.RLock()
+	defer cac.mu.RUnlock()
+	return cac.cacheEnabled
+}
+
+func (cac *CacheAwareClient) GetCacheStats() CacheStats {
+	cac.mu.RLock()
+	defer cac.mu.RUnlock()
+	return CacheStats{
+		Valid:   cac.cacheValid,
+		Enabled: cac.cacheEnabled,
+	}
+}
+
+type CacheStats struct {
+	Valid   bool
+	Enabled bool
 }

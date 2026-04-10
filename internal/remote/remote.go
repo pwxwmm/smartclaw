@@ -32,7 +32,7 @@ func NewRemoteConnection(config *RemoteConfig) *RemoteConnection {
 }
 
 func (rc *RemoteConnection) Connect() error {
-	addr := fmt.Sprintf("%s:%d", rc.Config.Host, rc.Config.Port)
+	addr := net.JoinHostPort(rc.Config.Host, fmt.Sprintf("%d", rc.Config.Port))
 
 	conn, err := net.DialTimeout("tcp", addr, rc.Config.Timeout)
 	if err != nil {

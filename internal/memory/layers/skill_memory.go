@@ -5,9 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
+
+const DecayThreshold = 0.3
 
 type SkillSummary struct {
 	Name        string
@@ -23,6 +26,7 @@ type SkillProceduralMemory struct {
 	skillsDir string
 	bundled   map[string]*SkillSummary
 	mu        sync.RWMutex
+	scores    map[string]float64
 }
 
 func NewSkillProceduralMemory(skillsDir string, bundledSummaries map[string]*SkillSummary) *SkillProceduralMemory {
@@ -40,7 +44,14 @@ func NewSkillProceduralMemory(skillsDir string, bundledSummaries map[string]*Ski
 		fullCache: make(map[string]string),
 		skillsDir: skillsDir,
 		bundled:   bundledSummaries,
+		scores:    make(map[string]float64),
 	}
+}
+
+func (spm *SkillProceduralMemory) UpdateScores(scores map[string]float64) {
+	spm.mu.Lock()
+	defer spm.mu.Unlock()
+	spm.scores = scores
 }
 
 func (spm *SkillProceduralMemory) LoadIndex() error {
@@ -122,11 +133,33 @@ func (spm *SkillProceduralMemory) BuildSkillPrompt() string {
 		return ""
 	}
 
+	type skillEntry struct {
+		name    string
+		summary *SkillSummary
+		score   float64
+	}
+
+	entries := make([]skillEntry, 0, len(spm.index))
+	for name, summary := range spm.index {
+		score := 0.5
+		if s, ok := spm.scores[name]; ok {
+			score = s
+		}
+		if score < DecayThreshold {
+			continue
+		}
+		entries = append(entries, skillEntry{name: name, summary: summary, score: score})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].score > entries[j].score
+	})
+
 	var sb strings.Builder
 	sb.WriteString("## Available Skills\n\n")
 
-	for name, summary := range spm.index {
-		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", name, summary.Description))
+	for _, entry := range entries {
+		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", entry.name, entry.summary.Description))
 	}
 
 	return sb.String()
