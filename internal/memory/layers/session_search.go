@@ -10,11 +10,12 @@ import (
 )
 
 type SessionFragment struct {
-	SessionID string
-	Timestamp time.Time
-	Role      string
-	Content   string
-	Relevance float64
+	SessionID  string
+	Timestamp  time.Time
+	Role       string
+	Content    string
+	Relevance  float64
+	SourceTurn int
 }
 
 type SessionSearch struct {
@@ -38,11 +39,12 @@ func (ss *SessionSearch) Search(ctx context.Context, query string, limit int) ([
 	fragments := make([]SessionFragment, 0, len(results))
 	for _, r := range results {
 		fragments = append(fragments, SessionFragment{
-			SessionID: r.SessionID,
-			Timestamp: r.Timestamp,
-			Role:      r.Role,
-			Content:   r.Content,
-			Relevance: r.Rank,
+			SessionID:  r.SessionID,
+			Timestamp:  r.Timestamp,
+			Role:       r.Role,
+			Content:    r.Content,
+			Relevance:  r.Rank,
+			SourceTurn: int(r.ID),
 		})
 	}
 
@@ -95,4 +97,59 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func (ss *SessionSearch) IndexSession(ctx context.Context, sessionID string) error {
+	if ss.store == nil {
+		return nil
+	}
+
+	messages, err := ss.store.GetSessionMessages(sessionID)
+	if err != nil {
+		return fmt.Errorf("session search: index session: %w", err)
+	}
+
+	slog.Info("session search: indexed session", "session_id", sessionID, "messages", len(messages))
+	return nil
+}
+
+func (ss *SessionSearch) ForceReindexSession(ctx context.Context, sessionID string) error {
+	if ss.store == nil {
+		return nil
+	}
+
+	messages, err := ss.store.GetSessionMessages(sessionID)
+	if err != nil {
+		return fmt.Errorf("session search: reindex session: %w", err)
+	}
+
+	db := ss.store.DB()
+	for _, msg := range messages {
+		db.ExecContext(ctx, "INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', ?, ?)", msg.ID, msg.Content)
+		db.ExecContext(ctx, "INSERT INTO messages_fts(rowid, content) VALUES(?, ?)", msg.ID, msg.Content)
+	}
+
+	slog.Info("session search: force reindexed session", "session_id", sessionID, "messages", len(messages))
+	return nil
+}
+
+func (ss *SessionSearch) IndexAllSessions(ctx context.Context) error {
+	if ss.store == nil {
+		return nil
+	}
+
+	sessions, err := ss.store.ListSessions("default", 1000)
+	if err != nil {
+		return fmt.Errorf("session search: index all: %w", err)
+	}
+
+	for _, s := range sessions {
+		if err := ss.IndexSession(ctx, s.ID); err != nil {
+			slog.Warn("session search: failed to index session", "session_id", s.ID, "error", err)
+			continue
+		}
+	}
+
+	slog.Info("session search: indexed all sessions", "count", len(sessions))
+	return nil
 }

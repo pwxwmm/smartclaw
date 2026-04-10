@@ -17,7 +17,7 @@ type ManagedFile struct {
 	modTime time.Time
 }
 
-func newManagedFile(path string) *ManagedFile {
+func NewManagedFile(path string) *ManagedFile {
 	return &ManagedFile{path: path}
 }
 
@@ -59,6 +59,10 @@ func (mf *ManagedFile) ModTime() time.Time {
 	return mf.modTime
 }
 
+func (mf *ManagedFile) Path() string {
+	return mf.path
+}
+
 // PromptMemory implements Layer 1: constant context loaded every session.
 // MEMORY.md stores system knowledge; USER.md stores user profile.
 // Combined they are hard-limited to 3,575 characters (Hermes constraint).
@@ -76,8 +80,8 @@ func NewPromptMemory() (*PromptMemory, error) {
 	baseDir := filepath.Join(home, ".smartclaw")
 
 	pm := &PromptMemory{
-		memoryMD: newManagedFile(filepath.Join(baseDir, "MEMORY.md")),
-		userMD:   newManagedFile(filepath.Join(baseDir, "USER.md")),
+		memoryMD: NewManagedFile(filepath.Join(baseDir, "MEMORY.md")),
+		userMD:   NewManagedFile(filepath.Join(baseDir, "USER.md")),
 	}
 
 	if err := pm.ensureDefaults(); err != nil {
@@ -89,8 +93,8 @@ func NewPromptMemory() (*PromptMemory, error) {
 
 func NewPromptMemoryWithDir(dir string) (*PromptMemory, error) {
 	pm := &PromptMemory{
-		memoryMD: newManagedFile(filepath.Join(dir, "MEMORY.md")),
-		userMD:   newManagedFile(filepath.Join(dir, "USER.md")),
+		memoryMD: NewManagedFile(filepath.Join(dir, "MEMORY.md")),
+		userMD:   NewManagedFile(filepath.Join(dir, "USER.md")),
 	}
 
 	if err := pm.ensureDefaults(); err != nil {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/instructkr/smartclaw/internal/memory/layers"
 	"github.com/instructkr/smartclaw/internal/store"
@@ -15,23 +17,18 @@ type MemoryManager struct {
 	skillMemory   *layers.SkillProceduralMemory
 	userModel     *layers.UserModelingLayer
 	dataStore     *store.Store
+	soulMD        *layers.ManagedFile
+	agentsMD      *layers.ManagedFile
+	baseDir       string
 }
 
 func NewMemoryManager() (*MemoryManager, error) {
-	pm, err := layers.NewPromptMemory()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("memory manager: %w", err)
 	}
-
-	s, err := store.NewStore()
-	if err != nil {
-		slog.Warn("memory manager: SQLite unavailable, session search disabled", "error", err)
-	}
-
-	return &MemoryManager{
-		promptMemory: pm,
-		dataStore:    s,
-	}, nil
+	dir := filepath.Join(home, ".smartclaw")
+	return NewMemoryManagerWithDir(dir)
 }
 
 func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
@@ -45,9 +42,26 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		slog.Warn("memory manager: SQLite unavailable, session search disabled", "error", err)
 	}
 
+	soulMD := layers.NewManagedFile(filepath.Join(dir, "SOUL.md"))
+	if _, err := os.Stat(soulMD.Path()); err == nil {
+		if err := soulMD.Read(); err != nil {
+			slog.Warn("memory manager: failed to read SOUL.md", "error", err)
+		}
+	}
+
+	agentsMD := layers.NewManagedFile(filepath.Join(dir, "AGENTS.md"))
+	if _, err := os.Stat(agentsMD.Path()); err == nil {
+		if err := agentsMD.Read(); err != nil {
+			slog.Warn("memory manager: failed to read AGENTS.md", "error", err)
+		}
+	}
+
 	mm := &MemoryManager{
 		promptMemory: pm,
 		dataStore:    s,
+		soulMD:       soulMD,
+		agentsMD:     agentsMD,
+		baseDir:      dir,
 	}
 
 	if s != nil {
@@ -73,10 +87,20 @@ func NewMemoryManagerWithComponents(pm *layers.PromptMemory, s *store.Store, sm 
 }
 
 func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery string) string {
-	// Hermes prompt assembly order: MEMORY.md → USER.md → Session Search → Skills index
 	var parts []string
 
-	parts = append(parts, mm.promptMemory.AutoLoad())
+	if mm.soulMD != nil && mm.soulMD.Content() != "" {
+		parts = append(parts, mm.soulMD.Content())
+	}
+
+	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
+		parts = append(parts, mm.agentsMD.Content())
+	}
+
+	promptCtx := mm.promptMemory.AutoLoad()
+	if promptCtx != "" {
+		parts = append(parts, promptCtx)
+	}
 
 	if mm.sessionSearch != nil && currentQuery != "" {
 		fragments, err := mm.sessionSearch.Search(ctx, currentQuery, 5)
@@ -87,7 +111,6 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 		}
 	}
 
-	// Layer 3: Skills index (only names + descriptions, full content loaded on demand)
 	if mm.skillMemory != nil {
 		skillPrompt := mm.skillMemory.BuildSkillPrompt()
 		if skillPrompt != "" {
@@ -102,6 +125,23 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 	slog.Debug("memory manager: built system context", "chars", total, "layers", len(parts))
 
 	return joinParts(parts)
+}
+
+func (mm *MemoryManager) Reload() error {
+	if err := mm.promptMemory.Reload(); err != nil {
+		return err
+	}
+	if mm.soulMD != nil {
+		if err := mm.soulMD.Read(); err != nil && !os.IsNotExist(err) {
+			slog.Warn("memory manager: failed to reload SOUL.md", "error", err)
+		}
+	}
+	if mm.agentsMD != nil {
+		if err := mm.agentsMD.Read(); err != nil && !os.IsNotExist(err) {
+			slog.Warn("memory manager: failed to reload AGENTS.md", "error", err)
+		}
+	}
+	return nil
 }
 
 func (mm *MemoryManager) GetPromptMemory() *layers.PromptMemory {
@@ -122,6 +162,14 @@ func (mm *MemoryManager) GetStore() *store.Store {
 
 func (mm *MemoryManager) GetUserModel() *layers.UserModelingLayer {
 	return mm.userModel
+}
+
+func (mm *MemoryManager) GetSoulMD() *layers.ManagedFile {
+	return mm.soulMD
+}
+
+func (mm *MemoryManager) GetAgentsMD() *layers.ManagedFile {
+	return mm.agentsMD
 }
 
 func (mm *MemoryManager) Close() error {
