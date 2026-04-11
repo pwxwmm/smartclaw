@@ -3,6 +3,8 @@ package constants
 const (
 	Version = "1.0.0"
 	Name    = "SmartClaw"
+	Author  = "weimengmeng 天气晴"
+	Email   = "1300042631@qq.com"
 )
 
 const (

@@ -274,7 +274,7 @@ func (pm *PluginManager) Search(query string) ([]MarketplacePlugin, error) {
 			Name:        "example-plugin",
 			Version:     "1.0.0",
 			Description: "An example plugin",
-			Author:      "claude-code",
+			Author:      "weimengmeng 天气晴",
 			Repository:  "https://github.com/example/plugin",
 			Tags:        []string{"example", "demo"},
 			Downloads:   100,

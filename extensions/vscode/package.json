@@ -1,0 +1,76 @@
+{
+  "name": "smartclaw",
+  "displayName": "SmartClaw",
+  "description": "AI-powered coding assistant via SmartClaw ACP",
+  "version": "0.1.0",
+  "publisher": "weimengmeng",
+  "author": {
+    "name": "weimengmeng 天气晴",
+    "email": "1300042631@qq.com"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Machine Learning", "Chat"],
+  "activationEvents": ["onCommand:smartclaw.ask", "onView:smartclaw.chat"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "smartclaw.ask",
+        "title": "SmartClaw: Ask"
+      },
+      {
+        "command": "smartclaw.openChat",
+        "title": "SmartClaw: Open Chat"
+      },
+      {
+        "command": "smartclaw.explainCode",
+        "title": "SmartClaw: Explain Code"
+      },
+      {
+        "command": "smartclaw.fixCode",
+        "title": "SmartClaw: Fix Code"
+      },
+      {
+        "command": "smartclaw.generateTests",
+        "title": "SmartClaw: Generate Tests"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "smartclaw.chat",
+          "name": "SmartClaw",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SmartClaw",
+      "properties": {
+        "smartclaw.path": {
+          "type": "string",
+          "default": "smartclaw",
+          "description": "Path to the smartclaw binary"
+        },
+        "smartclaw.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model to use (empty for default)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

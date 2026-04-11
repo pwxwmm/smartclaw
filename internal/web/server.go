@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/observability"
 )
 
 //go:embed static/*
@@ -67,6 +67,7 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/stats", s.handleStats)
+	mux.HandleFunc("/api/telemetry", s.handleTelemetry)
 
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
@@ -78,7 +79,7 @@ func (s *WebServer) Start() error {
 
 	go s.hub.Run()
 
-	fmt.Printf("SmartClaw WebUI running at http://localhost:%d\n", s.port)
+	fmt.Printf("SmartClaw WebUI running at http://localhost:%d\nAuthor: weimengmeng 天气晴 <1300042631@qq.com>\n", s.port)
 
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
@@ -222,7 +223,7 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := ioutil.ReadFile(fullPath)
+	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -236,7 +237,7 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if s.handler.sessMgr == nil {
-		writeJSON(w, http.StatusOK, []interface{}{})
+		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
 
@@ -253,9 +254,9 @@ func (s *WebServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		homeDir, _ := os.UserHomeDir()
 		configPath := filepath.Join(homeDir, ".smartclaw", "config.json")
-		data, err := ioutil.ReadFile(configPath)
+		data, err := os.ReadFile(configPath)
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{})
+			writeJSON(w, http.StatusOK, map[string]any{})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -264,9 +265,22 @@ func (s *WebServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		var config map[string]interface{}
+		var config map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		homeDir, _ := os.UserHomeDir()
+		configDir := filepath.Join(homeDir, ".smartclaw")
+		os.MkdirAll(configDir, 0755)
+		configPath := filepath.Join(configDir, "config.json")
+		data, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to marshal config"})
+			return
+		}
+		if err := os.WriteFile(configPath, data, 0644); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save config"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
@@ -280,7 +294,44 @@ func (s *WebServer) handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.handler.GetStats())
 }
 
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func (s *WebServer) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	snapshot := observability.DefaultMetrics.Snapshot()
+
+	response := map[string]any{
+		"query_count":         snapshot.QueryCount,
+		"query_total_time_ms": snapshot.QueryTotalTime.Milliseconds(),
+		"cache_hits":          snapshot.CacheHits,
+		"cache_misses":        snapshot.CacheMisses,
+		"cache_hit_rate":      cacheHitRate(snapshot.CacheHits, snapshot.CacheMisses),
+		"total_input_tokens":  snapshot.TotalInputTokens,
+		"total_output_tokens": snapshot.TotalOutputTokens,
+		"total_cache_read":    snapshot.TotalCacheRead,
+		"total_cache_create":  snapshot.TotalCacheCreate,
+		"estimated_cost_usd":  estimateCost(snapshot),
+		"tool_executions":     snapshot.ToolExecutions,
+		"memory_layer_sizes":  snapshot.MemoryLayerSizes,
+		"model_query_counts":  snapshot.ModelQueryCounts,
+		"timestamp":           time.Now().Format(time.RFC3339),
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func cacheHitRate(hits, misses int64) float64 {
+	total := hits + misses
+	if total == 0 {
+		return 0
+	}
+	return float64(hits) / float64(total)
+}
+
+func estimateCost(snapshot observability.MetricsSnapshot) float64 {
+	inputPrice := 0.000003
+	outputPrice := 0.000015
+	return float64(snapshot.TotalInputTokens)*inputPrice + float64(snapshot.TotalOutputTokens)*outputPrice
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
