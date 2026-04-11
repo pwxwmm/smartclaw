@@ -29,7 +29,7 @@ func (cac *CacheAwareClient) CreateMessage(ctx context.Context, messages []Messa
 	cacheEnabled := cac.cacheEnabled
 	cac.mu.Unlock()
 
-	var systemParam interface{}
+	var systemParam any
 	if system != "" {
 		cc := &CacheControl{Type: "ephemeral"}
 		if !cacheEnabled {

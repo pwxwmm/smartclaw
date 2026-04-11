@@ -193,7 +193,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 		return StreamEventResult{}, nil
 	}
 
-	var eventData map[string]interface{}
+	var eventData map[string]any
 	if err := json.Unmarshal(data, &eventData); err != nil {
 		return StreamEventResult{}, nil
 	}
@@ -203,7 +203,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 
 	switch eventType {
 	case "message_start":
-		if msg, ok := eventData["message"].(map[string]interface{}); ok {
+		if msg, ok := eventData["message"].(map[string]any); ok {
 			if id, ok := msg["id"].(string); ok {
 				p.currentMessage.ID = id
 			}
@@ -213,7 +213,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 			if role, ok := msg["role"].(string); ok {
 				p.currentMessage.Role = role
 			}
-			if usage, ok := msg["usage"].(map[string]interface{}); ok {
+			if usage, ok := msg["usage"].(map[string]any); ok {
 				if input, ok := usage["input_tokens"].(float64); ok {
 					p.usage.InputTokens = int(input)
 				}
@@ -232,7 +232,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 
 	case "content_block_start":
 		if index, ok := eventData["index"].(float64); ok {
-			if contentBlock, ok := eventData["content_block"].(map[string]interface{}); ok {
+			if contentBlock, ok := eventData["content_block"].(map[string]any); ok {
 				blockType, _ := contentBlock["type"].(string)
 
 				for int(index) >= len(p.contentBlocks) {
@@ -266,7 +266,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 
 	case "content_block_delta":
 		if index, ok := eventData["index"].(float64); ok {
-			if delta, ok := eventData["delta"].(map[string]interface{}); ok {
+			if delta, ok := eventData["delta"].(map[string]any); ok {
 				if deltaType, ok := delta["type"].(string); ok {
 					idx := int(index)
 					if idx < len(p.contentBlocks) {
@@ -298,7 +298,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 			idx := int(index)
 			if idx < len(p.contentBlocks) {
 				if p.contentBlocks[idx].PartialJSON != "" {
-					var input map[string]interface{}
+					var input map[string]any
 					if err := json.Unmarshal([]byte(p.contentBlocks[idx].PartialJSON), &input); err == nil {
 						p.contentBlocks[idx].Input = input
 					}
@@ -310,13 +310,13 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 		}
 
 	case "message_delta":
-		if delta, ok := eventData["delta"].(map[string]interface{}); ok {
+		if delta, ok := eventData["delta"].(map[string]any); ok {
 			if stopReason, ok := delta["stop_reason"].(string); ok {
 				p.stopReason = stopReason
 				p.currentMessage.StopReason = stopReason
 			}
 		}
-		if usage, ok := eventData["usage"].(map[string]interface{}); ok {
+		if usage, ok := eventData["usage"].(map[string]any); ok {
 			if output, ok := usage["output_tokens"].(float64); ok {
 				p.usage.OutputTokens += int(output)
 			}
@@ -333,7 +333,7 @@ func (p *StreamMessageParser) HandleEvent(event string, data []byte) (StreamEven
 		result.Ping = true
 
 	case "error":
-		if errData, ok := eventData["error"].(map[string]interface{}); ok {
+		if errData, ok := eventData["error"].(map[string]any); ok {
 			errType, _ := errData["type"].(string)
 			errMsg, _ := errData["message"].(string)
 			result.Error = fmt.Errorf("%s: %s", errType, errMsg)

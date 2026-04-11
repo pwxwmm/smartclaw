@@ -267,10 +267,10 @@ func (c *Client) StreamMessageOpenAI(ctx context.Context, req *MessageRequest, h
 			delta := streamResp.Choices[0].Delta
 
 			if !contentBlockStarted {
-				startData := map[string]interface{}{
+				startData := map[string]any{
 					"type":  "content_block_start",
 					"index": 0,
-					"content_block": map[string]interface{}{
+					"content_block": map[string]any{
 						"type": "text",
 						"text": "",
 					},
@@ -283,10 +283,10 @@ func (c *Client) StreamMessageOpenAI(ctx context.Context, req *MessageRequest, h
 			}
 
 			if delta.ReasoningContent != "" {
-				thinkingData := map[string]interface{}{
+				thinkingData := map[string]any{
 					"type":  "content_block_delta",
 					"index": 0,
-					"delta": map[string]interface{}{
+					"delta": map[string]any{
 						"type":     "thinking_delta",
 						"thinking": delta.ReasoningContent,
 					},
@@ -298,10 +298,10 @@ func (c *Client) StreamMessageOpenAI(ctx context.Context, req *MessageRequest, h
 			}
 
 			if delta.Content != "" {
-				eventData := map[string]interface{}{
+				eventData := map[string]any{
 					"type":  "content_block_delta",
 					"index": 0,
-					"delta": map[string]interface{}{
+					"delta": map[string]any{
 						"type": "text_delta",
 						"text": delta.Content,
 					},

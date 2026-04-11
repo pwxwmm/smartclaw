@@ -184,7 +184,7 @@ func TestCacheGetOrSet(t *testing.T) {
 	cache, _ := NewCache()
 
 	called := false
-	value, err := cache.GetOrSet("test-key", func() (interface{}, error) {
+	value, err := cache.GetOrSet("test-key", func() (any, error) {
 		called = true
 		return "computed", nil
 	}, time.Hour)
@@ -202,7 +202,7 @@ func TestCacheGetOrSet(t *testing.T) {
 	}
 
 	called = false
-	value, _ = cache.GetOrSet("test-key", func() (interface{}, error) {
+	value, _ = cache.GetOrSet("test-key", func() (any, error) {
 		called = true
 		return "computed2", nil
 	}, time.Hour)

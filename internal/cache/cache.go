@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,7 +12,7 @@ import (
 
 type CacheEntry struct {
 	Key       string      `json:"key"`
-	Value     interface{} `json:"value"`
+	Value     any `json:"value"`
 	CreatedAt time.Time   `json:"created_at"`
 	ExpiresAt time.Time   `json:"expires_at"`
 	HitCount  int         `json:"hit_count"`
@@ -48,7 +47,7 @@ func NewCache() (*Cache, error) {
 	return cache, nil
 }
 
-func (c *Cache) Set(key string, value interface{}, ttl time.Duration) error {
+func (c *Cache) Set(key string, value any, ttl time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -66,7 +65,7 @@ func (c *Cache) Set(key string, value interface{}, ttl time.Duration) error {
 	return c.saveToFile(entry)
 }
 
-func (c *Cache) Get(key string) (interface{}, bool) {
+func (c *Cache) Get(key string) (any, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -102,7 +101,7 @@ func (c *Cache) Clear() error {
 
 	c.items = make(map[string]*CacheEntry)
 
-	entries, err := ioutil.ReadDir(c.basePath)
+	entries, err := os.ReadDir(c.basePath)
 	if err != nil {
 		return err
 	}
@@ -128,7 +127,7 @@ func (c *Cache) Has(key string) bool {
 	return time.Now().Before(entry.ExpiresAt)
 }
 
-func (c *Cache) GetOrSet(key string, fn func() (interface{}, error), ttl time.Duration) (interface{}, error) {
+func (c *Cache) GetOrSet(key string, fn func() (any, error), ttl time.Duration) (any, error) {
 	if value, ok := c.Get(key); ok {
 		return value, nil
 	}
@@ -145,7 +144,7 @@ func (c *Cache) GetOrSet(key string, fn func() (interface{}, error), ttl time.Du
 	return value, nil
 }
 
-func (c *Cache) Stats() map[string]interface{} {
+func (c *Cache) Stats() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -158,7 +157,7 @@ func (c *Cache) Stats() map[string]interface{} {
 		totalSize += int64(len(data))
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"items":      len(c.items),
 		"total_hits": totalHits,
 		"total_size": totalSize,
@@ -193,7 +192,7 @@ func (c *Cache) saveToFile(entry *CacheEntry) error {
 
 	hashedKey := c.HashKey(entry.Key)
 	path := filepath.Join(c.basePath, hashedKey+".json")
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func (c *Cache) deleteFile(key string) error {
@@ -203,7 +202,7 @@ func (c *Cache) deleteFile(key string) error {
 }
 
 func (c *Cache) loadAll() error {
-	entries, err := ioutil.ReadDir(c.basePath)
+	entries, err := os.ReadDir(c.basePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -218,7 +217,7 @@ func (c *Cache) loadAll() error {
 		}
 
 		path := filepath.Join(c.basePath, entry.Name())
-		data, err := ioutil.ReadFile(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}

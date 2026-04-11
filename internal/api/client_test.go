@@ -172,7 +172,7 @@ func TestContentBlock(t *testing.T) {
 		Type:  "tool_use",
 		ID:    "tool_123",
 		Name:  "read_file",
-		Input: map[string]interface{}{"path": "/test"},
+		Input: map[string]any{"path": "/test"},
 	}
 
 	if toolUseBlock.Type != "tool_use" {

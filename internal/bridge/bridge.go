@@ -124,7 +124,7 @@ func (bs *BridgeServer) handleDisconnect(w http.ResponseWriter, r *http.Request)
 }
 
 func (bs *BridgeServer) handleSend(w http.ResponseWriter, r *http.Request) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
@@ -133,7 +133,7 @@ func (bs *BridgeServer) handleSend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (bs *BridgeServer) handleReceive(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{"data": nil})
+	json.NewEncoder(w).Encode(map[string]any{"data": nil})
 }
 
 type BridgeClient struct {

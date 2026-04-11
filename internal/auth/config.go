@@ -96,6 +96,10 @@ func SetAPIKey(apiKey string) error {
 		return err
 	}
 
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
 	var existing map[string]any
 	if data, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(data, &existing)
