@@ -9,7 +9,7 @@ func TestEngineCheckDefaultReadOnly(t *testing.T) {
 
 	readOnlyTools := []string{"read_file", "glob", "grep", "web_fetch", "web_search", "lsp"}
 	for _, tool := range readOnlyTools {
-		decision := engine.Check(tool, map[string]interface{}{})
+		decision := engine.Check(tool, map[string]any{})
 		if decision.Behavior != PermissionBehaviorAllow {
 			t.Errorf("Expected allow for read-only tool %s in default mode, got %s", tool, decision.Behavior)
 		}
@@ -21,7 +21,7 @@ func TestEngineCheckDefaultWrite(t *testing.T) {
 
 	writeTools := []string{"bash", "write_file", "edit_file"}
 	for _, tool := range writeTools {
-		decision := engine.Check(tool, map[string]interface{}{})
+		decision := engine.Check(tool, map[string]any{})
 		if decision.Behavior != PermissionBehaviorAsk {
 			t.Errorf("Expected ask for write tool %s in default mode, got %s", tool, decision.Behavior)
 		}
@@ -31,12 +31,12 @@ func TestEngineCheckDefaultWrite(t *testing.T) {
 func TestEngineCheckAutoMode(t *testing.T) {
 	engine := NewEngine(PermissionModeAuto, "/tmp")
 
-	decision := engine.Check("read_file", map[string]interface{}{})
+	decision := engine.Check("read_file", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAllow {
 		t.Errorf("Expected allow for read_file in auto mode, got %s", decision.Behavior)
 	}
 
-	decision = engine.Check("bash", map[string]interface{}{})
+	decision = engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAsk {
 		t.Errorf("Expected ask for bash in auto mode, got %s", decision.Behavior)
 	}
@@ -47,13 +47,13 @@ func TestEngineCheckAcceptEditsMode(t *testing.T) {
 
 	editTools := []string{"edit_file", "write_file", "bash"}
 	for _, tool := range editTools {
-		decision := engine.Check(tool, map[string]interface{}{})
+		decision := engine.Check(tool, map[string]any{})
 		if decision.Behavior != PermissionBehaviorAllow {
 			t.Errorf("Expected allow for edit tool %s in acceptEdits mode, got %s", tool, decision.Behavior)
 		}
 	}
 
-	decision := engine.Check("read_file", map[string]interface{}{})
+	decision := engine.Check("read_file", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAllow {
 		t.Errorf("Expected allow for read_file in acceptEdits mode, got %s", decision.Behavior)
 	}
@@ -72,14 +72,14 @@ func TestEngineAddRuleAllow(t *testing.T) {
 
 	engine.AddRule(PermissionSourceUser, rule)
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAllow {
 		t.Errorf("Expected allow for bash with allow rule, got %s", decision.Behavior)
 	}
 }
 
 func TestEngineAddRuleDeny(t *testing.T) {
-	engine := NewEngine(PermissionModeBypassPermissions, "/tmp")
+	engine := NewEngine(PermissionModeDefault, "/tmp")
 
 	rule := PermissionRule{
 		Source:       PermissionSourceUser,
@@ -91,14 +91,14 @@ func TestEngineAddRuleDeny(t *testing.T) {
 
 	engine.AddRule(PermissionSourceUser, rule)
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorDeny {
 		t.Errorf("Expected deny for bash with deny rule, got %s", decision.Behavior)
 	}
 }
 
 func TestEngineAddRuleAsk(t *testing.T) {
-	engine := NewEngine(PermissionModeBypassPermissions, "/tmp")
+	engine := NewEngine(PermissionModeDefault, "/tmp")
 
 	rule := PermissionRule{
 		Source:       PermissionSourceUser,
@@ -110,7 +110,7 @@ func TestEngineAddRuleAsk(t *testing.T) {
 
 	engine.AddRule(PermissionSourceUser, rule)
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAsk {
 		t.Errorf("Expected ask for bash with ask rule, got %s", decision.Behavior)
 	}
@@ -121,7 +121,7 @@ func TestEngineRecordDecision(t *testing.T) {
 
 	engine.RecordDecision("bash", PermissionAllow)
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAllow {
 		t.Errorf("Expected allow for bash with recorded decision, got %s", decision.Behavior)
 	}
@@ -133,7 +133,7 @@ func TestEngineClearSessionDecisions(t *testing.T) {
 	engine.RecordDecision("bash", PermissionAllow)
 	engine.ClearSessionDecisions()
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAsk {
 		t.Errorf("Expected ask for bash after clearing decisions, got %s", decision.Behavior)
 	}
@@ -448,7 +448,7 @@ func TestMatchPattern(t *testing.T) {
 func TestPermissionDecisionReasonMode(t *testing.T) {
 	engine := NewEngine(PermissionModePlan, "/tmp")
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 
 	if decision.Reason == nil {
 		t.Fatal("Expected non-nil reason")
@@ -475,7 +475,7 @@ func TestPermissionDecisionReasonRule(t *testing.T) {
 	}
 	engine.AddRule(PermissionSourceUser, rule)
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 
 	if decision.Reason == nil {
 		t.Fatal("Expected non-nil reason")

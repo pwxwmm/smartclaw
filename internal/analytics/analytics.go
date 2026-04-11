@@ -12,7 +12,7 @@ import (
 type Event struct {
 	Name       string                 `json:"name"`
 	Timestamp  time.Time              `json:"timestamp"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
 	UserID     string                 `json:"user_id,omitempty"`
 	SessionID  string                 `json:"session_id,omitempty"`
 }
@@ -60,7 +60,7 @@ func NewAnalytics(config AnalyticsConfig) *Analytics {
 	return a
 }
 
-func (a *Analytics) Track(name string, properties map[string]interface{}) {
+func (a *Analytics) Track(name string, properties map[string]any) {
 	if !a.config.Enabled {
 		return
 	}
@@ -204,7 +204,7 @@ func (s *DatadogSink) Send(events []Event) error {
 type GrowthBookClient struct {
 	apiKey    string
 	baseURL   string
-	cache     map[string]interface{}
+	cache     map[string]any
 	cacheTime map[string]time.Time
 	cacheTTL  time.Duration
 	mu        sync.RWMutex
@@ -214,13 +214,13 @@ func NewGrowthBookClient(apiKey string) *GrowthBookClient {
 	return &GrowthBookClient{
 		apiKey:    apiKey,
 		baseURL:   "https://cdn.growthbook.io",
-		cache:     make(map[string]interface{}),
+		cache:     make(map[string]any),
 		cacheTime: make(map[string]time.Time),
 		cacheTTL:  5 * time.Minute,
 	}
 }
 
-func (g *GrowthBookClient) GetFeatureValue(key string, defaultValue interface{}) interface{} {
+func (g *GrowthBookClient) GetFeatureValue(key string, defaultValue any) any {
 	g.mu.RLock()
 	if val, ok := g.cache[key]; ok {
 		if cacheTime, exists := g.cacheTime[key]; exists && time.Since(cacheTime) < g.cacheTTL {
@@ -241,7 +241,7 @@ func (g *GrowthBookClient) GetFeatureValue(key string, defaultValue interface{})
 	return val
 }
 
-func (g *GrowthBookClient) fetchFeature(key string, defaultValue interface{}) interface{} {
+func (g *GrowthBookClient) fetchFeature(key string, defaultValue any) any {
 	return defaultValue
 }
 
@@ -256,7 +256,7 @@ func (g *GrowthBookClient) IsOn(key string) bool {
 func (g *GrowthBookClient) ClearCache() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.cache = make(map[string]interface{})
+	g.cache = make(map[string]any)
 	g.cacheTime = make(map[string]time.Time)
 }
 

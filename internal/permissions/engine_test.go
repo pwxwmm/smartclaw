@@ -18,7 +18,7 @@ func TestNewEngine(t *testing.T) {
 func TestEngineCheckBypass(t *testing.T) {
 	engine := NewEngine(PermissionModeBypassPermissions, "/tmp")
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAllow {
 		t.Errorf("Expected allow for bypass mode, got %s", decision.Behavior)
 	}
@@ -27,7 +27,7 @@ func TestEngineCheckBypass(t *testing.T) {
 func TestEngineCheckDontAsk(t *testing.T) {
 	engine := NewEngine(PermissionModeDontAsk, "/tmp")
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAllow {
 		t.Errorf("Expected allow for dontAsk mode, got %s", decision.Behavior)
 	}
@@ -36,7 +36,7 @@ func TestEngineCheckDontAsk(t *testing.T) {
 func TestEngineCheckPlan(t *testing.T) {
 	engine := NewEngine(PermissionModePlan, "/tmp")
 
-	decision := engine.Check("bash", map[string]interface{}{})
+	decision := engine.Check("bash", map[string]any{})
 	if decision.Behavior != PermissionBehaviorAsk {
 		t.Errorf("Expected ask for plan mode, got %s", decision.Behavior)
 	}

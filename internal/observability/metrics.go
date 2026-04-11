@@ -36,11 +36,11 @@ type Metrics struct {
 	totalCacheRead    atomic.Int64
 	totalCacheCreate  atomic.Int64
 
-	toolMu      sync.Mutex
+	toolMu      sync.RWMutex
 	toolStats   map[string]*ToolStats
-	layerMu     sync.Mutex
+	layerMu     sync.RWMutex
 	layerSizes  map[string]int
-	modelMu     sync.Mutex
+	modelMu     sync.RWMutex
 	modelCounts map[string]int64
 }
 
@@ -101,7 +101,7 @@ func (m *Metrics) RecordToolExecution(toolName string, duration time.Duration, s
 }
 
 func (m *Metrics) Snapshot() MetricsSnapshot {
-	m.toolMu.Lock()
+	m.toolMu.RLock()
 	toolCopy := make(map[string]ToolStats, len(m.toolStats))
 	for k, v := range m.toolStats {
 		toolCopy[k] = ToolStats{
@@ -110,21 +110,21 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 			Duration: v.Duration,
 		}
 	}
-	m.toolMu.Unlock()
+	m.toolMu.RUnlock()
 
-	m.layerMu.Lock()
+	m.layerMu.RLock()
 	layerCopy := make(map[string]int, len(m.layerSizes))
 	for k, v := range m.layerSizes {
 		layerCopy[k] = v
 	}
-	m.layerMu.Unlock()
+	m.layerMu.RUnlock()
 
-	m.modelMu.Lock()
+	m.modelMu.RLock()
 	modelCopy := make(map[string]int64, len(m.modelCounts))
 	for k, v := range m.modelCounts {
 		modelCopy[k] = v
 	}
-	m.modelMu.Unlock()
+	m.modelMu.RUnlock()
 
 	return MetricsSnapshot{
 		QueryCount:        m.queryCount.Load(),

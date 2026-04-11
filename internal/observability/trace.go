@@ -11,11 +11,11 @@ import (
 // Attribute is a key-value pair attached to a span.
 type Attribute struct {
 	Key   string
-	Value interface{}
+	Value any
 }
 
 // Attr creates an Attribute from a key and value.
-func Attr(key string, value interface{}) Attribute {
+func Attr(key string, value any) Attribute {
 	return Attribute{Key: key, Value: value}
 }
 
@@ -24,18 +24,18 @@ type Span struct {
 	Name       string
 	StartTime  time.Time
 	EndTime    time.Time
-	Attributes map[string]interface{}
+	Attributes map[string]any
 	Children   []*Span
 	Parent     *Span
 	mu         sync.Mutex
 }
 
 // SetAttribute sets an attribute on the span.
-func (s *Span) SetAttribute(key string, value interface{}) {
+func (s *Span) SetAttribute(key string, value any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Attributes == nil {
-		s.Attributes = make(map[string]interface{})
+		s.Attributes = make(map[string]any)
 	}
 	s.Attributes[key] = value
 }
@@ -84,7 +84,7 @@ var spanContextKey = contextKey{}
 type Tracer struct {
 	exporter SpanExporter
 	spans    []*Span
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	enabled  bool
 }
 
@@ -118,8 +118,8 @@ func (t *Tracer) SetEnabled(enabled bool) {
 
 // IsEnabled returns whether tracing is enabled.
 func (t *Tracer) IsEnabled() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.enabled
 }
 
@@ -133,7 +133,7 @@ func StartSpan(ctx context.Context, name string, attrs ...Attribute) (context.Co
 	span := &Span{
 		Name:       name,
 		StartTime:  time.Now(),
-		Attributes: make(map[string]interface{}, len(attrs)),
+		Attributes: make(map[string]any, len(attrs)),
 	}
 
 	for _, a := range attrs {

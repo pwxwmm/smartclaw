@@ -173,7 +173,7 @@ func TestFormatSpan(t *testing.T) {
 		Name:       "parent",
 		StartTime:  time.Now(),
 		EndTime:    time.Now().Add(100 * time.Millisecond),
-		Attributes: map[string]interface{}{"key": "val"},
+		Attributes: map[string]any{"key": "val"},
 	}
 	child := &Span{
 		Name:      "child",

@@ -90,7 +90,7 @@ func NewEngine(mode PermissionMode, workDir string) *PermissionEngine {
 	}
 }
 
-func (e *PermissionEngine) Check(toolName string, input map[string]interface{}) *PermissionDecision {
+func (e *PermissionEngine) Check(toolName string, input map[string]any) *PermissionDecision {
 	if e.mode == PermissionModeBypassPermissions || e.mode == PermissionModeDontAsk {
 		return &PermissionDecision{Behavior: PermissionBehaviorAllow}
 	}
@@ -176,7 +176,7 @@ func (e *PermissionEngine) Check(toolName string, input map[string]interface{}) 
 	}
 }
 
-func (e *PermissionEngine) checkAutoMode(toolName string, input map[string]interface{}) *PermissionDecision {
+func (e *PermissionEngine) checkAutoMode(toolName string, input map[string]any) *PermissionDecision {
 	if isReadOnlyTool(toolName) {
 		return &PermissionDecision{Behavior: PermissionBehaviorAllow}
 	}
@@ -262,7 +262,7 @@ func isEditTool(name string) bool {
 	return editTools[name]
 }
 
-func matchRule(rule PermissionRule, toolName string, input map[string]interface{}) bool {
+func matchRule(rule PermissionRule, toolName string, input map[string]any) bool {
 	if rule.RuleValue.ToolName == "*" {
 		return true
 	}
