@@ -39,7 +39,7 @@ func TestHookExecutor(t *testing.T) {
 
 	input := &HookInput{
 		ToolName:  "test_tool",
-		ToolInput: map[string]interface{}{"arg": "value"},
+		ToolInput: map[string]any{"arg": "value"},
 	}
 
 	results := executor.Execute(context.Background(), HookPreToolUse, input)
@@ -78,7 +78,7 @@ func TestHookOutputParsing(t *testing.T) {
 		Continue:      true,
 		Decision:      "allow",
 		Reason:        "test reason",
-		UpdatedInput:  map[string]interface{}{"key": "value"},
+		UpdatedInput:  map[string]any{"key": "value"},
 		SystemMessage: "test message",
 		ExitCode:      0,
 		Stdout:        "test output",
@@ -104,7 +104,7 @@ func TestHookInput(t *testing.T) {
 		ProjectRoot: "/tmp/project",
 		Timestamp:   1234567890,
 		ToolName:    "bash",
-		ToolInput:   map[string]interface{}{"command": "ls"},
+		ToolInput:   map[string]any{"command": "ls"},
 	}
 
 	if input.Event != HookPreToolUse {
@@ -128,7 +128,7 @@ func TestPreToolUseBlock(t *testing.T) {
 	manager.RegisterHook(blockingHook)
 
 	ctx := context.Background()
-	_, err := manager.ExecutePreToolUse(ctx, "bash", map[string]interface{}{"command": "rm -rf /"})
+	_, err := manager.ExecutePreToolUse(ctx, "bash", map[string]any{"command": "rm -rf /"})
 
 	if err == nil {
 		t.Error("Expected error for blocked hook, got nil")

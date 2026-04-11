@@ -126,7 +126,7 @@ func (h *History) GetUnique(limit int) []string {
 	return unique
 }
 
-func (h *History) Stats() map[string]interface{} {
+func (h *History) Stats() map[string]any {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -140,7 +140,7 @@ func (h *History) Stats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_commands":  len(h.entries),
 		"unique_commands": len(unique),
 		"success_rate":    float64(successCount) / float64(len(h.entries)) * 100,

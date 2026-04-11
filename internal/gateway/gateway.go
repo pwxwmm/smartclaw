@@ -280,13 +280,13 @@ func (g *Gateway) GetPairing() *PairingManager {
 	return g.pairing
 }
 
-func extractContent(content interface{}) string {
+func extractContent(content any) string {
 	switch v := content.(type) {
 	case string:
 		return v
-	case []interface{}:
+	case []any:
 		for _, item := range v {
-			if m, ok := item.(map[string]interface{}); ok {
+			if m, ok := item.(map[string]any); ok {
 				if t, ok := m["type"].(string); ok && t == "text" {
 					if text, ok := m["text"].(string); ok {
 						return text

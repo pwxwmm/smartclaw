@@ -172,6 +172,8 @@ func classifyAction(action Action) string {
 		return "refactor"
 	case tool == "bash" && (strings.Contains(content, "deploy") || strings.Contains(content, "ship")):
 		return "deploy"
+	case tool == "read_file" || tool == "glob" || tool == "grep":
+		return "read"
 	default:
 		return action.Type
 	}

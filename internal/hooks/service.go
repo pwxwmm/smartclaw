@@ -54,11 +54,11 @@ type HookInput struct {
 	ProjectRoot    string                 `json:"project_root"`
 	Timestamp      int64                  `json:"timestamp"`
 	ToolName       string                 `json:"tool_name,omitempty"`
-	ToolInput      map[string]interface{} `json:"tool_input,omitempty"`
-	ToolOutput     interface{}            `json:"tool_output,omitempty"`
+	ToolInput      map[string]any `json:"tool_input,omitempty"`
+	ToolOutput     any            `json:"tool_output,omitempty"`
 	Error          string                 `json:"error,omitempty"`
 	Message        string                 `json:"message,omitempty"`
-	AdditionalData map[string]interface{} `json:"additional_data,omitempty"`
+	AdditionalData map[string]any `json:"additional_data,omitempty"`
 }
 
 type HookOutput struct {
@@ -68,7 +68,7 @@ type HookOutput struct {
 	Decision           string                 `json:"decision,omitempty"`
 	Reason             string                 `json:"reason,omitempty"`
 	SystemMessage      string                 `json:"systemMessage,omitempty"`
-	UpdatedInput       map[string]interface{} `json:"updatedInput,omitempty"`
+	UpdatedInput       map[string]any `json:"updatedInput,omitempty"`
 	AdditionalContext  string                 `json:"additionalContext,omitempty"`
 	PermissionDecision string                 `json:"permissionDecision,omitempty"`
 	PermissionUpdates  []PermissionUpdate     `json:"permissionUpdates,omitempty"`
@@ -377,7 +377,7 @@ func NewHookManager(workDir, sessionID string) *HookManager {
 	}
 }
 
-func (m *HookManager) ExecutePreToolUse(ctx context.Context, toolName string, toolInput map[string]interface{}) ([]HookResult, error) {
+func (m *HookManager) ExecutePreToolUse(ctx context.Context, toolName string, toolInput map[string]any) ([]HookResult, error) {
 	input := &HookInput{
 		ToolName:  toolName,
 		ToolInput: toolInput,
@@ -394,7 +394,7 @@ func (m *HookManager) ExecutePreToolUse(ctx context.Context, toolName string, to
 	return results, nil
 }
 
-func (m *HookManager) ExecutePostToolUse(ctx context.Context, toolName string, toolInput map[string]interface{}, output interface{}) []HookResult {
+func (m *HookManager) ExecutePostToolUse(ctx context.Context, toolName string, toolInput map[string]any, output any) []HookResult {
 	input := &HookInput{
 		ToolName:   toolName,
 		ToolInput:  toolInput,
@@ -404,7 +404,7 @@ func (m *HookManager) ExecutePostToolUse(ctx context.Context, toolName string, t
 	return m.executor.Execute(ctx, HookPostToolUse, input)
 }
 
-func (m *HookManager) ExecutePostToolUseFailure(ctx context.Context, toolName string, toolInput map[string]interface{}, errMsg string) []HookResult {
+func (m *HookManager) ExecutePostToolUseFailure(ctx context.Context, toolName string, toolInput map[string]any, errMsg string) []HookResult {
 	input := &HookInput{
 		ToolName:  toolName,
 		ToolInput: toolInput,
@@ -452,7 +452,7 @@ func (m *HookManager) ExecutePermissionDenied(ctx context.Context, toolName stri
 	return m.executor.Execute(ctx, HookPermissionDenied, input)
 }
 
-func (m *HookManager) ExecutePermissionRequest(ctx context.Context, toolName string, toolInput map[string]interface{}) []HookResult {
+func (m *HookManager) ExecutePermissionRequest(ctx context.Context, toolName string, toolInput map[string]any) []HookResult {
 	input := &HookInput{
 		ToolName:  toolName,
 		ToolInput: toolInput,
@@ -469,7 +469,7 @@ func (m *HookManager) ExecuteUserPromptSubmit(ctx context.Context, message strin
 
 func (m *HookManager) ExecuteSubagentStart(ctx context.Context, agentID string) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"agent_id": agentID,
 		},
 	}
@@ -478,7 +478,7 @@ func (m *HookManager) ExecuteSubagentStart(ctx context.Context, agentID string) 
 
 func (m *HookManager) ExecuteSubagentStop(ctx context.Context, agentID string) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"agent_id": agentID,
 		},
 	}
@@ -487,7 +487,7 @@ func (m *HookManager) ExecuteSubagentStop(ctx context.Context, agentID string) [
 
 func (m *HookManager) ExecuteTaskCreated(ctx context.Context, taskID string) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"task_id": taskID,
 		},
 	}
@@ -496,16 +496,16 @@ func (m *HookManager) ExecuteTaskCreated(ctx context.Context, taskID string) []H
 
 func (m *HookManager) ExecuteTaskCompleted(ctx context.Context, taskID string) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"task_id": taskID,
 		},
 	}
 	return m.executor.Execute(ctx, HookTaskCompleted, input)
 }
 
-func (m *HookManager) ExecuteConfigChange(ctx context.Context, key string, oldValue, newValue interface{}) []HookResult {
+func (m *HookManager) ExecuteConfigChange(ctx context.Context, key string, oldValue, newValue any) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"key":       key,
 			"old_value": oldValue,
 			"new_value": newValue,
@@ -516,7 +516,7 @@ func (m *HookManager) ExecuteConfigChange(ctx context.Context, key string, oldVa
 
 func (m *HookManager) ExecuteCwdChanged(ctx context.Context, oldDir, newDir string) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"old_dir": oldDir,
 			"new_dir": newDir,
 		},
@@ -526,7 +526,7 @@ func (m *HookManager) ExecuteCwdChanged(ctx context.Context, oldDir, newDir stri
 
 func (m *HookManager) ExecuteFileChanged(ctx context.Context, filePath string, changeType string) []HookResult {
 	input := &HookInput{
-		AdditionalData: map[string]interface{}{
+		AdditionalData: map[string]any{
 			"file_path":   filePath,
 			"change_type": changeType,
 		},
