@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/costguard"
 	"github.com/instructkr/smartclaw/internal/hooks"
 	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/memory"
@@ -36,6 +37,9 @@ type QueryEngine struct {
 	router              *routing.ModelRouter
 	proactive           *learning.ProactiveEngine
 	speculativeExecutor *routing.SpeculativeExecutor
+	costGuard           *costguard.CostGuard
+	thinkingManager     *ThinkingManager
+	prefetcher          *tools.PredictivePrefetcher
 	shutdownCh          chan struct{}
 	shutdownOnce        sync.Once
 }
@@ -43,13 +47,14 @@ type QueryEngine struct {
 func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 	registry := tools.GetRegistry()
 	e := &QueryEngine{
-		client:       client,
-		cacheClient:  api.NewCacheAwareClient(client),
-		state:        NewQueryState(),
-		config:       config,
-		tools:        registry,
-		hookExecutor: tools.NewHookAwareExecutor(registry, nil),
-		shutdownCh:   make(chan struct{}),
+		client:          client,
+		cacheClient:     api.NewCacheAwareClient(client),
+		state:           NewQueryState(),
+		config:          config,
+		tools:           registry,
+		hookExecutor:    tools.NewHookAwareExecutor(registry, nil),
+		thinkingManager: NewThinkingManager(),
+		shutdownCh:      make(chan struct{}),
 	}
 
 	if client != nil && config.EnableLLMCompaction {
@@ -63,14 +68,15 @@ func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 func NewQueryEngineWithHooks(client *api.Client, config QueryConfig, hookManager *hooks.HookManager) *QueryEngine {
 	registry := tools.GetRegistry()
 	return &QueryEngine{
-		client:       client,
-		cacheClient:  api.NewCacheAwareClient(client),
-		state:        NewQueryState(),
-		config:       config,
-		tools:        registry,
-		hookExecutor: tools.NewHookAwareExecutor(registry, hookManager),
-		hookManager:  hookManager,
-		shutdownCh:   make(chan struct{}),
+		client:          client,
+		cacheClient:     api.NewCacheAwareClient(client),
+		state:           NewQueryState(),
+		config:          config,
+		tools:           registry,
+		hookExecutor:    tools.NewHookAwareExecutor(registry, hookManager),
+		hookManager:     hookManager,
+		thinkingManager: NewThinkingManager(),
+		shutdownCh:      make(chan struct{}),
 	}
 }
 
@@ -126,6 +132,30 @@ func (e *QueryEngine) SetSpeculativeExecutor(se *routing.SpeculativeExecutor) {
 
 func (e *QueryEngine) GetSpeculativeExecutor() *routing.SpeculativeExecutor {
 	return e.speculativeExecutor
+}
+
+func (e *QueryEngine) SetCostGuard(cg *costguard.CostGuard) {
+	e.costGuard = cg
+}
+
+func (e *QueryEngine) GetCostGuard() *costguard.CostGuard {
+	return e.costGuard
+}
+
+func (e *QueryEngine) SetThinkingManager(tm *ThinkingManager) {
+	e.thinkingManager = tm
+}
+
+func (e *QueryEngine) GetThinkingManager() *ThinkingManager {
+	return e.thinkingManager
+}
+
+func (e *QueryEngine) SetPrefetcher(pp *tools.PredictivePrefetcher) {
+	e.prefetcher = pp
+}
+
+func (e *QueryEngine) GetPrefetcher() *tools.PredictivePrefetcher {
+	return e.prefetcher
 }
 
 func (e *QueryEngine) EnableConversationTree() {
@@ -249,13 +279,38 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 
 	startTime := time.Now()
 
+	systemPrompt := e.config.SystemPrompt
+	if e.prefetcher != nil && e.prefetcher.IsEnabled() {
+		lastUserMsg := extractLastUserMessage(messages)
+		if lastUserMsg != "" {
+			prefetchResult := e.prefetcher.Prefetch(lastUserMsg, 3)
+			if len(prefetchResult.Files) > 0 {
+				var prefetchCtx strings.Builder
+				prefetchCtx.WriteString("\n\n## Prefetched Context\n")
+				for f, content := range prefetchResult.Files {
+					prefetchCtx.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", f, content))
+				}
+				systemPrompt += prefetchCtx.String()
+			}
+		}
+	}
+
+	if e.thinkingManager != nil && e.thinkingManager.IsEnabled() {
+		e.client.Thinking = &api.ThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: e.thinkingManager.GetBudget(),
+		}
+	} else {
+		e.client.Thinking = nil
+	}
+
 	_, apiSpan := observability.StartSpan(ctx, "api.call")
 	var resp *api.MessageResponse
 	var err error
 	if e.cacheClient != nil {
-		resp, err = e.cacheClient.CreateMessage(ctx, messages, e.config.SystemPrompt)
+		resp, err = e.cacheClient.CreateMessage(ctx, messages, systemPrompt)
 	} else {
-		resp, err = e.client.CreateMessage(messages, e.config.SystemPrompt)
+		resp, err = e.client.CreateMessage(messages, systemPrompt)
 	}
 	observability.EndSpan(apiSpan)
 
@@ -267,6 +322,14 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 
 	observability.RecordQueryDuration(duration, e.client.Model)
 	observability.RecordTokenUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheRead, resp.Usage.CacheCreation, e.client.Model)
+
+	if e.costGuard != nil && e.costGuard.IsEnabled() {
+		snapshot := e.costGuard.RecordUsage(e.client.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheRead, resp.Usage.CacheCreation)
+		if snapshot.ShouldDowngrade && snapshot.DowngradeModel != "" {
+			slog.Warn("cost guard: downgrading model", "from", e.client.Model, "to", snapshot.DowngradeModel, "budget_used", fmt.Sprintf("%.0f%%", snapshot.BudgetFraction*100))
+			e.client.SetModel(snapshot.DowngradeModel)
+		}
+	}
 
 	if e.cacheClient != nil {
 		observability.RecordCacheHit(resp.Usage.CacheRead > 0)
@@ -387,6 +450,14 @@ func (e *QueryEngine) QueryStream(ctx context.Context, input string, handler Str
 		Stream:    true,
 	}
 
+	if e.thinkingManager != nil && e.thinkingManager.IsEnabled() {
+		req.Thinking = &api.ThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: e.thinkingManager.GetBudget(),
+		}
+		req.MaxTokens = max(req.MaxTokens, req.Thinking.BudgetTokens+4096)
+	}
+
 	if req.System != nil {
 		if sysStr, ok := req.System.(string); ok && sysStr != "" {
 			req.System = []api.SystemBlock{
@@ -481,7 +552,7 @@ func (e *QueryEngine) QueryStream(ctx context.Context, input string, handler Str
 	return nil
 }
 
-func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error) {
+func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input map[string]any) (any, error) {
 	if e.hookManager != nil && e.state.GetTurnCount() == 1 {
 		e.hookManager.ExecuteSessionStart(ctx)
 	}
@@ -507,7 +578,7 @@ func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input ma
 }
 
 // ExecuteToolWithoutHooks bypasses hook system for internal operations
-func (e *QueryEngine) ExecuteToolWithoutHooks(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error) {
+func (e *QueryEngine) ExecuteToolWithoutHooks(ctx context.Context, toolName string, input map[string]any) (any, error) {
 	startTime := time.Now()
 	result, err := e.tools.Execute(ctx, toolName, input)
 	duration := time.Since(startTime)
@@ -860,4 +931,15 @@ func containsCode(s string) bool {
 		}
 	}
 	return false
+}
+
+func extractLastUserMessage(messages []api.MessageParam) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			if str, ok := messages[i].Content.(string); ok {
+				return str
+			}
+		}
+	}
+	return ""
 }
