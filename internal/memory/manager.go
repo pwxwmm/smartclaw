@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/instructkr/smartclaw/internal/memory/layers"
@@ -31,7 +32,9 @@ type MemoryManager struct {
 	snapshots map[string]*MemorySnapshot
 	snapMu    sync.RWMutex
 
-	budget ContextBudget
+	budget             ContextBudget
+	skillInjector      *layers.SkillInjector
+	contextAwareSkills bool
 }
 
 func NewMemoryManager() (*MemoryManager, error) {
@@ -84,6 +87,10 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		slog.Warn("memory manager: failed to load skill memory index", "error", err)
 	}
 	mm.skillMemory = skillMem
+
+	if mm.skillMemory != nil {
+		mm.skillInjector = layers.NewSkillInjector(mm.skillMemory)
+	}
 
 	if s != nil {
 		mm.sessionSearch = layers.NewSessionSearch(s)
@@ -157,7 +164,15 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 
 	if mm.skillMemory != nil {
 		_, span := observability.StartSpan(ctx, "memory.layer.skills")
-		skillPrompt := mm.skillMemory.BuildSkillPrompt()
+		var skillPrompt string
+		if mm.contextAwareSkills && mm.skillInjector != nil {
+			hint := layers.ContextHint{
+				Keywords: extractKeywords(currentQuery),
+			}
+			skillPrompt = mm.skillInjector.BuildContextAwarePrompt(hint, 5)
+		} else {
+			skillPrompt = mm.skillMemory.BuildSkillPrompt()
+		}
 		if skillPrompt != "" {
 			layerContents = append(layerContents, LayerContent{Name: LayerSkills, Content: skillPrompt})
 			observability.RecordMemoryLayerSize("skills", len(skillPrompt))
@@ -378,6 +393,14 @@ func (mm *MemoryManager) GetBudget() ContextBudget {
 	return mm.budget
 }
 
+func (mm *MemoryManager) EnableContextAwareSkills(enabled bool) {
+	mm.contextAwareSkills = enabled
+}
+
+func (mm *MemoryManager) IsContextAwareSkills() bool {
+	return mm.contextAwareSkills
+}
+
 func (mm *MemoryManager) Close() error {
 	if mm.dataStore != nil {
 		return mm.dataStore.Close()
@@ -397,6 +420,36 @@ func joinParts(parts []string) string {
 		result += p
 	}
 	return result
+}
+
+func extractKeywords(query string) []string {
+	stopWords := map[string]bool{
+		"the": true, "a": true, "an": true, "is": true, "are": true,
+		"was": true, "were": true, "be": true, "been": true, "being": true,
+		"have": true, "has": true, "had": true, "do": true, "does": true,
+		"did": true, "will": true, "would": true, "could": true, "should": true,
+		"may": true, "might": true, "can": true, "shall": true, "to": true,
+		"of": true, "in": true, "for": true, "on": true, "with": true,
+		"at": true, "by": true, "from": true, "as": true, "into": true,
+		"through": true, "during": true, "before": true, "after": true,
+		"above": true, "below": true, "between": true, "and": true,
+		"or": true, "not": true, "but": true, "if": true, "then": true,
+		"it": true, "i": true, "me": true, "my": true, "we": true,
+		"this": true, "that": true, "these": true, "those": true,
+	}
+
+	words := strings.Fields(strings.ToLower(query))
+	var keywords []string
+	for _, w := range words {
+		clean := strings.Trim(w, ".,;:!?()[]{}\"'")
+		if len(clean) > 2 && !stopWords[clean] {
+			keywords = append(keywords, clean)
+		}
+	}
+	if len(keywords) > 10 {
+		keywords = keywords[:10]
+	}
+	return keywords
 }
 
 func buildBundledSkillSummaries() map[string]*layers.SkillSummary {
