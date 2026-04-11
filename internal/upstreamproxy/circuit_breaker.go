@@ -93,11 +93,11 @@ func (cb *CircuitBreaker) Reset() {
 	cb.lastFailTime = time.Time{}
 }
 
-func (cb *CircuitBreaker) GetStats() map[string]interface{} {
+func (cb *CircuitBreaker) GetStats() map[string]any {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"state":        cb.state.String(),
 		"failures":     cb.failures,
 		"max_failures": cb.maxFailures,

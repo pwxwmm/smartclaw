@@ -2182,7 +2182,7 @@ func ProcessLSPCommand(m *Model, args []string) {
 	}
 }
 
-func executeLSPOperation(filePath, operation string, posArgs []string) (interface{}, error) {
+func executeLSPOperation(filePath, operation string, posArgs []string) (any, error) {
 	rootPath := "."
 	client, err := tools.GetOrCreateLSPClient(filePath, rootPath)
 	if err != nil {
@@ -2258,14 +2258,14 @@ func ProcessTeamCommand(m *Model, args []string) {
 			desc = strings.Join(args[2:], " ")
 		}
 
-		result, err := executeTeamTool("team_create", map[string]interface{}{
+		result, err := executeTeamTool("team_create", map[string]any{
 			"name": name, "description": desc,
 		})
 		if err != nil {
 			AddOutput(m, m.formatError(fmt.Sprintf("Failed to create team: %v", err)))
 			return
 		}
-		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Created team: %s (ID: %s)", name, result.(map[string]interface{})["id"])))
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Created team: %s (ID: %s)", name, result.(map[string]any)["id"])))
 
 	case "list", "ls":
 		teamIDs := registry.List()
@@ -2314,7 +2314,7 @@ func ProcessTeamCommand(m *Model, args []string) {
 		content := strings.Join(args[2:], " ")
 		title := fmt.Sprintf("Shared note (%s)", time.Now().Format("15:04"))
 
-		_, err := executeTeamTool("team_share_memory", map[string]interface{}{
+		_, err := executeTeamTool("team_share_memory", map[string]any{
 			"team_id": teamID, "title": title, "content": content, "type": "code", "visibility": "team",
 		})
 		if err != nil {
@@ -2329,15 +2329,15 @@ func ProcessTeamCommand(m *Model, args []string) {
 			return
 		}
 		teamID := args[1]
-		result, err := executeTeamTool("team_get_memories", map[string]interface{}{
+		result, err := executeTeamTool("team_get_memories", map[string]any{
 			"team_id": teamID,
 		})
 		if err != nil {
 			AddOutput(m, m.formatError(fmt.Sprintf("Failed to get memories: %v", err)))
 			return
 		}
-		resMap := result.(map[string]interface{})
-		memories := resMap["memories"].([]map[string]interface{})
+		resMap := result.(map[string]any)
+		memories := resMap["memories"].([]map[string]any)
 		if len(memories) == 0 {
 			AddOutput(m, m.formatAssistantOutput("No memories in this team"))
 			return
@@ -2356,14 +2356,14 @@ func ProcessTeamCommand(m *Model, args []string) {
 		}
 		teamID := args[1]
 		query := strings.Join(args[2:], " ")
-		result, err := executeTeamTool("team_search_memories", map[string]interface{}{
+		result, err := executeTeamTool("team_search_memories", map[string]any{
 			"team_id": teamID, "query": query,
 		})
 		if err != nil {
 			AddOutput(m, m.formatError(fmt.Sprintf("Search failed: %v", err)))
 			return
 		}
-		resMap := result.(map[string]interface{})
+		resMap := result.(map[string]any)
 		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Found %v results for '%s'", resMap["count"], query)))
 
 	case "sync":
@@ -2372,7 +2372,7 @@ func ProcessTeamCommand(m *Model, args []string) {
 			return
 		}
 		teamID := args[1]
-		_, err := executeTeamTool("team_sync", map[string]interface{}{
+		_, err := executeTeamTool("team_sync", map[string]any{
 			"team_id": teamID,
 		})
 		if err != nil {
@@ -2394,7 +2394,7 @@ func ProcessTeamCommand(m *Model, args []string) {
 		}
 		apiEndpoint := args[2]
 		apiKey := args[3]
-		_, err := executeTeamTool("team_sync", map[string]interface{}{
+		_, err := executeTeamTool("team_sync", map[string]any{
 			"team_id": teamID, "api_endpoint": apiEndpoint, "api_key": apiKey,
 		})
 		if err != nil {
@@ -2408,7 +2408,7 @@ func ProcessTeamCommand(m *Model, args []string) {
 			AddOutput(m, m.formatError("Usage: /team delete <team-id>"))
 			return
 		}
-		_, err := executeTeamTool("team_delete", map[string]interface{}{"id": args[1]})
+		_, err := executeTeamTool("team_delete", map[string]any{"id": args[1]})
 		if err != nil {
 			AddOutput(m, m.formatError(fmt.Sprintf("Failed to delete team: %v", err)))
 			return
@@ -2431,7 +2431,7 @@ func ProcessTeamCommand(m *Model, args []string) {
 	}
 }
 
-func executeTeamTool(toolName string, input map[string]interface{}) (interface{}, error) {
+func executeTeamTool(toolName string, input map[string]any) (any, error) {
 	registry := tools.GetRegistry()
 	tool := registry.Get(toolName)
 	if tool == nil {

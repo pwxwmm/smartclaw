@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -263,7 +262,7 @@ func (vt *VoiceTranscriber) Transcribe(ctx context.Context, audioData []byte) (*
 		return nil, fmt.Errorf("API key not configured for voice transcription")
 	}
 
-	tmpFile, err := ioutil.TempFile("", "voice-*.wav")
+	tmpFile, err := os.CreateTemp("", "voice-*.wav")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -299,7 +298,7 @@ func (vt *VoiceTranscriber) Transcribe(ctx context.Context, audioData []byte) (*
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("transcription failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -327,7 +326,7 @@ func (vt *VoiceTranscriber) TranscribeLocal(ctx context.Context, audioData []byt
 		return nil, fmt.Errorf("whisper binary not found, please install whisper or configure API key")
 	}
 
-	tmpFile, err := ioutil.TempFile("", "voice-*.wav")
+	tmpFile, err := os.CreateTemp("", "voice-*.wav")
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +355,7 @@ func (vt *VoiceTranscriber) TranscribeLocal(ctx context.Context, audioData []byt
 	jsonFile := strings.TrimSuffix(tmpFile.Name(), ".wav") + ".json"
 	defer os.Remove(jsonFile)
 
-	data, err := ioutil.ReadFile(jsonFile)
+	data, err := os.ReadFile(jsonFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read whisper output: %w", err)
 	}
@@ -402,7 +401,7 @@ func (vm *VoiceManager) StopPushToTalk(ctx context.Context) (*TranscriptionResul
 }
 
 func (vm *VoiceManager) TranscribeFile(ctx context.Context, filePath string) (*TranscriptionResult, error) {
-	data, err := ioutil.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read audio file: %w", err)
 	}

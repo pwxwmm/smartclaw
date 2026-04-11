@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,7 +129,7 @@ func (em *EditorManager) CreateTempFile(content string, ext string) (string, err
 	filename := fmt.Sprintf("editor_%s%s", timestamp, ext)
 	filePath := filepath.Join(em.tempDir, filename)
 
-	if err := ioutil.WriteFile(filePath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 
@@ -139,7 +138,7 @@ func (em *EditorManager) CreateTempFile(content string, ext string) (string, err
 }
 
 func (em *EditorManager) ReadFile(filePath string) (string, error) {
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}

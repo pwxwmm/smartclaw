@@ -1,9 +1,16 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var integrationAnsiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripIntegrationANSI(s string) string {
+	return integrationAnsiPattern.ReplaceAllString(s, "")
+}
 
 func TestMarkdownHeadingRemovalIntegration(t *testing.T) {
 	theme := Theme{Name: "dark"}
@@ -46,6 +53,7 @@ With **bold** and *italic* text.
 More content.`
 
 	output := renderer.RenderWithStyle(input, 80)
+	clean := stripIntegrationANSI(output)
 
 	verifications := []struct {
 		name     string
@@ -105,7 +113,7 @@ More content.`
 	}
 
 	for _, v := range verifications {
-		result := v.check(output)
+		result := v.check(clean)
 		if result != v.expected {
 			t.Errorf("%s: expected %v, got %v", v.name, v.expected, result)
 		} else {
@@ -122,31 +130,34 @@ func TestMarkdownRendererAllMethods(t *testing.T) {
 
 	t.Run("Render", func(t *testing.T) {
 		output := renderer.Render(input)
-		if strings.Contains(output, "###") {
-			t.Errorf("Render() should not contain ###, got: %q", output)
+		clean := stripIntegrationANSI(output)
+		if strings.Contains(clean, "###") {
+			t.Errorf("Render() should not contain ###, got: %q", clean)
 		}
-		if !strings.Contains(output, "Test Heading") {
-			t.Errorf("Render() should contain heading text, got: %q", output)
+		if !strings.Contains(clean, "Test Heading") {
+			t.Errorf("Render() should contain heading text, got: %q", clean)
 		}
 	})
 
 	t.Run("RenderWithStyle", func(t *testing.T) {
 		output := renderer.RenderWithStyle(input, 80)
-		if strings.Contains(output, "###") {
-			t.Errorf("RenderWithStyle() should not contain ###, got: %q", output)
+		clean := stripIntegrationANSI(output)
+		if strings.Contains(clean, "###") {
+			t.Errorf("RenderWithStyle() should not contain ###, got: %q", clean)
 		}
-		if !strings.Contains(output, "Test Heading") {
-			t.Errorf("RenderWithStyle() should contain heading text, got: %q", output)
+		if !strings.Contains(clean, "Test Heading") {
+			t.Errorf("RenderWithStyle() should contain heading text, got: %q", clean)
 		}
 	})
 
 	t.Run("RenderInline", func(t *testing.T) {
 		output := renderer.RenderInline(input)
-		if strings.Contains(output, "###") {
-			t.Errorf("RenderInline() should not contain ###, got: %q", output)
+		clean := stripIntegrationANSI(output)
+		if strings.Contains(clean, "###") {
+			t.Errorf("RenderInline() should not contain ###, got: %q", clean)
 		}
-		if !strings.Contains(output, "Test Heading") {
-			t.Errorf("RenderInline() should contain heading text, got: %q", output)
+		if !strings.Contains(clean, "Test Heading") {
+			t.Errorf("RenderInline() should contain heading text, got: %q", clean)
 		}
 	})
 }

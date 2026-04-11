@@ -295,21 +295,21 @@ func (am *AgentManager) parseAgentFromMarkdown(filePath string, source AgentSour
 		agent.MaxTurns = maxTurns
 	}
 
-	if tools, ok := frontmatter["tools"].([]interface{}); ok {
+	if tools, ok := frontmatter["tools"].([]any); ok {
 		for _, t := range tools {
 			if s, ok := t.(string); ok {
 				agent.Tools = append(agent.Tools, s)
 			}
 		}
 	}
-	if disallowedTools, ok := frontmatter["disallowedTools"].([]interface{}); ok {
+	if disallowedTools, ok := frontmatter["disallowedTools"].([]any); ok {
 		for _, t := range disallowedTools {
 			if s, ok := t.(string); ok {
 				agent.DisallowedTools = append(agent.DisallowedTools, s)
 			}
 		}
 	}
-	if skills, ok := frontmatter["skills"].([]interface{}); ok {
+	if skills, ok := frontmatter["skills"].([]any); ok {
 		for _, s := range skills {
 			if str, ok := s.(string); ok {
 				agent.Skills = append(agent.Skills, str)
@@ -320,10 +320,10 @@ func (am *AgentManager) parseAgentFromMarkdown(filePath string, source AgentSour
 	return agent
 }
 
-func parseFrontmatter(content string) (map[string]interface{}, string) {
+func parseFrontmatter(content string) (map[string]any, string) {
 	lines := strings.Split(content, "\n")
 	if len(lines) < 2 || lines[0] != "---" {
-		return make(map[string]interface{}), content
+		return make(map[string]any), content
 	}
 
 	endIndex := -1
@@ -335,13 +335,13 @@ func parseFrontmatter(content string) (map[string]interface{}, string) {
 	}
 
 	if endIndex == -1 {
-		return make(map[string]interface{}), content
+		return make(map[string]any), content
 	}
 
 	frontmatterStr := strings.Join(lines[1:endIndex], "\n")
 	body := strings.Join(lines[endIndex+1:], "\n")
 
-	frontmatter := make(map[string]interface{})
+	frontmatter := make(map[string]any)
 	for _, line := range strings.Split(frontmatterStr, "\n") {
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) == 2 {
@@ -350,7 +350,7 @@ func parseFrontmatter(content string) (map[string]interface{}, string) {
 
 			if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 				items := strings.Split(strings.Trim(value, "[]"), ",")
-				var arr []interface{}
+				var arr []any
 				for _, item := range items {
 					arr = append(arr, strings.TrimSpace(strings.Trim(item, "\"")))
 				}

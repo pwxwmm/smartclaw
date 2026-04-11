@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,15 +126,15 @@ func Truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-func JSONMarshal(v interface{}) ([]byte, error) {
+func JSONMarshal(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func JSONUnmarshal(data []byte, v interface{}) error {
+func JSONUnmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-func JSONMarshalIndent(v interface{}) ([]byte, error) {
+func JSONMarshalIndent(v any) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
 }
 
@@ -147,45 +148,16 @@ func Base64Decode(encoded string) ([]byte, error) {
 
 func RandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	rand.Seed(time.Now().UnixNano())
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		b[i] = charset[n.Int64()]
 	}
 	return string(b)
 }
 
-func Contains(s []string, item string) bool {
-	for _, v := range s {
-		if v == item {
-			return true
-		}
-	}
-	return false
-}
-
-func RemoveDuplicates(s []string) []string {
-	seen := make(map[string]bool)
-	result := make([]string, 0)
-	for _, v := range s {
-		if !seen[v] {
-			seen[v] = true
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
-func MapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-func MapValues(m map[string]interface{}) []interface{} {
-	values := make([]interface{}, 0, len(m))
+func MapValues(m map[string]any) []any {
+	values := make([]any, 0, len(m))
 	for _, v := range m {
 		values = append(values, v)
 	}
@@ -199,12 +171,12 @@ func Getenv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func MustGetenv(key string) string {
+func MustGetenv(key string) (string, error) {
 	value := os.Getenv(key)
 	if value == "" {
-		panic(fmt.Sprintf("environment variable %s not set", key))
+		return "", fmt.Errorf("environment variable %s not set", key)
 	}
-	return value
+	return value, nil
 }
 
 func OS() string {

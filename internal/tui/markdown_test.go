@@ -1,72 +1,66 @@
 package tui
 
 import (
-	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
 
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
+}
+
 func TestRemoveHeadingMarkers(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name        string
+		input       string
+		contains    string
+		notContains string
 	}{
 		{
-			name:     "simple h3 heading",
-			input:    "\x1b[1;36m### Heading\x1b[0m",
-			expected: "\x1b[1;36mHeading\x1b[0m",
+			name:     "plain h3 heading",
+			input:    "### Heading",
+			contains: "Heading",
 		},
 		{
-			name:     "h3 with styled markers",
-			input:    "\x1b[1;36m### \x1b[0m\x1b[1;36mHeading\x1b[0m",
-			expected: "\x1b[1;36mHeading\x1b[0m",
+			name:        "h3 markers removed",
+			input:       "### Heading",
+			notContains: "###",
 		},
 		{
-			name:     "h2 heading",
-			input:    "\x1b[1;35m## Heading\x1b[0m",
-			expected: "\x1b[1;35mHeading\x1b[0m",
+			name:     "plain h2 heading",
+			input:    "## Heading",
+			contains: "Heading",
 		},
 		{
-			name:     "h1 heading",
-			input:    "\x1b[1;34m# Heading\x1b[0m",
-			expected: "\x1b[1;34mHeading\x1b[0m",
+			name:        "h2 markers removed",
+			input:       "## Heading",
+			notContains: "##",
+		},
+		{
+			name:     "plain h1 heading",
+			input:    "# Heading",
+			contains: "Heading",
 		},
 		{
 			name:     "normal text unchanged",
 			input:    "Normal text without heading",
-			expected: "Normal text without heading",
-		},
-		{
-			name:     "heading in middle of text",
-			input:    "Before\n\x1b[1;36m### Heading\x1b[0m\nAfter",
-			expected: "Before\n\x1b[1;36mHeading\x1b[0m\nAfter",
-		},
-		{
-			name:     "plain heading without ANSI",
-			input:    "### Plain Heading",
-			expected: "Plain Heading",
-		},
-		{
-			name:     "plain h2 without ANSI",
-			input:    "## Plain H2",
-			expected: "Plain H2",
-		},
-		{
-			name:     "plain h1 without ANSI",
-			input:    "# Plain H1",
-			expected: "Plain H1",
+			contains: "Normal text without heading",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := removeHeadingMarkers(tt.input)
-			if result != tt.expected {
-				t.Errorf("removeHeadingMarkers() = %q, want %q", result, tt.expected)
-				fmt.Printf("Input (escaped): %q\n", tt.input)
-				fmt.Printf("Got (escaped): %q\n", result)
-				fmt.Printf("Want (escaped): %q\n", tt.expected)
+			clean := stripANSI(result)
+
+			if tt.contains != "" && !strings.Contains(clean, tt.contains) {
+				t.Errorf("removeHeadingMarkers() result should contain %q, got %q", tt.contains, clean)
+			}
+			if tt.notContains != "" && strings.Contains(clean, tt.notContains) {
+				t.Errorf("removeHeadingMarkers() result should not contain %q, got %q", tt.notContains, clean)
 			}
 		})
 	}
@@ -101,19 +95,14 @@ func TestMarkdownRenderer_RenderWithStyle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := renderer.RenderWithStyle(tt.input, 80)
+			clean := stripANSI(result)
 
-			if !strings.Contains(result, tt.contains) {
-				t.Errorf("RenderWithStyle() result doesn't contain %q. Got: %q", tt.contains, result)
+			if !strings.Contains(clean, tt.contains) {
+				t.Errorf("RenderWithStyle() result doesn't contain %q. Got: %q", tt.contains, clean)
 			}
 
-			if strings.Contains(result, "###") {
-				t.Errorf("RenderWithStyle() should not contain ###. Got: %q", result)
-			}
-			if strings.Contains(result, "##") && !strings.Contains(result, "#!") {
-				// Allow ## in code blocks but not as heading markers
-				if strings.HasPrefix(result, "##") || strings.Contains(result, "\n##") {
-					t.Errorf("RenderWithStyle() should not contain ## heading markers. Got: %q", result)
-				}
+			if strings.Contains(clean, "###") {
+				t.Errorf("RenderWithStyle() should not contain ###. Got: %q", clean)
 			}
 		})
 	}

@@ -45,7 +45,7 @@ func (r *Renderer) Println(msg string) {
 }
 
 // Printf prints a formatted message
-func (r *Renderer) Printf(format string, args ...interface{}) {
+func (r *Renderer) Printf(format string, args ...any) {
 	fmt.Fprintf(r.writer, format, args...)
 }
 
@@ -139,7 +139,7 @@ func (r *Renderer) PrintWarning(msg string) {
 }
 
 // PrintToolCall prints a tool call
-func (r *Renderer) PrintToolCall(name string, input interface{}) {
+func (r *Renderer) PrintToolCall(name string, input any) {
 	r.Printf("%s %s", r.Bold("Tool:"), r.Cyan(name))
 	r.Print("\n")
 }
