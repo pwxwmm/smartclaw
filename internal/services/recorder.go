@@ -13,7 +13,7 @@ import (
 type RecordingEntry struct {
 	Timestamp time.Time              `json:"timestamp"`
 	Type      string                 `json:"type"`
-	Data      map[string]interface{} `json:"data"`
+	Data      map[string]any `json:"data"`
 }
 
 type SessionRecorder struct {
@@ -79,7 +79,7 @@ func (r *SessionRecorder) Stop() error {
 	return nil
 }
 
-func (r *SessionRecorder) Record(entryType string, data map[string]interface{}) error {
+func (r *SessionRecorder) Record(entryType string, data map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -108,21 +108,21 @@ func (r *SessionRecorder) Record(entryType string, data map[string]interface{}) 
 }
 
 func (r *SessionRecorder) RecordMessage(role, content string) error {
-	return r.Record("message", map[string]interface{}{
+	return r.Record("message", map[string]any{
 		"role":    role,
 		"content": content,
 	})
 }
 
-func (r *SessionRecorder) RecordToolCall(tool string, input map[string]interface{}) error {
-	return r.Record("tool_call", map[string]interface{}{
+func (r *SessionRecorder) RecordToolCall(tool string, input map[string]any) error {
+	return r.Record("tool_call", map[string]any{
 		"tool":  tool,
 		"input": input,
 	})
 }
 
-func (r *SessionRecorder) RecordToolResult(tool string, result interface{}) error {
-	return r.Record("tool_result", map[string]interface{}{
+func (r *SessionRecorder) RecordToolResult(tool string, result any) error {
+	return r.Record("tool_result", map[string]any{
 		"tool":   tool,
 		"result": result,
 	})

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,7 +52,7 @@ type Memory struct {
 	Tags        []string               `json:"tags,omitempty"`
 	ProjectID   string                 `json:"project_id,omitempty"`
 	SessionID   string                 `json:"session_id,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 	AccessCount int                    `json:"access_count"`
@@ -118,7 +117,7 @@ func NewTeamMemorySync(teamID string) *TeamMemorySync {
 }
 
 func (tms *TeamMemorySync) loadLocal() error {
-	data, err := ioutil.ReadFile(filepath.Join(tms.storagePath, "memories.json"))
+	data, err := os.ReadFile(filepath.Join(tms.storagePath, "memories.json"))
 	if err != nil {
 		return nil
 	}
@@ -132,7 +131,7 @@ func (tms *TeamMemorySync) saveLocal() error {
 		return err
 	}
 
-	return ioutil.WriteFile(filepath.Join(tms.storagePath, "memories.json"), data, 0644)
+	return os.WriteFile(filepath.Join(tms.storagePath, "memories.json"), data, 0644)
 }
 
 func (tms *TeamMemorySync) Configure(apiEndpoint, apiKey string, encryptKey []byte) {
@@ -236,7 +235,7 @@ func (tms *TeamMemorySync) SearchMemories(ctx context.Context, query string) ([]
 	return result, nil
 }
 
-func (tms *TeamMemorySync) UpdateMemory(ctx context.Context, memoryID string, updates map[string]interface{}) error {
+func (tms *TeamMemorySync) UpdateMemory(ctx context.Context, memoryID string, updates map[string]any) error {
 	tms.mu.Lock()
 	defer tms.mu.Unlock()
 
@@ -520,11 +519,11 @@ func (tms *TeamMemorySync) GetTeam() *Team {
 	return tms.team
 }
 
-func (tms *TeamMemorySync) GetStats() map[string]interface{} {
+func (tms *TeamMemorySync) GetStats() map[string]any {
 	tms.mu.RLock()
 	defer tms.mu.RUnlock()
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"total_memories": len(tms.memories),
 		"by_type":        make(map[MemoryType]int),
 		"by_visibility":  make(map[MemoryVisibility]int),

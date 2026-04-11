@@ -22,7 +22,7 @@ type LogEntry struct {
 	Timestamp time.Time              `json:"timestamp"`
 	Level     LogLevel               `json:"level"`
 	Message   string                 `json:"message"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
+	Fields    map[string]any `json:"fields,omitempty"`
 }
 
 type InternalLogger struct {
@@ -62,7 +62,7 @@ func (l *InternalLogger) shouldLog(level LogLevel) bool {
 	return levels[level] >= levels[l.level]
 }
 
-func (l *InternalLogger) log(level LogLevel, message string, fields map[string]interface{}) {
+func (l *InternalLogger) log(level LogLevel, message string, fields map[string]any) {
 	if !l.shouldLog(level) {
 		return
 	}
@@ -81,19 +81,19 @@ func (l *InternalLogger) log(level LogLevel, message string, fields map[string]i
 	l.logger.Printf("[%s] %s", level, message)
 }
 
-func (l *InternalLogger) Debug(message string, fields map[string]interface{}) {
+func (l *InternalLogger) Debug(message string, fields map[string]any) {
 	l.log(LogLevelDebug, message, fields)
 }
 
-func (l *InternalLogger) Info(message string, fields map[string]interface{}) {
+func (l *InternalLogger) Info(message string, fields map[string]any) {
 	l.log(LogLevelInfo, message, fields)
 }
 
-func (l *InternalLogger) Warn(message string, fields map[string]interface{}) {
+func (l *InternalLogger) Warn(message string, fields map[string]any) {
 	l.log(LogLevelWarn, message, fields)
 }
 
-func (l *InternalLogger) Error(message string, fields map[string]interface{}) {
+func (l *InternalLogger) Error(message string, fields map[string]any) {
 	l.log(LogLevelError, message, fields)
 }
 
@@ -186,7 +186,7 @@ func (a *LogAggregator) RemoveLogger(name string) {
 	delete(a.loggers, name)
 }
 
-func (a *LogAggregator) Broadcast(level LogLevel, message string, fields map[string]interface{}) {
+func (a *LogAggregator) Broadcast(level LogLevel, message string, fields map[string]any) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

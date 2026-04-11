@@ -17,7 +17,7 @@ type Settings struct {
 	Model        string                 `json:"model"`
 	MaxTokens    int                    `json:"max_tokens"`
 	Permission   string                 `json:"permission"`
-	CustomConfig map[string]interface{} `json:"custom,omitempty"`
+	CustomConfig map[string]any `json:"custom,omitempty"`
 	UpdatedAt    time.Time              `json:"updated_at"`
 	Version      int                    `json:"version"`
 	Checksum     string                 `json:"checksum"`
@@ -149,7 +149,7 @@ func (s *SettingsSync) GetSettings() *Settings {
 	return s.settings
 }
 
-func (s *SettingsSync) UpdateSettings(ctx context.Context, updates map[string]interface{}) error {
+func (s *SettingsSync) UpdateSettings(ctx context.Context, updates map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -171,9 +171,9 @@ func (s *SettingsSync) UpdateSettings(ctx context.Context, updates map[string]in
 		changes = append(changes, fmt.Sprintf("permission: %s -> %s", s.settings.Permission, permission))
 		s.settings.Permission = permission
 	}
-	if custom, ok := updates["custom"].(map[string]interface{}); ok {
+	if custom, ok := updates["custom"].(map[string]any); ok {
 		if s.settings.CustomConfig == nil {
-			s.settings.CustomConfig = make(map[string]interface{})
+			s.settings.CustomConfig = make(map[string]any)
 		}
 		for k, v := range custom {
 			changes = append(changes, fmt.Sprintf("custom.%s: updated", k))
@@ -301,7 +301,7 @@ func (s *SettingsSync) mergeRemote(remote *Settings, resolution ConflictResoluti
 		}
 		for k, v := range remote.CustomConfig {
 			if s.settings.CustomConfig == nil {
-				s.settings.CustomConfig = make(map[string]interface{})
+				s.settings.CustomConfig = make(map[string]any)
 			}
 			if _, exists := s.settings.CustomConfig[k]; !exists {
 				s.settings.CustomConfig[k] = v

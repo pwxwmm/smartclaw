@@ -138,7 +138,7 @@ func TestSessionRecorderRecordToolCall(t *testing.T) {
 	}
 	defer recorder.Stop()
 
-	if err := recorder.RecordToolCall("bash", map[string]interface{}{"command": "ls"}); err != nil {
+	if err := recorder.RecordToolCall("bash", map[string]any{"command": "ls"}); err != nil {
 		t.Fatalf("RecordToolCall failed: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestPlaybackLoadAndRead(t *testing.T) {
 
 	recorder.RecordMessage("user", "hello")
 	recorder.RecordMessage("assistant", "hi there")
-	recorder.RecordToolCall("bash", map[string]interface{}{"command": "ls"})
+	recorder.RecordToolCall("bash", map[string]any{"command": "ls"})
 
 	if err := recorder.Stop(); err != nil {
 		t.Fatal(err)

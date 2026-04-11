@@ -3,7 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 )
@@ -80,7 +80,7 @@ func (s *AgentSummaryService) List() []*AgentSummary {
 type MagicDocs struct {
 	DocID       string                 `json:"doc_id"`
 	Content     string                 `json:"content"`
-	Schema      map[string]interface{} `json:"schema,omitempty"`
+	Schema      map[string]any `json:"schema,omitempty"`
 	GeneratedAt time.Time              `json:"generated_at"`
 }
 
@@ -177,8 +177,8 @@ func (s *TipsService) List() []Tip {
 
 type ExtractMemory struct {
 	Key      string                 `json:"key"`
-	Data     interface{}            `json:"data"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Data     any            `json:"data"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type ExtractMemoriesService struct {
@@ -192,14 +192,14 @@ func NewExtractMemoriesService() *ExtractMemoriesService {
 	}
 }
 
-func (s *ExtractMemoriesService) Extract(key string, data interface{}) *ExtractMemory {
+func (s *ExtractMemoriesService) Extract(key string, data any) *ExtractMemory {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	em := &ExtractMemory{
 		Key:      key,
 		Data:     data,
-		Metadata: make(map[string]interface{}),
+		Metadata: make(map[string]any),
 	}
 
 	s.memories[key] = em
@@ -320,7 +320,7 @@ func (s *DiagnosticTrackingService) Clear() {
 type TeamMemory struct {
 	UserID    string                 `json:"user_id"`
 	Content   string                 `json:"content"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 }
 
@@ -360,23 +360,23 @@ func (s *TeamMemorySyncService) Sync() error {
 }
 
 type SettingsSyncService struct {
-	settings map[string]interface{}
+	settings map[string]any
 	mu       sync.RWMutex
 }
 
 func NewSettingsSyncService() *SettingsSyncService {
 	return &SettingsSyncService{
-		settings: make(map[string]interface{}),
+		settings: make(map[string]any),
 	}
 }
 
-func (s *SettingsSyncService) Set(key string, value interface{}) {
+func (s *SettingsSyncService) Set(key string, value any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.settings[key] = value
 }
 
-func (s *SettingsSyncService) Get(key string) interface{} {
+func (s *SettingsSyncService) Get(key string) any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.settings[key]
@@ -391,16 +391,16 @@ func (s *SettingsSyncService) Export(path string) error {
 		return err
 	}
 
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func (s *SettingsSyncService) Import(path string) error {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 
-	var settings map[string]interface{}
+	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return err
 	}
@@ -584,7 +584,7 @@ func (s *AwaySummaryService) Get(sessionID string) *AwaySummary {
 }
 
 type RemoteManagedSettings struct {
-	Settings map[string]interface{} `json:"settings"`
+	Settings map[string]any `json:"settings"`
 	Source   string                 `json:"source"`
 }
 
@@ -599,7 +599,7 @@ func NewRemoteManagedSettingsService() *RemoteManagedSettingsService {
 	}
 }
 
-func (s *RemoteManagedSettingsService) Set(source string, settings map[string]interface{}) {
+func (s *RemoteManagedSettingsService) Set(source string, settings map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -9,7 +9,7 @@ import (
 type Event struct {
 	Name      string
 	Timestamp time.Time
-	Metadata  map[string]interface{}
+	Metadata  map[string]any
 }
 
 type AnalyticsService struct {
@@ -43,7 +43,7 @@ func (s *AnalyticsService) IsEnabled() bool {
 	return s.enabled
 }
 
-func (s *AnalyticsService) LogEvent(name string, metadata map[string]interface{}) {
+func (s *AnalyticsService) LogEvent(name string, metadata map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -114,22 +114,22 @@ func DefaultConfig() *Config {
 }
 
 type GrowthBookClient struct {
-	features map[string]interface{}
+	features map[string]any
 }
 
 func NewGrowthBookClient() *GrowthBookClient {
 	return &GrowthBookClient{
-		features: make(map[string]interface{}),
+		features: make(map[string]any),
 	}
 }
 
-func (c *GrowthBookClient) GetFeatureValue(key string, defaultValue interface{}) interface{} {
+func (c *GrowthBookClient) GetFeatureValue(key string, defaultValue any) any {
 	if val, ok := c.features[key]; ok {
 		return val
 	}
 	return defaultValue
 }
 
-func (c *GrowthBookClient) SetFeature(key string, value interface{}) {
+func (c *GrowthBookClient) SetFeature(key string, value any) {
 	c.features[key] = value
 }

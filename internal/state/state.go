@@ -161,7 +161,7 @@ func (s *AppState) DeleteSession(id string) error {
 	return nil
 }
 
-func (s *AppState) SetCache(key string, value interface{}, ttl time.Duration) {
+func (s *AppState) SetCache(key string, value any, ttl time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -179,7 +179,7 @@ func (s *AppState) SetCache(key string, value interface{}, ttl time.Duration) {
 	s.Cache[key] = entry
 }
 
-func (s *AppState) GetCache(key string) (interface{}, bool) {
+func (s *AppState) GetCache(key string) (any, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -209,24 +209,24 @@ func (s *AppState) ClearCache() {
 
 type Context struct {
 	mu     sync.RWMutex
-	Values map[string]interface{}
-	Stack  []map[string]interface{}
+	Values map[string]any
+	Stack  []map[string]any
 }
 
 func NewContext() *Context {
 	return &Context{
-		Values: make(map[string]interface{}),
-		Stack:  make([]map[string]interface{}, 0),
+		Values: make(map[string]any),
+		Stack:  make([]map[string]any, 0),
 	}
 }
 
-func (c *Context) Set(key string, value interface{}) {
+func (c *Context) Set(key string, value any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Values[key] = value
 }
 
-func (c *Context) Get(key string) (interface{}, bool) {
+func (c *Context) Get(key string) (any, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	val, ok := c.Values[key]
@@ -253,14 +253,14 @@ func (c *Context) Keys() []string {
 func (c *Context) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.Values = make(map[string]interface{})
+	c.Values = make(map[string]any)
 }
 
 func (c *Context) Push() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	snapshot := make(map[string]interface{})
+	snapshot := make(map[string]any)
 	for k, v := range c.Values {
 		snapshot[k] = v
 	}
@@ -280,11 +280,11 @@ func (c *Context) Pop() {
 	c.Values = snapshot
 }
 
-func (c *Context) Snapshot() map[string]interface{} {
+func (c *Context) Snapshot() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	snapshot := make(map[string]interface{})
+	snapshot := make(map[string]any)
 	for k, v := range c.Values {
 		snapshot[k] = v
 	}

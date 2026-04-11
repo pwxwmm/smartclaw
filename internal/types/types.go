@@ -17,18 +17,18 @@ type Config struct {
 type ToolCall struct {
 	ID    string                 `json:"id"`
 	Name  string                 `json:"name"`
-	Input map[string]interface{} `json:"input"`
+	Input map[string]any `json:"input"`
 }
 
 type ToolResult struct {
 	ToolUseID string      `json:"tool_use_id"`
-	Content   interface{} `json:"content"`
+	Content   any `json:"content"`
 	IsError   bool        `json:"is_error"`
 }
 
 type Message struct {
 	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
+	Content any `json:"content"`
 }
 
 type ContentBlock struct {
@@ -36,7 +36,7 @@ type ContentBlock struct {
 	Text      string                 `json:"text,omitempty"`
 	ID        string                 `json:"id,omitempty"`
 	Name      string                 `json:"name,omitempty"`
-	Input     map[string]interface{} `json:"input,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
 	ToolUseID string                 `json:"tool_use_id,omitempty"`
 	Source    *ImageSource           `json:"source,omitempty"`
 	Thinking  string                 `json:"thinking,omitempty"`
@@ -58,7 +58,7 @@ type Usage struct {
 
 type StreamEvent struct {
 	Type string      `json:"type"`
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 }
 
 type Error struct {
@@ -76,7 +76,7 @@ type Session struct {
 	UpdatedAt time.Time              `json:"updated_at"`
 	Model     string                 `json:"model"`
 	Messages  []Message              `json:"messages"`
-	Metadata  map[string]interface{} `json:"metadata"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 func NewSession(id string) *Session {
@@ -85,7 +85,7 @@ func NewSession(id string) *Session {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Messages:  make([]Message, 0),
-		Metadata:  make(map[string]interface{}),
+		Metadata:  make(map[string]any),
 	}
 }
 
@@ -112,7 +112,7 @@ type APIResponse struct {
 type ToolDefinition struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
+	InputSchema map[string]any `json:"input_schema"`
 }
 
 type Permission struct {
@@ -142,7 +142,7 @@ func (c *Credentials) IsValid() bool {
 
 type CacheEntry struct {
 	Key       string      `json:"key"`
-	Value     interface{} `json:"value"`
+	Value     any `json:"value"`
 	CreatedAt time.Time   `json:"created_at"`
 	ExpiresAt *time.Time  `json:"expires_at"`
 }

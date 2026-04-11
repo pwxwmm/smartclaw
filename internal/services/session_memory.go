@@ -3,7 +3,6 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +16,7 @@ type SessionMemory struct {
 	Summary   string                 `json:"summary"`
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 type MemoryMessage struct {
@@ -62,7 +61,7 @@ func (s *SessionMemoryService) Create(sessionID string) *SessionMemory {
 		Messages:  make([]MemoryMessage, 0),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		Metadata:  make(map[string]interface{}),
+		Metadata:  make(map[string]any),
 	}
 
 	s.memories[sessionID] = mem
@@ -182,11 +181,11 @@ func (s *SessionMemoryService) save(mem *SessionMemory) error {
 	}
 
 	path := filepath.Join(s.basePath, mem.SessionID+".json")
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func (s *SessionMemoryService) loadAll() error {
-	entries, err := ioutil.ReadDir(s.basePath)
+	entries, err := os.ReadDir(s.basePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -200,7 +199,7 @@ func (s *SessionMemoryService) loadAll() error {
 		}
 
 		path := filepath.Join(s.basePath, entry.Name())
-		data, err := ioutil.ReadFile(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}

@@ -11,12 +11,12 @@ type LSPClient interface {
 	Initialize(ctx context.Context, rootPath string) error
 	DidOpen(ctx context.Context, filePath, languageID, content string) error
 	DidChange(ctx context.Context, filePath, content string) error
-	GotoDefinition(ctx context.Context, filePath string, line, character int) (interface{}, error)
-	FindReferences(ctx context.Context, filePath string, line, character int) (interface{}, error)
-	DocumentSymbols(ctx context.Context, filePath string) (interface{}, error)
-	Hover(ctx context.Context, filePath string, line, character int) (interface{}, error)
-	Rename(ctx context.Context, filePath string, line, character int, newName string) (interface{}, error)
-	Completion(ctx context.Context, filePath string, line, character int) (interface{}, error)
+	GotoDefinition(ctx context.Context, filePath string, line, character int) (any, error)
+	FindReferences(ctx context.Context, filePath string, line, character int) (any, error)
+	DocumentSymbols(ctx context.Context, filePath string) (any, error)
+	Hover(ctx context.Context, filePath string, line, character int) (any, error)
+	Rename(ctx context.Context, filePath string, line, character int, newName string) (any, error)
+	Completion(ctx context.Context, filePath string, line, character int) (any, error)
 	Close() error
 }
 
@@ -199,7 +199,7 @@ func (m *LSPServerManager) StopAll() error {
 	return nil
 }
 
-func (m *LSPServerManager) GotoDefinition(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+func (m *LSPServerManager) GotoDefinition(ctx context.Context, id, filePath string, line, character int) (any, error) {
 	m.mu.RLock()
 	server, exists := m.servers[id]
 	m.mu.RUnlock()
@@ -215,7 +215,7 @@ func (m *LSPServerManager) GotoDefinition(ctx context.Context, id, filePath stri
 	return server.Client.GotoDefinition(ctx, filePath, line, character)
 }
 
-func (m *LSPServerManager) FindReferences(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+func (m *LSPServerManager) FindReferences(ctx context.Context, id, filePath string, line, character int) (any, error) {
 	m.mu.RLock()
 	server, exists := m.servers[id]
 	m.mu.RUnlock()
@@ -231,7 +231,7 @@ func (m *LSPServerManager) FindReferences(ctx context.Context, id, filePath stri
 	return server.Client.FindReferences(ctx, filePath, line, character)
 }
 
-func (m *LSPServerManager) Hover(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+func (m *LSPServerManager) Hover(ctx context.Context, id, filePath string, line, character int) (any, error) {
 	m.mu.RLock()
 	server, exists := m.servers[id]
 	m.mu.RUnlock()
@@ -247,7 +247,7 @@ func (m *LSPServerManager) Hover(ctx context.Context, id, filePath string, line,
 	return server.Client.Hover(ctx, filePath, line, character)
 }
 
-func (m *LSPServerManager) DocumentSymbols(ctx context.Context, id, filePath string) (interface{}, error) {
+func (m *LSPServerManager) DocumentSymbols(ctx context.Context, id, filePath string) (any, error) {
 	m.mu.RLock()
 	server, exists := m.servers[id]
 	m.mu.RUnlock()
@@ -263,7 +263,7 @@ func (m *LSPServerManager) DocumentSymbols(ctx context.Context, id, filePath str
 	return server.Client.DocumentSymbols(ctx, filePath)
 }
 
-func (m *LSPServerManager) Completion(ctx context.Context, id, filePath string, line, character int) (interface{}, error) {
+func (m *LSPServerManager) Completion(ctx context.Context, id, filePath string, line, character int) (any, error) {
 	m.mu.RLock()
 	server, exists := m.servers[id]
 	m.mu.RUnlock()
@@ -279,7 +279,7 @@ func (m *LSPServerManager) Completion(ctx context.Context, id, filePath string, 
 	return server.Client.Completion(ctx, filePath, line, character)
 }
 
-func (m *LSPServerManager) Rename(ctx context.Context, id, filePath string, line, character int, newName string) (interface{}, error) {
+func (m *LSPServerManager) Rename(ctx context.Context, id, filePath string, line, character int, newName string) (any, error) {
 	m.mu.RLock()
 	server, exists := m.servers[id]
 	m.mu.RUnlock()

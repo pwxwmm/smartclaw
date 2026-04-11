@@ -3,7 +3,6 @@ package skills
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,7 +25,7 @@ type Skill struct {
 	Version     string                 `json:"version,omitempty"`
 	Enabled     bool                   `json:"enabled"`
 	Source      string                 `json:"source"` // "bundled", "local", "mcp"
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 	LoadedAt    time.Time              `json:"loaded_at"`
 }
 
@@ -122,7 +121,7 @@ func (sm *SkillManager) loadBundledSkillSummaries() {
 			Source:      "bundled",
 			Enabled:     true,
 			LoadedAt:    time.Now(),
-			Metadata:    make(map[string]interface{}),
+			Metadata:    make(map[string]any),
 		}
 		sm.bundledSkills[name] = skill
 		sm.skills[name] = skill
@@ -143,7 +142,7 @@ func (sm *SkillManager) loadLocalSkillSummaries() {
 		}
 
 		skillPath := filepath.Join(sm.skillsDir, entry.Name(), "SKILL.md")
-		data, err := ioutil.ReadFile(skillPath)
+		data, err := os.ReadFile(skillPath)
 		if err != nil {
 			continue
 		}
@@ -161,7 +160,7 @@ func (sm *SkillManager) loadLocalSkillSummaries() {
 			Source:      "local",
 			Enabled:     true,
 			LoadedAt:    time.Now(),
-			Metadata:    make(map[string]interface{}),
+			Metadata:    make(map[string]any),
 		}
 		sm.skills[name] = skill
 	}
@@ -179,7 +178,7 @@ func (sm *SkillManager) loadBundledSkills() {
 			Source:      "bundled",
 			Enabled:     true,
 			LoadedAt:    time.Now(),
-			Metadata:    make(map[string]interface{}),
+			Metadata:    make(map[string]any),
 		}
 		sm.bundledSkills[name] = skill
 		sm.skills[name] = skill
@@ -223,7 +222,7 @@ func (sm *SkillManager) Load(path string) (*Skill, error) {
 		skillPath = path
 	}
 
-	content, err := ioutil.ReadFile(skillPath)
+	content, err := os.ReadFile(skillPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read skill file: %w", err)
 	}
@@ -263,7 +262,7 @@ func (sm *SkillManager) parseSkillContent(name, content, source string) *Skill {
 		Source:      source,
 		Enabled:     true,
 		LoadedAt:    time.Now(),
-		Metadata:    make(map[string]interface{}),
+		Metadata:    make(map[string]any),
 	}
 }
 
@@ -354,7 +353,7 @@ func (sm *SkillManager) Reload(name string) error {
 		return fmt.Errorf("skill has no file path: %s", name)
 	}
 
-	content, err := ioutil.ReadFile(skill.Path)
+	content, err := os.ReadFile(skill.Path)
 	if err != nil {
 		return fmt.Errorf("failed to read skill file: %w", err)
 	}
@@ -622,7 +621,7 @@ func (sm *SkillManager) LoadSkillOnDemand(name string) (string, error) {
 	}
 
 	if skill.Path != "" {
-		data, err := ioutil.ReadFile(skill.Path)
+		data, err := os.ReadFile(skill.Path)
 		if err != nil {
 			return "", fmt.Errorf("failed to read skill file: %w", err)
 		}

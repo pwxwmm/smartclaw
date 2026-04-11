@@ -29,7 +29,7 @@ func TestSettingsSyncGetSettings(t *testing.T) {
 func TestSettingsSyncUpdateSettings(t *testing.T) {
 	sync, _ := NewSettingsSync()
 
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"model": "claude-opus-4-6",
 	}
 

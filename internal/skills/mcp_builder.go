@@ -117,7 +117,7 @@ func (p *McpSkillBuilderPipeline) generateSkillFromTool(name string, tool mcp.Mc
 		Source:      "mcp",
 		Enabled:     true,
 		LoadedAt:    time.Now(),
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"server_name": config.ServerName,
 			"tool_name":   tool.Name,
 			"template":    string(config.Template),
