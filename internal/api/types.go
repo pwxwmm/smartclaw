@@ -8,14 +8,14 @@ type ContentBlock struct {
 	Text string `json:"text,omitempty"`
 
 	// For tool_use
-	ID    string                 `json:"id,omitempty"`
-	Name  string                 `json:"name,omitempty"`
-	Input map[string]interface{} `json:"input,omitempty"`
+	ID    string         `json:"id,omitempty"`
+	Name  string         `json:"name,omitempty"`
+	Input map[string]any `json:"input,omitempty"`
 
 	// For tool_result
-	ToolUseID string      `json:"tool_use_id,omitempty"`
-	Content   interface{} `json:"content,omitempty"`
-	IsError   bool        `json:"is_error,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   any    `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
 
 	// For thinking
 	Thinking string `json:"thinking,omitempty"`
@@ -41,21 +41,30 @@ type MessageRequest struct {
 	Model       string           `json:"model"`
 	MaxTokens   int              `json:"max_tokens"`
 	Messages    []MessageParam   `json:"messages"`
-	System      interface{}      `json:"system,omitempty"`
+	System      any              `json:"system,omitempty"`
 	Stream      bool             `json:"stream,omitempty"`
 	Tools       []ToolDefinition `json:"tools,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
-	ToolChoice  interface{}      `json:"tool_choice,omitempty"`
+	ToolChoice  any              `json:"tool_choice,omitempty"`
 	Metadata    *Metadata        `json:"metadata,omitempty"`
+
+	// Extended thinking
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 
 	// Beta features
 	Betas []string `json:"-"`
 }
 
+// ThinkingConfig configures extended thinking for Claude models.
+type ThinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
+}
+
 // MessageParam represents a message parameter (user or assistant)
 type MessageParam struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
+	Role    string `json:"role"`
+	Content any    `json:"content"`
 }
 
 // SystemBlock represents a system prompt block

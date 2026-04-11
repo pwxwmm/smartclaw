@@ -23,6 +23,7 @@ type Client struct {
 	HTTPClient *http.Client
 	Model      string
 	IsOpenAI   bool
+	Thinking   *ThinkingConfig
 }
 
 // NewClient creates a new API client with default model
@@ -93,7 +94,7 @@ type Message = MessageParam
 
 // CreateMessage sends a message to the API
 func (c *Client) CreateMessage(messages []Message, system string) (*MessageResponse, error) {
-	var systemParam interface{}
+	var systemParam any
 	if system != "" {
 		systemParam = []SystemBlock{
 			{
@@ -107,7 +108,7 @@ func (c *Client) CreateMessage(messages []Message, system string) (*MessageRespo
 }
 
 // CreateMessageWithSystem sends a message with a pre-built system parameter
-func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message, system interface{}) (*MessageResponse, error) {
+func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message, system any) (*MessageResponse, error) {
 	if c.IsOpenAI {
 		var systemStr string
 		if sb, ok := system.([]SystemBlock); ok && len(sb) > 0 {
@@ -124,6 +125,7 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 		Messages:  messages,
 		System:    system,
 		Stream:    false,
+		Thinking:  c.Thinking,
 	}
 
 	body, err := json.Marshal(req)
