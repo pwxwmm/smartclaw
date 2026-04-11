@@ -38,7 +38,7 @@ type Logger struct {
 	level  Level
 	output io.Writer
 	prefix string
-	fields map[string]interface{}
+	fields map[string]any
 }
 
 var defaultLogger *Logger
@@ -51,7 +51,7 @@ func NewLogger(level Level, output io.Writer) *Logger {
 	return &Logger{
 		level:  level,
 		output: output,
-		fields: make(map[string]interface{}),
+		fields: make(map[string]any),
 	}
 }
 
@@ -73,7 +73,7 @@ func (l *Logger) SetPrefix(prefix string) {
 	l.prefix = prefix
 }
 
-func (l *Logger) WithField(key string, value interface{}) *Logger {
+func (l *Logger) WithField(key string, value any) *Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -81,7 +81,7 @@ func (l *Logger) WithField(key string, value interface{}) *Logger {
 		level:  l.level,
 		output: l.output,
 		prefix: l.prefix,
-		fields: make(map[string]interface{}),
+		fields: make(map[string]any),
 	}
 
 	for k, v := range l.fields {
@@ -92,7 +92,7 @@ func (l *Logger) WithField(key string, value interface{}) *Logger {
 	return newLogger
 }
 
-func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
+func (l *Logger) WithFields(fields map[string]any) *Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -100,7 +100,7 @@ func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
 		level:  l.level,
 		output: l.output,
 		prefix: l.prefix,
-		fields: make(map[string]interface{}),
+		fields: make(map[string]any),
 	}
 
 	for k, v := range l.fields {
@@ -113,7 +113,7 @@ func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
 	return newLogger
 }
 
-func (l *Logger) log(level Level, format string, args ...interface{}) {
+func (l *Logger) log(level Level, format string, args ...any) {
 	if level < l.level {
 		return
 	}
@@ -150,28 +150,28 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	}
 }
 
-func (l *Logger) Debug(format string, args ...interface{}) {
+func (l *Logger) Debug(format string, args ...any) {
 	l.log(LevelDebug, format, args...)
 }
 
-func (l *Logger) Info(format string, args ...interface{}) {
+func (l *Logger) Info(format string, args ...any) {
 	l.log(LevelInfo, format, args...)
 }
 
-func (l *Logger) Warn(format string, args ...interface{}) {
+func (l *Logger) Warn(format string, args ...any) {
 	l.log(LevelWarn, format, args...)
 }
 
-func (l *Logger) Error(format string, args ...interface{}) {
+func (l *Logger) Error(format string, args ...any) {
 	l.log(LevelError, format, args...)
 }
 
-func (l *Logger) Fatal(format string, args ...interface{}) {
+func (l *Logger) Fatal(format string, args ...any) {
 	l.log(LevelError, format, args...)
 	os.Exit(1)
 }
 
-func (l *Logger) Panic(format string, args ...interface{}) {
+func (l *Logger) Panic(format string, args ...any) {
 	l.log(LevelError, format, args...)
 	panic(fmt.Sprintf(format, args...))
 }
@@ -188,34 +188,34 @@ func SetPrefix(prefix string) {
 	defaultLogger.SetPrefix(prefix)
 }
 
-func WithField(key string, value interface{}) *Logger {
+func WithField(key string, value any) *Logger {
 	return defaultLogger.WithField(key, value)
 }
 
-func WithFields(fields map[string]interface{}) *Logger {
+func WithFields(fields map[string]any) *Logger {
 	return defaultLogger.WithFields(fields)
 }
 
-func Debug(format string, args ...interface{}) {
+func Debug(format string, args ...any) {
 	defaultLogger.Debug(format, args...)
 }
 
-func Info(format string, args ...interface{}) {
+func Info(format string, args ...any) {
 	defaultLogger.Info(format, args...)
 }
 
-func Warn(format string, args ...interface{}) {
+func Warn(format string, args ...any) {
 	defaultLogger.Warn(format, args...)
 }
 
-func Error(format string, args ...interface{}) {
+func Error(format string, args ...any) {
 	defaultLogger.Error(format, args...)
 }
 
-func Fatal(format string, args ...interface{}) {
+func Fatal(format string, args ...any) {
 	defaultLogger.Fatal(format, args...)
 }
 
-func Panic(format string, args ...interface{}) {
+func Panic(format string, args ...any) {
 	defaultLogger.Panic(format, args...)
 }

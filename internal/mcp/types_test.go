@@ -129,10 +129,10 @@ func TestMcpTool(t *testing.T) {
 	tool := McpTool{
 		Name:        "read_file",
 		Description: "Read a file",
-		InputSchema: map[string]interface{}{
+		InputSchema: map[string]any{
 			"type": "object",
-			"properties": map[string]interface{}{
-				"path": map[string]interface{}{"type": "string"},
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string"},
 			},
 		},
 	}

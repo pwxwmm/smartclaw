@@ -9,22 +9,22 @@ const jsonRPCVersion = "2.0"
 
 type JSONRPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id,omitempty"`
+	ID      any `json:"id,omitempty"`
 	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
+	Params  any `json:"params,omitempty"`
 }
 
 type JSONRPCResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
+	ID      any `json:"id"`
+	Result  any `json:"result,omitempty"`
 	Error   *RPCError   `json:"error,omitempty"`
 }
 
 type RPCError struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Data    any `json:"data,omitempty"`
 }
 
 func (e *RPCError) Error() string {
@@ -93,7 +93,7 @@ type ListResourcesResult struct {
 
 type CallToolParams struct {
 	Name      string                 `json:"name"`
-	Arguments map[string]interface{} `json:"arguments,omitempty"`
+	Arguments map[string]any `json:"arguments,omitempty"`
 }
 
 type CallToolResult struct {
@@ -122,7 +122,7 @@ type ResourceContents struct {
 	Blob     string `json:"blob,omitempty"`
 }
 
-func NewJSONRPCRequest(id interface{}, method string, params interface{}) *JSONRPCRequest {
+func NewJSONRPCRequest(id any, method string, params any) *JSONRPCRequest {
 	return &JSONRPCRequest{
 		JSONRPC: jsonRPCVersion,
 		ID:      id,
@@ -139,8 +139,12 @@ func ParseJSONRPCResponse(data []byte) (*JSONRPCResponse, error) {
 	return &resp, nil
 }
 
+func (r *JSONRPCRequest) Marshal() ([]byte, error) {
+	return json.Marshal(r)
+}
+
 func (r *JSONRPCRequest) MustMarshal() []byte {
-	data, err := json.Marshal(r)
+	data, err := r.Marshal()
 	if err != nil {
 		panic(err)
 	}

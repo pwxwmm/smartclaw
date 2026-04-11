@@ -50,7 +50,7 @@ func TestLoggerWithField(t *testing.T) {
 func TestLoggerWithFields(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewLogger(LevelInfo, &buf)
-	fields := map[string]interface{}{
+	fields := map[string]any{
 		"key1": "value1",
 		"key2": 42,
 	}

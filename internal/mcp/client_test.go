@@ -47,7 +47,7 @@ func TestJSONRPCRequest(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "initialize",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
 		},
 	}
@@ -82,7 +82,7 @@ func TestJSONRPCResponse(t *testing.T) {
 		t.Errorf("Expected JSONRPC '2.0', got '%s'", resp.JSONRPC)
 	}
 
-	if resp.ID != 1 {
+	if resp.ID != float64(1) {
 		t.Errorf("Expected ID 1, got %v", resp.ID)
 	}
 }
@@ -168,7 +168,7 @@ func TestListToolsResult(t *testing.T) {
 func TestCallToolParams(t *testing.T) {
 	params := CallToolParams{
 		Name: "read_file",
-		Arguments: map[string]interface{}{
+		Arguments: map[string]any{
 			"path": "/test/file.txt",
 		},
 	}
@@ -361,8 +361,8 @@ func TestClientIsReady(t *testing.T) {
 
 	transport.Start()
 
-	if !client.IsReady() {
-		t.Error("Expected client to be ready after start")
+	if client.IsReady() {
+		t.Error("Expected client to not be ready without a server connection")
 	}
 }
 

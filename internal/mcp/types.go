@@ -22,7 +22,7 @@ type McpOAuthConfig struct {
 type McpTool struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"inputSchema,omitempty"`
+	InputSchema map[string]any `json:"inputSchema,omitempty"`
 	Annotations *ToolAnnotations       `json:"annotations,omitempty"`
 }
 

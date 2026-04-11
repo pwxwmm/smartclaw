@@ -124,7 +124,7 @@ func (c *McpClient) ListTools(ctx context.Context) ([]McpTool, error) {
 	return result.Tools, nil
 }
 
-func (c *McpClient) InvokeTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
+func (c *McpClient) InvokeTool(ctx context.Context, name string, args map[string]any) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -239,7 +239,7 @@ func (c *McpClient) IsReady() bool {
 	return c.ready
 }
 
-func (c *McpClient) sendRequest(ctx context.Context, method string, params interface{}) (*JSONRPCResponse, error) {
+func (c *McpClient) sendRequest(ctx context.Context, method string, params any) (*JSONRPCResponse, error) {
 	id := atomic.AddUint64(&c.requestID, 1)
 
 	req := NewJSONRPCRequest(id, method, params)

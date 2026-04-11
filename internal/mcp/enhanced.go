@@ -127,7 +127,7 @@ func (r *MCPServerRegistry) ListServers() []*ServerConfig {
 	return result
 }
 
-func (r *MCPServerRegistry) UpdateServer(name string, updates map[string]interface{}) error {
+func (r *MCPServerRegistry) UpdateServer(name string, updates map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

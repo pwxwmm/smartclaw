@@ -18,7 +18,7 @@ type McpServer struct {
 	prompts      map[string]McpPrompt
 	capabilities ServerCapabilities
 	mu           sync.RWMutex
-	toolHandler  func(name string, arguments map[string]interface{}) (interface{}, error)
+	toolHandler  func(name string, arguments map[string]any) (any, error)
 	stdin        io.Reader
 	stdout       io.Writer
 }
@@ -63,7 +63,7 @@ func (s *McpServer) RegisterPrompt(prompt McpPrompt) {
 	s.prompts[prompt.Name] = prompt
 }
 
-func (s *McpServer) SetToolHandler(handler func(name string, arguments map[string]interface{}) (interface{}, error)) {
+func (s *McpServer) SetToolHandler(handler func(name string, arguments map[string]any) (any, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toolHandler = handler
@@ -119,7 +119,7 @@ func (s *McpServer) Run(ctx context.Context) error {
 }
 
 func (s *McpServer) handleRequest(ctx context.Context, request *JSONRPCRequest) {
-	var result interface{}
+	var result any
 	var err error
 
 	switch request.Method {
@@ -184,13 +184,13 @@ func (s *McpServer) handleToolsCall(request *JSONRPCRequest) (*CallToolResult, e
 		return nil, fmt.Errorf("no tool handler configured")
 	}
 
-	params, ok := request.Params.(map[string]interface{})
+	params, ok := request.Params.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid params")
 	}
 
 	name, _ := params["name"].(string)
-	arguments, _ := params["arguments"].(map[string]interface{})
+	arguments, _ := params["arguments"].(map[string]any)
 
 	result, err := handler(name, arguments)
 	if err != nil {
@@ -208,7 +208,7 @@ func (s *McpServer) handleToolsCall(request *JSONRPCRequest) (*CallToolResult, e
 		content = append(content, ContentBlock{Type: "text", Text: v})
 	case []ContentBlock:
 		content = v
-	case map[string]interface{}:
+	case map[string]any:
 		data, _ := json.Marshal(v)
 		content = append(content, ContentBlock{Type: "text", Text: string(data)})
 	default:
@@ -235,7 +235,7 @@ func (s *McpServer) handleResourcesList() (*ListResourcesResult, error) {
 }
 
 func (s *McpServer) handleResourcesRead(request *JSONRPCRequest) (*ReadResourceResult, error) {
-	params, ok := request.Params.(map[string]interface{})
+	params, ok := request.Params.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid params")
 	}
@@ -261,7 +261,7 @@ func (s *McpServer) handleResourcesRead(request *JSONRPCRequest) (*ReadResourceR
 	}, nil
 }
 
-func (s *McpServer) handlePromptsList() (map[string]interface{}, error) {
+func (s *McpServer) handlePromptsList() (map[string]any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -270,13 +270,13 @@ func (s *McpServer) handlePromptsList() (map[string]interface{}, error) {
 		prompts = append(prompts, prompt)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"prompts": prompts,
 	}, nil
 }
 
-func (s *McpServer) handlePromptsGet(request *JSONRPCRequest) (map[string]interface{}, error) {
-	params, ok := request.Params.(map[string]interface{})
+func (s *McpServer) handlePromptsGet(request *JSONRPCRequest) (map[string]any, error) {
+	params, ok := request.Params.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid params")
 	}
@@ -291,12 +291,12 @@ func (s *McpServer) handlePromptsGet(request *JSONRPCRequest) (map[string]interf
 		return nil, fmt.Errorf("prompt not found: %s", name)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"description": prompt.Description,
-		"messages": []map[string]interface{}{
+		"messages": []map[string]any{
 			{
 				"role": "user",
-				"content": map[string]interface{}{
+				"content": map[string]any{
 					"type": "text",
 					"text": prompt.Description,
 				},
@@ -305,7 +305,7 @@ func (s *McpServer) handlePromptsGet(request *JSONRPCRequest) (map[string]interf
 	}, nil
 }
 
-func (s *McpServer) sendResult(id interface{}, result interface{}) {
+func (s *McpServer) sendResult(id any, result any) {
 	response := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -315,7 +315,7 @@ func (s *McpServer) sendResult(id interface{}, result interface{}) {
 	s.sendResponse(&response)
 }
 
-func (s *McpServer) sendError(id interface{}, code int, message string) {
+func (s *McpServer) sendError(id any, code int, message string) {
 	response := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -339,7 +339,7 @@ func (s *McpServer) sendResponse(response *JSONRPCResponse) {
 	s.stdout.Write(data)
 }
 
-func (s *McpServer) SendNotification(method string, params interface{}) {
+func (s *McpServer) SendNotification(method string, params any) {
 	request := JSONRPCRequest{
 		JSONRPC: "2.0",
 		Method:  method,
@@ -393,7 +393,7 @@ func (b *McpServerBuilder) WithPrompt(prompt McpPrompt) *McpServerBuilder {
 	return b
 }
 
-func (b *McpServerBuilder) WithToolHandler(handler func(name string, arguments map[string]interface{}) (interface{}, error)) *McpServerBuilder {
+func (b *McpServerBuilder) WithToolHandler(handler func(name string, arguments map[string]any) (any, error)) *McpServerBuilder {
 	b.server.SetToolHandler(handler)
 	return b
 }
