@@ -68,18 +68,18 @@ func (t *TeamCreateTool) Description() string {
 	return "Create a new team workspace for memory sharing"
 }
 
-func (t *TeamCreateTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamCreateTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"name":        map[string]interface{}{"type": "string", "description": "Team name"},
-			"description": map[string]interface{}{"type": "string", "description": "Team description"},
+		"properties": map[string]any{
+			"name":        map[string]any{"type": "string", "description": "Team name"},
+			"description": map[string]any{"type": "string", "description": "Team description"},
 		},
 		"required": []string{"name"},
 	}
 }
 
-func (t *TeamCreateTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamCreateTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	name, _ := input["name"].(string)
 	desc, _ := input["description"].(string)
 
@@ -104,7 +104,7 @@ func (t *TeamCreateTool) Execute(ctx context.Context, input map[string]interface
 	}
 	tms.SetTeam(team)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"id":          teamID,
 		"name":        name,
 		"description": desc,
@@ -117,21 +117,21 @@ type TeamDeleteTool struct{}
 func (t *TeamDeleteTool) Name() string        { return "team_delete" }
 func (t *TeamDeleteTool) Description() string { return "Delete a team workspace" }
 
-func (t *TeamDeleteTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamDeleteTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{"type": "string", "description": "Team ID to delete"},
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string", "description": "Team ID to delete"},
 		},
 		"required": []string{"id"},
 	}
 }
 
-func (t *TeamDeleteTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamDeleteTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	id, _ := input["id"].(string)
 	registry := GetTeamRegistry()
 	registry.Remove(id)
-	return map[string]interface{}{"id": id, "deleted": true}, nil
+	return map[string]any{"id": id, "deleted": true}, nil
 }
 
 type TeamShareMemoryTool struct{}
@@ -139,22 +139,22 @@ type TeamShareMemoryTool struct{}
 func (t *TeamShareMemoryTool) Name() string        { return "team_share_memory" }
 func (t *TeamShareMemoryTool) Description() string { return "Share a memory with the team" }
 
-func (t *TeamShareMemoryTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamShareMemoryTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"team_id":    map[string]interface{}{"type": "string"},
-			"title":      map[string]interface{}{"type": "string"},
-			"content":    map[string]interface{}{"type": "string"},
-			"type":       map[string]interface{}{"type": "string", "description": "Memory type: code, conversation, decision, pattern, preference"},
-			"visibility": map[string]interface{}{"type": "string", "description": "Visibility: private, team, public"},
-			"tags":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		"properties": map[string]any{
+			"team_id":    map[string]any{"type": "string"},
+			"title":      map[string]any{"type": "string"},
+			"content":    map[string]any{"type": "string"},
+			"type":       map[string]any{"type": "string", "description": "Memory type: code, conversation, decision, pattern, preference"},
+			"visibility": map[string]any{"type": "string", "description": "Visibility: private, team, public"},
+			"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
 		"required": []string{"team_id", "title", "content"},
 	}
 }
 
-func (t *TeamShareMemoryTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamShareMemoryTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	teamID, _ := input["team_id"].(string)
 	title, _ := input["title"].(string)
 	content, _ := input["content"].(string)
@@ -171,7 +171,7 @@ func (t *TeamShareMemoryTool) Execute(ctx context.Context, input map[string]inte
 	visibility := parseVisibility(visStr)
 
 	var tags []string
-	if raw, ok := input["tags"].([]interface{}); ok {
+	if raw, ok := input["tags"].([]any); ok {
 		for _, t := range raw {
 			if s, ok := t.(string); ok {
 				tags = append(tags, s)
@@ -186,14 +186,14 @@ func (t *TeamShareMemoryTool) Execute(ctx context.Context, input map[string]inte
 		Visibility: visibility,
 		Tags:       tags,
 		UserID:     "current_user",
-		Metadata:   make(map[string]interface{}),
+		Metadata:   make(map[string]any),
 	}
 
 	if err := tms.ShareMemory(ctx, memory); err != nil {
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"memory_id": memory.ID,
 		"team_id":   teamID,
 		"title":     title,
@@ -206,19 +206,19 @@ type TeamGetMemoriesTool struct{}
 func (t *TeamGetMemoriesTool) Name() string        { return "team_get_memories" }
 func (t *TeamGetMemoriesTool) Description() string { return "Get memories from a team workspace" }
 
-func (t *TeamGetMemoriesTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamGetMemoriesTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"team_id": map[string]interface{}{"type": "string"},
-			"type":    map[string]interface{}{"type": "string", "description": "Filter by memory type"},
-			"tag":     map[string]interface{}{"type": "string", "description": "Filter by tag"},
+		"properties": map[string]any{
+			"team_id": map[string]any{"type": "string"},
+			"type":    map[string]any{"type": "string", "description": "Filter by memory type"},
+			"tag":     map[string]any{"type": "string", "description": "Filter by tag"},
 		},
 		"required": []string{"team_id"},
 	}
 }
 
-func (t *TeamGetMemoriesTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamGetMemoriesTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	teamID, _ := input["team_id"].(string)
 	memTypeStr, _ := input["type"].(string)
 	tag, _ := input["tag"].(string)
@@ -244,9 +244,9 @@ func (t *TeamGetMemoriesTool) Execute(ctx context.Context, input map[string]inte
 		return nil, err
 	}
 
-	result := make([]map[string]interface{}, 0, len(memories))
+	result := make([]map[string]any, 0, len(memories))
 	for _, m := range memories {
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"id":         m.ID,
 			"title":      m.Title,
 			"type":       memoryTypeStr(m.Type),
@@ -257,7 +257,7 @@ func (t *TeamGetMemoriesTool) Execute(ctx context.Context, input map[string]inte
 		})
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"memories": result,
 		"count":    len(result),
 		"team_id":  teamID,
@@ -269,18 +269,18 @@ type TeamSearchMemoriesTool struct{}
 func (t *TeamSearchMemoriesTool) Name() string        { return "team_search_memories" }
 func (t *TeamSearchMemoriesTool) Description() string { return "Search team memories by query" }
 
-func (t *TeamSearchMemoriesTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamSearchMemoriesTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"team_id": map[string]interface{}{"type": "string"},
-			"query":   map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"team_id": map[string]any{"type": "string"},
+			"query":   map[string]any{"type": "string"},
 		},
 		"required": []string{"team_id", "query"},
 	}
 }
 
-func (t *TeamSearchMemoriesTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamSearchMemoriesTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	teamID, _ := input["team_id"].(string)
 	query, _ := input["query"].(string)
 
@@ -295,16 +295,16 @@ func (t *TeamSearchMemoriesTool) Execute(ctx context.Context, input map[string]i
 		return nil, err
 	}
 
-	result := make([]map[string]interface{}, 0, len(memories))
+	result := make([]map[string]any, 0, len(memories))
 	for _, m := range memories {
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"id":    m.ID,
 			"title": m.Title,
 			"type":  memoryTypeStr(m.Type),
 		})
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"results": result,
 		"count":   len(result),
 		"query":   query,
@@ -316,20 +316,20 @@ type TeamSyncTool struct{}
 func (t *TeamSyncTool) Name() string        { return "team_sync" }
 func (t *TeamSyncTool) Description() string { return "Sync team memories with remote server" }
 
-func (t *TeamSyncTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamSyncTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"team_id":      map[string]interface{}{"type": "string"},
-			"api_endpoint": map[string]interface{}{"type": "string"},
-			"api_key":      map[string]interface{}{"type": "string"},
-			"encrypt_key":  map[string]interface{}{"type": "string", "description": "Hex-encoded encryption key (32 bytes)"},
+		"properties": map[string]any{
+			"team_id":      map[string]any{"type": "string"},
+			"api_endpoint": map[string]any{"type": "string"},
+			"api_key":      map[string]any{"type": "string"},
+			"encrypt_key":  map[string]any{"type": "string", "description": "Hex-encoded encryption key (32 bytes)"},
 		},
 		"required": []string{"team_id"},
 	}
 }
 
-func (t *TeamSyncTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamSyncTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	teamID, _ := input["team_id"].(string)
 	apiEndpoint, _ := input["api_endpoint"].(string)
 	apiKey, _ := input["api_key"].(string)
@@ -360,7 +360,7 @@ func (t *TeamSyncTool) Execute(ctx context.Context, input map[string]interface{}
 		return nil, fmt.Errorf("sync failed: %v", err)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"team_id":   teamID,
 		"synced":    true,
 		"last_sync": tms.GetLastSyncTime(),
@@ -374,19 +374,19 @@ func (t *TeamShareSessionTool) Description() string {
 	return "Share a conversation session with the team"
 }
 
-func (t *TeamShareSessionTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TeamShareSessionTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"team_id":    map[string]interface{}{"type": "string"},
-			"session_id": map[string]interface{}{"type": "string"},
-			"summary":    map[string]interface{}{"type": "string", "description": "Brief summary of the session"},
+		"properties": map[string]any{
+			"team_id":    map[string]any{"type": "string"},
+			"session_id": map[string]any{"type": "string"},
+			"summary":    map[string]any{"type": "string", "description": "Brief summary of the session"},
 		},
 		"required": []string{"team_id", "session_id"},
 	}
 }
 
-func (t *TeamShareSessionTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TeamShareSessionTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	teamID, _ := input["team_id"].(string)
 	sessionID, _ := input["session_id"].(string)
 	summary, _ := input["summary"].(string)
@@ -408,7 +408,7 @@ func (t *TeamShareSessionTool) Execute(ctx context.Context, input map[string]int
 		Visibility: services.VisibilityTeam,
 		Tags:       []string{"session", "shared"},
 		UserID:     "current_user",
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"session_id": sessionID,
 		},
 	}
@@ -417,7 +417,7 @@ func (t *TeamShareSessionTool) Execute(ctx context.Context, input map[string]int
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"memory_id":  memory.ID,
 		"team_id":    teamID,
 		"session_id": sessionID,

@@ -52,40 +52,40 @@ func NewAgentTool(agentsDir string) *AgentTool {
 func (t *AgentTool) Name() string        { return "agent" }
 func (t *AgentTool) Description() string { return "Spawn or manage sub-agents for parallel tasks" }
 
-func (t *AgentTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *AgentTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type":        "string",
 				"enum":        []string{"spawn", "resume", "list", "stop", "output"},
 				"description": "Operation to perform",
 			},
-			"agent_type": map[string]interface{}{
+			"agent_type": map[string]any{
 				"type":        "string",
 				"description": "Type of agent to spawn (explore, verification, custom)",
 			},
-			"agent_id": map[string]interface{}{
+			"agent_id": map[string]any{
 				"type":        "string",
 				"description": "Agent ID for resume/stop/output operations",
 			},
-			"prompt": map[string]interface{}{
+			"prompt": map[string]any{
 				"type":        "string",
 				"description": "Prompt or task for the agent",
 			},
-			"workdir": map[string]interface{}{
+			"workdir": map[string]any{
 				"type":        "string",
 				"description": "Working directory for agent",
 			},
-			"model": map[string]interface{}{
+			"model": map[string]any{
 				"type":        "string",
 				"description": "Model to use for agent",
 			},
-			"fork": map[string]interface{}{
+			"fork": map[string]any{
 				"type":        "boolean",
 				"description": "Whether to fork into worktree",
 			},
-			"background": map[string]interface{}{
+			"background": map[string]any{
 				"type":        "boolean",
 				"description": "Run agent in background",
 			},
@@ -94,7 +94,7 @@ func (t *AgentTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *AgentTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *AgentTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 	if operation == "" {
 		return nil, ErrRequiredField("operation")
@@ -116,7 +116,7 @@ func (t *AgentTool) Execute(ctx context.Context, input map[string]interface{}) (
 	}
 }
 
-func (t *AgentTool) spawnAgent(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *AgentTool) spawnAgent(ctx context.Context, input map[string]any) (any, error) {
 	agentType, _ := input["agent_type"].(string)
 	if agentType == "" {
 		agentType = "explore"
@@ -172,7 +172,7 @@ func (t *AgentTool) spawnAgent(ctx context.Context, input map[string]interface{}
 
 	if background {
 		go t.runAgent(instance, prompt, workdir)
-		return map[string]interface{}{
+		return map[string]any{
 			"agent_id": instance.ID,
 			"status":   "running",
 			"message":  "Agent started in background",
@@ -181,7 +181,7 @@ func (t *AgentTool) spawnAgent(ctx context.Context, input map[string]interface{}
 
 	t.runAgent(instance, prompt, workdir)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"agent_id":  instance.ID,
 		"status":    instance.Status,
 		"output":    instance.Output,
@@ -224,7 +224,7 @@ func (t *AgentTool) runAgent(instance *AgentInstance, prompt, workdir string) {
 	}
 }
 
-func (t *AgentTool) resumeAgent(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *AgentTool) resumeAgent(ctx context.Context, input map[string]any) (any, error) {
 	agentID, _ := input["agent_id"].(string)
 	if agentID == "" {
 		return nil, ErrRequiredField("agent_id")
@@ -238,20 +238,20 @@ func (t *AgentTool) resumeAgent(ctx context.Context, input map[string]interface{
 		return nil, &Error{Code: "NOT_FOUND", Message: "agent not found: " + agentID}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"agent_id": instance.ID,
 		"status":   instance.Status,
 		"output":   instance.Output,
 	}, nil
 }
 
-func (t *AgentTool) listAgents() (interface{}, error) {
+func (t *AgentTool) listAgents() (any, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	agents := make([]map[string]interface{}, 0, len(t.instances))
+	agents := make([]map[string]any, 0, len(t.instances))
 	for id, instance := range t.instances {
-		agents = append(agents, map[string]interface{}{
+		agents = append(agents, map[string]any{
 			"agent_id":   id,
 			"type":       instance.Definition.Type,
 			"status":     instance.Status,
@@ -260,13 +260,13 @@ func (t *AgentTool) listAgents() (interface{}, error) {
 		})
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"agents": agents,
 		"count":  len(agents),
 	}, nil
 }
 
-func (t *AgentTool) stopAgent(input map[string]interface{}) (interface{}, error) {
+func (t *AgentTool) stopAgent(input map[string]any) (any, error) {
 	agentID, _ := input["agent_id"].(string)
 	if agentID == "" {
 		return nil, ErrRequiredField("agent_id")
@@ -288,13 +288,13 @@ func (t *AgentTool) stopAgent(input map[string]interface{}) (interface{}, error)
 
 	instance.Status = "stopped"
 
-	return map[string]interface{}{
+	return map[string]any{
 		"agent_id": agentID,
 		"status":   "stopped",
 	}, nil
 }
 
-func (t *AgentTool) getOutput(input map[string]interface{}) (interface{}, error) {
+func (t *AgentTool) getOutput(input map[string]any) (any, error) {
 	agentID, _ := input["agent_id"].(string)
 	if agentID == "" {
 		return nil, ErrRequiredField("agent_id")
@@ -308,7 +308,7 @@ func (t *AgentTool) getOutput(input map[string]interface{}) (interface{}, error)
 		return nil, &Error{Code: "NOT_FOUND", Message: "agent not found: " + agentID}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"agent_id":  agentID,
 		"status":    instance.Status,
 		"output":    instance.Output,

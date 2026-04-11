@@ -28,28 +28,28 @@ func NewBashTool(workDir string) *BashTool {
 func (t *BashTool) Name() string        { return "bash" }
 func (t *BashTool) Description() string { return "Execute a shell command in the current workspace" }
 
-func (t *BashTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *BashTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"command": map[string]interface{}{
+		"properties": map[string]any{
+			"command": map[string]any{
 				"type":        "string",
 				"description": "The command to execute",
 			},
-			"timeout": map[string]interface{}{
+			"timeout": map[string]any{
 				"type":        "integer",
 				"description": "Timeout in milliseconds (max 600000)",
 				"maximum":     600000,
 			},
-			"description": map[string]interface{}{
+			"description": map[string]any{
 				"type":        "string",
 				"description": "Clear, concise description of what this command does",
 			},
-			"workdir": map[string]interface{}{
+			"workdir": map[string]any{
 				"type":        "string",
 				"description": "Working directory for command execution",
 			},
-			"run_in_background": map[string]interface{}{
+			"run_in_background": map[string]any{
 				"type":        "boolean",
 				"description": "Set to true to run this command in the background",
 			},
@@ -68,7 +68,7 @@ type BashToolResult struct {
 	WorkingDir       string `json:"working_dir,omitempty"`
 }
 
-func (t *BashTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *BashTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	cmdStr, _ := input["command"].(string)
 	if cmdStr == "" {
 		return nil, ErrRequiredField("command")
@@ -197,7 +197,7 @@ func generateTaskID() string {
 	return fmt.Sprintf("bg_%d", time.Now().UnixNano())
 }
 
-func (t *BashTool) CheckPermissions(command string, permissionEngine interface{}) *permissions.PermissionResult {
+func (t *BashTool) CheckPermissions(command string, permissionEngine any) *permissions.PermissionResult {
 	classification := ClassifyCommand(command)
 
 	if classification.IsRead || classification.IsSearch || classification.IsList {

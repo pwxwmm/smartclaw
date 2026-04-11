@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -13,16 +13,16 @@ type ImageTool struct{}
 func (t *ImageTool) Name() string        { return "image" }
 func (t *ImageTool) Description() string { return "Process and analyze images" }
 
-func (t *ImageTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *ImageTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type": "string",
 				"enum": []string{"read", "encode", "analyze", "resize", "convert"},
 			},
-			"path": map[string]interface{}{"type": "string"},
-			"format": map[string]interface{}{
+			"path": map[string]any{"type": "string"},
+			"format": map[string]any{
 				"type": "string",
 				"enum": []string{"base64", "data_url", "bytes"},
 			},
@@ -31,7 +31,7 @@ func (t *ImageTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *ImageTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *ImageTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 	path, _ := input["path"].(string)
 
@@ -52,8 +52,8 @@ func (t *ImageTool) Execute(ctx context.Context, input map[string]interface{}) (
 	}
 }
 
-func (t *ImageTool) readImage(path string) (interface{}, error) {
-	data, err := ioutil.ReadFile(path)
+func (t *ImageTool) readImage(path string) (any, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
@@ -61,7 +61,7 @@ func (t *ImageTool) readImage(path string) (interface{}, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	mimeType := t.getMimeType(ext)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path":      path,
 		"size":      len(data),
 		"mime_type": mimeType,
@@ -69,8 +69,8 @@ func (t *ImageTool) readImage(path string) (interface{}, error) {
 	}, nil
 }
 
-func (t *ImageTool) encodeImage(path, format string) (interface{}, error) {
-	data, err := ioutil.ReadFile(path)
+func (t *ImageTool) encodeImage(path, format string) (any, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
@@ -82,12 +82,12 @@ func (t *ImageTool) encodeImage(path, format string) (interface{}, error) {
 
 	switch format {
 	case "data_url":
-		return map[string]interface{}{
+		return map[string]any{
 			"data_url": "data:" + mimeType + ";base64," + encoded,
 			"path":     path,
 		}, nil
 	default:
-		return map[string]interface{}{
+		return map[string]any{
 			"base64": encoded,
 			"path":   path,
 			"size":   len(data),
@@ -95,15 +95,15 @@ func (t *ImageTool) encodeImage(path, format string) (interface{}, error) {
 	}
 }
 
-func (t *ImageTool) analyzeImage(path string) (interface{}, error) {
-	data, err := ioutil.ReadFile(path)
+func (t *ImageTool) analyzeImage(path string) (any, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path":      path,
 		"size":      len(data),
 		"extension": ext,
@@ -136,24 +136,24 @@ type PDFTool struct{}
 func (t *PDFTool) Name() string        { return "pdf" }
 func (t *PDFTool) Description() string { return "Read and extract text from PDF files" }
 
-func (t *PDFTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *PDFTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type": "string",
 				"enum": []string{"read", "extract", "info", "pages"},
 			},
-			"path":  map[string]interface{}{"type": "string"},
-			"page":  map[string]interface{}{"type": "integer"},
-			"start": map[string]interface{}{"type": "integer"},
-			"end":   map[string]interface{}{"type": "integer"},
+			"path":  map[string]any{"type": "string"},
+			"page":  map[string]any{"type": "integer"},
+			"start": map[string]any{"type": "integer"},
+			"end":   map[string]any{"type": "integer"},
 		},
 		"required": []string{"operation", "path"},
 	}
 }
 
-func (t *PDFTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *PDFTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 	path, _ := input["path"].(string)
 
@@ -173,8 +173,8 @@ func (t *PDFTool) Execute(ctx context.Context, input map[string]interface{}) (in
 	}
 }
 
-func (t *PDFTool) readPDF(path string, input map[string]interface{}) (interface{}, error) {
-	data, err := ioutil.ReadFile(path)
+func (t *PDFTool) readPDF(path string, input map[string]any) (any, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
@@ -189,7 +189,7 @@ func (t *PDFTool) readPDF(path string, input map[string]interface{}) (interface{
 		end = -1
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path":       path,
 		"size":       len(data),
 		"start_page": start,
@@ -199,21 +199,21 @@ func (t *PDFTool) readPDF(path string, input map[string]interface{}) (interface{
 	}, nil
 }
 
-func (t *PDFTool) pdfInfo(path string) (interface{}, error) {
-	data, err := ioutil.ReadFile(path)
+func (t *PDFTool) pdfInfo(path string) (any, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path": path,
 		"size": len(data),
 		"info": "PDF info extraction requires external library",
 	}, nil
 }
 
-func (t *PDFTool) getPages(path string) (interface{}, error) {
-	return map[string]interface{}{
+func (t *PDFTool) getPages(path string) (any, error) {
+	return map[string]any{
 		"path":  path,
 		"pages": "Page count requires external library",
 	}, nil
@@ -224,21 +224,21 @@ type AudioTool struct{}
 func (t *AudioTool) Name() string        { return "audio" }
 func (t *AudioTool) Description() string { return "Process audio files" }
 
-func (t *AudioTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *AudioTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type": "string",
 				"enum": []string{"read", "info", "transcribe"},
 			},
-			"path": map[string]interface{}{"type": "string"},
+			"path": map[string]any{"type": "string"},
 		},
 		"required": []string{"operation", "path"},
 	}
 }
 
-func (t *AudioTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *AudioTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 	path, _ := input["path"].(string)
 
@@ -246,14 +246,14 @@ func (t *AudioTool) Execute(ctx context.Context, input map[string]interface{}) (
 		return nil, ErrRequiredField("path")
 	}
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))
 
-	return map[string]interface{}{
+	return map[string]any{
 		"operation": operation,
 		"path":      path,
 		"size":      len(data),

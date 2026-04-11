@@ -22,7 +22,7 @@ func TestGlobToolExecute(t *testing.T) {
 	}
 
 	tool := &GlobTool{}
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"pattern": "*.txt",
 		"path":    tmpDir,
 	})
@@ -31,7 +31,7 @@ func TestGlobToolExecute(t *testing.T) {
 		t.Errorf("Execute failed: %v", err)
 	}
 
-	resultMap, ok := result.(map[string]interface{})
+	resultMap, ok := result.(map[string]any)
 	if !ok {
 		t.Errorf("Result should be a map, got %T", result)
 	}
@@ -60,7 +60,7 @@ func TestGrepToolExecute(t *testing.T) {
 	}
 
 	tool := &GrepTool{}
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"pattern": "hello",
 		"path":    testFile,
 	})
@@ -69,17 +69,13 @@ func TestGrepToolExecute(t *testing.T) {
 		t.Errorf("Execute failed: %v", err)
 	}
 
-	resultMap, ok := result.(map[string]interface{})
+	resultMap, ok := result.(map[string]any)
 	if !ok {
 		t.Errorf("Result should be a map, got %T", result)
 	}
 
-	matches, ok := resultMap["matches"].([]interface{})
-	if !ok {
-		t.Error("Expected matches in result")
-	}
-
-	if len(matches) == 0 {
+	count, _ := resultMap["count"].(int)
+	if count == 0 {
 		t.Error("Expected at least one match")
 	}
 }
@@ -152,9 +148,9 @@ func TestTodoWriteTool(t *testing.T) {
 func TestTodoWriteToolExecute(t *testing.T) {
 	tool := NewTodoWriteTool("test-session")
 
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"todos": []interface{}{
-			map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"todos": []any{
+			map[string]any{
 				"content": "Test task",
 				"status":  "pending",
 			},
@@ -353,7 +349,7 @@ func TestEnvTool(t *testing.T) {
 func TestToolExecutionError(t *testing.T) {
 	tool := &BashTool{}
 
-	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	_, err := tool.Execute(context.Background(), map[string]any{})
 	if err == nil {
 		t.Error("Expected error for missing command")
 	}
@@ -407,7 +403,7 @@ func TestREPLToolNameAndSchema(t *testing.T) {
 
 func TestREPLToolMissingExpression(t *testing.T) {
 	tool := &REPLTool{}
-	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	_, err := tool.Execute(context.Background(), map[string]any{})
 	if err == nil {
 		t.Error("Expected error for missing expression")
 	}
@@ -415,7 +411,7 @@ func TestREPLToolMissingExpression(t *testing.T) {
 
 func TestREPLToolUnsupportedLanguage(t *testing.T) {
 	tool := &REPLTool{}
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
+	_, err := tool.Execute(context.Background(), map[string]any{
 		"expression": "1+1",
 		"language":   "ruby",
 	})
@@ -438,7 +434,7 @@ func TestScheduleCronToolNameAndSchema(t *testing.T) {
 
 func TestScheduleCronToolScheduleMissingFields(t *testing.T) {
 	tool := &ScheduleCronTool{}
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
+	_, err := tool.Execute(context.Background(), map[string]any{
 		"action": "schedule",
 	})
 	if err == nil {
@@ -454,7 +450,7 @@ func TestScheduleCronToolListEmpty(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	tool := &ScheduleCronTool{}
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"action":   "schedule",
 		"schedule": "*/5 * * * *",
 		"command":  "echo hello",
@@ -463,7 +459,7 @@ func TestScheduleCronToolListEmpty(t *testing.T) {
 		t.Errorf("Schedule failed: %v", err)
 	}
 
-	resultMap, ok := result.(map[string]interface{})
+	resultMap, ok := result.(map[string]any)
 	if !ok {
 		t.Fatalf("Expected map result, got %T", result)
 	}
@@ -475,7 +471,7 @@ func TestScheduleCronToolListEmpty(t *testing.T) {
 
 func TestScheduleCronToolDeleteMissingID(t *testing.T) {
 	tool := &ScheduleCronTool{}
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
+	_, err := tool.Execute(context.Background(), map[string]any{
 		"action": "delete",
 	})
 	if err == nil {
@@ -497,7 +493,7 @@ func TestEnterWorktreeToolNameAndSchema(t *testing.T) {
 
 func TestEnterWorktreeToolMissingPath(t *testing.T) {
 	tool := &EnterWorktreeTool{}
-	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	_, err := tool.Execute(context.Background(), map[string]any{})
 	if err == nil {
 		t.Error("Expected error for missing path")
 	}
@@ -517,7 +513,7 @@ func TestExitWorktreeToolNameAndSchema(t *testing.T) {
 
 func TestExitWorktreeToolMissingPath(t *testing.T) {
 	tool := &ExitWorktreeTool{}
-	_, err := tool.Execute(context.Background(), map[string]interface{}{})
+	_, err := tool.Execute(context.Background(), map[string]any{})
 	if err == nil {
 		t.Error("Expected error for missing path")
 	}

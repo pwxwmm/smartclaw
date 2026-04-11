@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,19 +15,19 @@ type ReadFileTool struct{}
 func (t *ReadFileTool) Name() string        { return "read_file" }
 func (t *ReadFileTool) Description() string { return "Read a text file from the workspace" }
 
-func (t *ReadFileTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *ReadFileTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path":   map[string]interface{}{"type": "string", "description": "The file path to read"},
-			"offset": map[string]interface{}{"type": "integer", "description": "Line offset (1-indexed)"},
-			"limit":  map[string]interface{}{"type": "integer", "description": "Maximum lines to read"},
+		"properties": map[string]any{
+			"path":   map[string]any{"type": "string", "description": "The file path to read"},
+			"offset": map[string]any{"type": "integer", "description": "Line offset (1-indexed)"},
+			"limit":  map[string]any{"type": "integer", "description": "Maximum lines to read"},
 		},
 		"required": []string{"path"},
 	}
 }
 
-func (t *ReadFileTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	if path == "" {
 		return nil, ErrRequiredField("path")
@@ -39,7 +38,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]interface{}
 		return nil, &Error{Code: "PATH_ERROR", Message: err.Error()}
 	}
 
-	content, err := ioutil.ReadFile(absPath)
+	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
@@ -70,7 +69,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]interface{}
 		result = append(result, fmt.Sprintf("%d: %s", i+1, lines[i]))
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"content": strings.Join(result, "\n"),
 		"path":    absPath,
 		"lines":   len(lines),
@@ -82,18 +81,18 @@ type WriteFileTool struct{}
 func (t *WriteFileTool) Name() string        { return "write_file" }
 func (t *WriteFileTool) Description() string { return "Write a text file in the workspace" }
 
-func (t *WriteFileTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *WriteFileTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path":    map[string]interface{}{"type": "string", "description": "The file path to write"},
-			"content": map[string]interface{}{"type": "string", "description": "The content to write"},
+		"properties": map[string]any{
+			"path":    map[string]any{"type": "string", "description": "The file path to write"},
+			"content": map[string]any{"type": "string", "description": "The content to write"},
 		},
 		"required": []string{"path", "content"},
 	}
 }
 
-func (t *WriteFileTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	content, _ := input["content"].(string)
 
@@ -111,11 +110,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]interface{
 		return nil, &Error{Code: "MKDIR_ERROR", Message: err.Error()}
 	}
 
-	if err := ioutil.WriteFile(absPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
 		return nil, &Error{Code: "WRITE_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path":    absPath,
 		"written": len(content),
 	}, nil
@@ -126,20 +125,20 @@ type EditFileTool struct{}
 func (t *EditFileTool) Name() string        { return "edit_file" }
 func (t *EditFileTool) Description() string { return "Edit a file using string replacement" }
 
-func (t *EditFileTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *EditFileTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path":        map[string]interface{}{"type": "string"},
-			"old_string":  map[string]interface{}{"type": "string"},
-			"new_string":  map[string]interface{}{"type": "string"},
-			"replace_all": map[string]interface{}{"type": "boolean"},
+		"properties": map[string]any{
+			"path":        map[string]any{"type": "string"},
+			"old_string":  map[string]any{"type": "string"},
+			"new_string":  map[string]any{"type": "string"},
+			"replace_all": map[string]any{"type": "boolean"},
 		},
 		"required": []string{"path", "old_string", "new_string"},
 	}
 }
 
-func (t *EditFileTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	oldStr, _ := input["old_string"].(string)
 	newStr, _ := input["new_string"].(string)
@@ -157,7 +156,7 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]interface{}
 		return nil, &Error{Code: "PATH_ERROR", Message: err.Error()}
 	}
 
-	content, err := ioutil.ReadFile(absPath)
+	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
@@ -178,11 +177,11 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]interface{}
 		replaced = 1
 	}
 
-	if err := ioutil.WriteFile(absPath, []byte(contentStr), 0644); err != nil {
+	if err := os.WriteFile(absPath, []byte(contentStr), 0644); err != nil {
 		return nil, &Error{Code: "WRITE_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path":     absPath,
 		"replaced": replaced,
 	}, nil
@@ -193,18 +192,18 @@ type GlobTool struct{}
 func (t *GlobTool) Name() string        { return "glob" }
 func (t *GlobTool) Description() string { return "Search for files by pattern" }
 
-func (t *GlobTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *GlobTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"pattern": map[string]interface{}{"type": "string"},
-			"path":    map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"pattern": map[string]any{"type": "string"},
+			"path":    map[string]any{"type": "string"},
 		},
 		"required": []string{"pattern"},
 	}
 }
 
-func (t *GlobTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *GlobTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	pattern, _ := input["pattern"].(string)
 	if pattern == "" {
 		return nil, ErrRequiredField("pattern")
@@ -226,7 +225,7 @@ func (t *GlobTool) Execute(ctx context.Context, input map[string]interface{}) (i
 		return nil, &Error{Code: "GLOB_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"files": matches,
 		"count": len(matches),
 	}, nil
@@ -237,23 +236,23 @@ type GrepTool struct{}
 func (t *GrepTool) Name() string        { return "grep" }
 func (t *GrepTool) Description() string { return "Search for text in files using regex" }
 
-func (t *GrepTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *GrepTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"pattern":     map[string]interface{}{"type": "string", "description": "Regex pattern to search"},
-			"path":        map[string]interface{}{"type": "string", "description": "Base path to search"},
-			"include":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "File patterns to include"},
-			"exclude":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "File patterns to exclude"},
-			"context":     map[string]interface{}{"type": "integer", "description": "Number of context lines"},
-			"ignore_case": map[string]interface{}{"type": "boolean", "description": "Case insensitive search"},
-			"output_mode": map[string]interface{}{"type": "string", "enum": []string{"content", "files_with_matches", "count"}, "description": "Output format"},
+		"properties": map[string]any{
+			"pattern":     map[string]any{"type": "string", "description": "Regex pattern to search"},
+			"path":        map[string]any{"type": "string", "description": "Base path to search"},
+			"include":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File patterns to include"},
+			"exclude":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File patterns to exclude"},
+			"context":     map[string]any{"type": "integer", "description": "Number of context lines"},
+			"ignore_case": map[string]any{"type": "boolean", "description": "Case insensitive search"},
+			"output_mode": map[string]any{"type": "string", "enum": []string{"content", "files_with_matches", "count"}, "description": "Output format"},
 		},
 		"required": []string{"pattern"},
 	}
 }
 
-func (t *GrepTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *GrepTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	pattern, _ := input["pattern"].(string)
 	if pattern == "" {
 		return nil, ErrRequiredField("pattern")
@@ -288,8 +287,8 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]interface{}) (i
 	}
 
 	// Handle include/exclude
-	includes, _ := input["include"].([]interface{})
-	excludes, _ := input["exclude"].([]interface{})
+	includes, _ := input["include"].([]any)
+	excludes, _ := input["exclude"].([]any)
 
 	var matches []GrepMatch
 	fileCounts := make(map[string]int)
@@ -382,7 +381,7 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]interface{}) (i
 		for _, count := range fileCounts {
 			total += count
 		}
-		return map[string]interface{}{
+		return map[string]any{
 			"count": total,
 			"files": fileCounts,
 		}, nil
@@ -391,12 +390,12 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]interface{}) (i
 		for f := range fileCounts {
 			files = append(files, f)
 		}
-		return map[string]interface{}{
+		return map[string]any{
 			"files": files,
 			"count": len(files),
 		}, nil
 	default:
-		return map[string]interface{}{
+		return map[string]any{
 			"matches": matches,
 			"count":   len(matches),
 		}, nil

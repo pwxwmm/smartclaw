@@ -25,7 +25,7 @@ func TestBashTool(t *testing.T) {
 func TestBashToolExecute(t *testing.T) {
 	tool := NewBashTool("")
 
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "echo hello",
 	})
 

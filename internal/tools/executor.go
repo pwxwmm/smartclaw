@@ -1,12 +1,15 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -26,7 +29,7 @@ func NewExecutor(workDir string) *Executor {
 }
 
 // Execute runs a tool by name
-func (e *Executor) Execute(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func (e *Executor) Execute(ctx context.Context, name string, input map[string]any) (any, error) {
 	switch name {
 	case "bash":
 		return e.executeBash(ctx, input)
@@ -52,7 +55,7 @@ type BashOutput struct {
 	ExitCode int    `json:"exit_code"`
 }
 
-func (e *Executor) executeBash(ctx context.Context, input map[string]interface{}) (*BashOutput, error) {
+func (e *Executor) executeBash(ctx context.Context, input map[string]any) (*BashOutput, error) {
 	command, ok := input["command"].(string)
 	if !ok {
 		return nil, fmt.Errorf("command is required")
@@ -95,7 +98,7 @@ type FileOutput struct {
 	Exists  bool   `json:"exists,omitempty"`
 }
 
-func (e *Executor) readFile(ctx context.Context, input map[string]interface{}) (*FileOutput, error) {
+func (e *Executor) readFile(ctx context.Context, input map[string]any) (*FileOutput, error) {
 	path, ok := input["path"].(string)
 	if !ok {
 		return nil, fmt.Errorf("path is required")
@@ -117,7 +120,7 @@ func (e *Executor) readFile(ctx context.Context, input map[string]interface{}) (
 	}, nil
 }
 
-func (e *Executor) writeFile(ctx context.Context, input map[string]interface{}) (*FileOutput, error) {
+func (e *Executor) writeFile(ctx context.Context, input map[string]any) (*FileOutput, error) {
 	path, ok := input["path"].(string)
 	if !ok {
 		return nil, fmt.Errorf("path is required")
@@ -149,9 +152,115 @@ func (e *Executor) writeFile(ctx context.Context, input map[string]interface{}) 
 	}, nil
 }
 
-func (e *Executor) editFile(ctx context.Context, input map[string]interface{}) (*FileOutput, error) {
-	// TODO: Implement file editing with string replacement
-	return nil, fmt.Errorf("edit_file not yet implemented")
+func (e *Executor) editFile(ctx context.Context, input map[string]any) (*FileOutput, error) {
+	path, _ := input["path"].(string)
+	if path == "" {
+		return nil, ErrRequiredField("path")
+	}
+
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(e.WorkDir, path)
+	}
+
+	operation, _ := input["operation"].(string)
+	if operation == "" {
+		operation = "replace"
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	original := string(content)
+
+	var result string
+	switch operation {
+	case "replace":
+		oldText, _ := input["old_text"].(string)
+		newText, _ := input["new_text"].(string)
+		if oldText == "" {
+			return nil, ErrRequiredField("old_text")
+		}
+		count := strings.Count(original, oldText)
+		if count == 0 {
+			return nil, fmt.Errorf("old_text not found in file")
+		}
+		replaceAll := false
+		if r, ok := input["replace_all"].(bool); ok {
+			replaceAll = r
+		}
+		if count > 1 && !replaceAll {
+			return nil, fmt.Errorf("old_text found %d times; set replace_all=true to replace all", count)
+		}
+		if replaceAll {
+			result = strings.ReplaceAll(original, oldText, newText)
+		} else {
+			result = strings.Replace(original, oldText, newText, 1)
+		}
+
+	case "insert":
+		lineNum := 0
+		if ln, ok := input["line"].(int); ok {
+			lineNum = ln
+		} else if ln, ok := input["line"].(float64); ok {
+			lineNum = int(ln)
+		}
+		newText, _ := input["new_text"].(string)
+		if newText == "" {
+			return nil, ErrRequiredField("new_text")
+		}
+		lines := strings.Split(original, "\n")
+		if lineNum < 0 {
+			lineNum = 0
+		}
+		if lineNum > len(lines) {
+			lineNum = len(lines)
+		}
+		newLines := strings.Split(newText, "\n")
+		rear := make([]string, len(lines[lineNum:]))
+		copy(rear, lines[lineNum:])
+		lines = append(lines[:lineNum], newLines...)
+		lines = append(lines, rear...)
+		result = strings.Join(lines, "\n")
+
+	case "delete":
+		lineStart := 0
+		lineEnd := 0
+		if ls, ok := input["line_start"].(int); ok {
+			lineStart = ls
+		} else if ls, ok := input["line_start"].(float64); ok {
+			lineStart = int(ls)
+		}
+		if le, ok := input["line_end"].(int); ok {
+			lineEnd = le
+		} else if le, ok := input["line_end"].(float64); ok {
+			lineEnd = int(le)
+		}
+		if lineEnd <= lineStart {
+			lineEnd = lineStart + 1
+		}
+		lines := strings.Split(original, "\n")
+		if lineStart < 0 {
+			lineStart = 0
+		}
+		if lineEnd > len(lines) {
+			lineEnd = len(lines)
+		}
+		result = strings.Join(append(lines[:lineStart], lines[lineEnd:]...), "\n")
+
+	default:
+		return nil, fmt.Errorf("unknown operation: %s (valid: replace, insert, delete)", operation)
+	}
+
+	if err := os.WriteFile(path, []byte(result), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return &FileOutput{
+		Path:    path,
+		Content: result,
+		Exists:  true,
+	}, nil
 }
 
 // GlobOutput is the output of a glob search
@@ -159,7 +268,7 @@ type GlobOutput struct {
 	Files []string `json:"files"`
 }
 
-func (e *Executor) glob(ctx context.Context, input map[string]interface{}) (*GlobOutput, error) {
+func (e *Executor) glob(ctx context.Context, input map[string]any) (*GlobOutput, error) {
 	pattern, ok := input["pattern"].(string)
 	if !ok {
 		return nil, fmt.Errorf("pattern is required")
@@ -198,19 +307,89 @@ type GrepMatch struct {
 	Content string `json:"content"`
 }
 
-func (e *Executor) grep(ctx context.Context, input map[string]interface{}) (*GrepOutput, error) {
+func (e *Executor) grep(ctx context.Context, input map[string]any) (*GrepOutput, error) {
 	pattern, ok := input["pattern"].(string)
-	if !ok {
-		return nil, fmt.Errorf("pattern is required")
+	if !ok || pattern == "" {
+		return nil, ErrRequiredField("pattern")
 	}
 
-	// TODO: Implement grep
-	_ = pattern
-	_ = ctx
+	path, _ := input["path"].(string)
+	if path == "" {
+		path = "."
+	}
 
-	return &GrepOutput{
-		Matches: []GrepMatch{},
-	}, nil
+	includePattern, _ := input["include"].(string)
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %w", err)
+	}
+
+	var matches []GrepMatch
+	maxMatches := 50
+
+	err = filepath.WalkDir(path, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" || name == "build" || name == "bin" || name == "__pycache__" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if len(matches) >= maxMatches {
+			return nil
+		}
+
+		if includePattern != "" {
+			matched, _ := filepath.Match(includePattern, d.Name())
+			if !matched {
+				return nil
+			}
+		}
+
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if len(matches) >= maxMatches {
+				return nil
+			}
+			line := scanner.Text()
+			if re.MatchString(line) {
+				matches = append(matches, GrepMatch{
+					File:    filePath,
+					Line:    lineNum,
+					Content: line,
+				})
+			}
+		}
+		return nil
+	})
+
+	if err != nil && ctx.Err() == nil {
+		return nil, fmt.Errorf("grep search failed: %w", err)
+	}
+
+	if matches == nil {
+		matches = []GrepMatch{}
+	}
+
+	return &GrepOutput{Matches: matches}, nil
 }
 
 // Glob is a helper function for glob search

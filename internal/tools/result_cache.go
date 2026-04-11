@@ -18,7 +18,7 @@ type CacheKey struct {
 
 type CacheEntry struct {
 	Key      CacheKey
-	Result   interface{}
+	Result   any
 	CachedAt time.Time
 	DepFiles map[string]time.Time
 }
@@ -46,7 +46,7 @@ func NewResultCache(maxSize int, ttl time.Duration) *ResultCache {
 	}
 }
 
-func (rc *ResultCache) Get(tool string, input map[string]interface{}) (interface{}, bool) {
+func (rc *ResultCache) Get(tool string, input map[string]any) (any, bool) {
 	key := makeKey(tool, input)
 
 	rc.mu.RLock()
@@ -83,7 +83,7 @@ func (rc *ResultCache) Get(tool string, input map[string]interface{}) (interface
 	return entry.Result, true
 }
 
-func (rc *ResultCache) Set(tool string, input map[string]interface{}, result interface{}, depFiles []string) {
+func (rc *ResultCache) Set(tool string, input map[string]any, result any, depFiles []string) {
 	key := makeKey(tool, input)
 
 	fileMtimes := make(map[string]time.Time)
@@ -176,7 +176,7 @@ func (rc *ResultCache) removeElement(elem *list.Element) {
 	rc.lru.Remove(elem)
 }
 
-func makeKey(tool string, input map[string]interface{}) CacheKey {
+func makeKey(tool string, input map[string]any) CacheKey {
 	data, err := json.Marshal(input)
 	if err != nil {
 		data = []byte(fmt.Sprintf("%v", input))

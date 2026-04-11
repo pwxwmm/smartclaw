@@ -17,22 +17,22 @@ func (g *GitAITool) Description() string {
 	return "AI-powered git operations: generate commit messages, review changes, create PR descriptions"
 }
 
-func (g *GitAITool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (g *GitAITool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"action": map[string]interface{}{
+		"properties": map[string]any{
+			"action": map[string]any{
 				"type":        "string",
 				"enum":        []string{"commit_message", "review", "pr_description"},
 				"description": "The git AI action to perform",
 			},
-			"diff": map[string]interface{}{
+			"diff": map[string]any{
 				"type":        "string",
 				"description": "The git diff content (optional, will use working directory if not provided)",
 			},
-			"files": map[string]interface{}{
+			"files": map[string]any{
 				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
+				"items":       map[string]any{"type": "string"},
 				"description": "List of changed files for context",
 			},
 		},
@@ -40,12 +40,12 @@ func (g *GitAITool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (g *GitAITool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (g *GitAITool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	action, _ := input["action"].(string)
 	diff, _ := input["diff"].(string)
 
 	var files []string
-	if raw, ok := input["files"].([]interface{}); ok {
+	if raw, ok := input["files"].([]any); ok {
 		for _, f := range raw {
 			if s, ok := f.(string); ok {
 				files = append(files, s)
@@ -65,7 +65,7 @@ func (g *GitAITool) Execute(ctx context.Context, input map[string]interface{}) (
 	}
 }
 
-func (g *GitAITool) generateCommitMessage(diff string, files []string) (interface{}, error) {
+func (g *GitAITool) generateCommitMessage(diff string, files []string) (any, error) {
 	commitType := "chore"
 	scope := ""
 	subject := "update files"
@@ -118,7 +118,7 @@ func (g *GitAITool) generateCommitMessage(diff string, files []string) (interfac
 
 	body := fmt.Sprintf("Changed %d file(s): +%d -%d lines", len(files), added, removed)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"commit_message": msg,
 		"body":           body,
 		"type":           commitType,
@@ -129,8 +129,8 @@ func (g *GitAITool) generateCommitMessage(diff string, files []string) (interfac
 	}, nil
 }
 
-func (g *GitAITool) reviewChanges(diff string, files []string) (interface{}, error) {
-	findings := []map[string]interface{}{}
+func (g *GitAITool) reviewChanges(diff string, files []string) (any, error) {
+	findings := []map[string]any{}
 
 	lines := strings.Split(diff, "\n")
 	for i, line := range lines {
@@ -139,35 +139,35 @@ func (g *GitAITool) reviewChanges(diff string, files []string) (interface{}, err
 
 		switch {
 		case strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key"):
-			findings = append(findings, map[string]interface{}{
+			findings = append(findings, map[string]any{
 				"severity":    "critical",
 				"category":    "security",
 				"description": "Potential secret or credential exposed in code",
 				"line":        i + 1,
 			})
 		case strings.Contains(lower, "todo") || strings.Contains(lower, "fixme") || strings.Contains(lower, "hack"):
-			findings = append(findings, map[string]interface{}{
+			findings = append(findings, map[string]any{
 				"severity":    "warning",
 				"category":    "code_quality",
 				"description": "TODO/FIXME/HACK comment found",
 				"line":        i + 1,
 			})
 		case strings.Contains(lower, "fmt.sprintf") && strings.Contains(lower, "%s") && (strings.Contains(lower, "sql") || strings.Contains(lower, "query")):
-			findings = append(findings, map[string]interface{}{
+			findings = append(findings, map[string]any{
 				"severity":    "critical",
 				"category":    "security",
 				"description": "Potential SQL injection via string formatting",
 				"line":        i + 1,
 			})
 		case strings.Contains(lower, "panic("):
-			findings = append(findings, map[string]interface{}{
+			findings = append(findings, map[string]any{
 				"severity":    "warning",
 				"category":    "error_handling",
 				"description": "Unhandled panic() call",
 				"line":        i + 1,
 			})
 		case strings.Contains(lower, "catch(e) {}") || strings.Contains(lower, "catch (e) {}") || strings.Contains(lower, "catch(e){}"):
-			findings = append(findings, map[string]interface{}{
+			findings = append(findings, map[string]any{
 				"severity":    "warning",
 				"category":    "error_handling",
 				"description": "Empty catch block",
@@ -177,14 +177,14 @@ func (g *GitAITool) reviewChanges(diff string, files []string) (interface{}, err
 	}
 
 	if len(findings) == 0 {
-		findings = append(findings, map[string]interface{}{
+		findings = append(findings, map[string]any{
 			"severity":    "info",
 			"category":    "general",
 			"description": "No obvious issues found in the diff. Consider reviewing manually for context-specific concerns.",
 		})
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"review":       findings,
 		"files_review": len(files),
 		"total_lines":  len(lines),
@@ -192,7 +192,7 @@ func (g *GitAITool) reviewChanges(diff string, files []string) (interface{}, err
 	}, nil
 }
 
-func (g *GitAITool) generatePRDescription(diff string, files []string) (interface{}, error) {
+func (g *GitAITool) generatePRDescription(diff string, files []string) (any, error) {
 	sections := map[string][]string{
 		"added":    {},
 		"modified": {},
@@ -251,7 +251,7 @@ func (g *GitAITool) generatePRDescription(diff string, files []string) (interfac
 
 	desc.WriteString("## Testing\n\n- [ ] Manual testing completed\n- [ ] Automated tests pass\n")
 
-	return map[string]interface{}{
+	return map[string]any{
 		"description":   desc.String(),
 		"files_changed": len(files),
 		"lines_added":   added,
@@ -280,11 +280,11 @@ func (g *GitStatusTool) Description() string {
 	return "Get git status for the current working directory"
 }
 
-func (g *GitStatusTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (g *GitStatusTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
+		"properties": map[string]any{
+			"path": map[string]any{
 				"type":        "string",
 				"description": "Working directory path",
 			},
@@ -292,7 +292,7 @@ func (g *GitStatusTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (g *GitStatusTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (g *GitStatusTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	if path == "" {
 		path = "."
@@ -303,7 +303,7 @@ func (g *GitStatusTool) Execute(ctx context.Context, input map[string]interface{
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"is_repo":       gitCtx.IsRepo,
 		"branch":        gitCtx.Branch,
 		"has_changes":   gitCtx.HasChanges,
@@ -317,15 +317,15 @@ type GitDiffTool struct{}
 func (g *GitDiffTool) Name() string        { return "git_diff" }
 func (g *GitDiffTool) Description() string { return "Get git diff for the current working directory" }
 
-func (g *GitDiffTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (g *GitDiffTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
+		"properties": map[string]any{
+			"path": map[string]any{
 				"type":        "string",
 				"description": "Working directory path",
 			},
-			"staged": map[string]interface{}{
+			"staged": map[string]any{
 				"type":        "boolean",
 				"description": "Whether to get staged diff",
 			},
@@ -333,7 +333,7 @@ func (g *GitDiffTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (g *GitDiffTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (g *GitDiffTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	staged, _ := input["staged"].(bool)
 	if path == "" {
@@ -345,7 +345,7 @@ func (g *GitDiffTool) Execute(ctx context.Context, input map[string]interface{})
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"diff":   diff,
 		"staged": staged,
 	}, nil
@@ -356,15 +356,15 @@ type GitLogTool struct{}
 func (g *GitLogTool) Name() string        { return "git_log" }
 func (g *GitLogTool) Description() string { return "Get recent git commit log" }
 
-func (g *GitLogTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (g *GitLogTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
+		"properties": map[string]any{
+			"path": map[string]any{
 				"type":        "string",
 				"description": "Working directory path",
 			},
-			"count": map[string]interface{}{
+			"count": map[string]any{
 				"type":        "number",
 				"description": "Number of commits to show",
 			},
@@ -372,7 +372,7 @@ func (g *GitLogTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (g *GitLogTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (g *GitLogTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	count := 10
 	if c, ok := input["count"].(float64); ok && c > 0 {
@@ -387,7 +387,7 @@ func (g *GitLogTool) Execute(ctx context.Context, input map[string]interface{}) 
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"log":   log,
 		"count": count,
 	}, nil

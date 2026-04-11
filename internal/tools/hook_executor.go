@@ -22,7 +22,7 @@ func NewHookAwareExecutor(registry *ToolRegistry, hookManager *hooks.HookManager
 }
 
 // ExecuteWithHooks runs a tool with PreToolUse and PostToolUse hooks
-func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, input map[string]any) (any, error) {
 	// Get the tool first
 	tool := e.registry.Get(name)
 	if tool == nil {
@@ -31,14 +31,14 @@ func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, i
 
 	// Variable to track if execution should proceed
 	shouldExecute := true
-	var modifiedInput map[string]interface{} = input
+	var modifiedInput map[string]any = input
 
 	// Execute PreToolUse hooks if hook manager exists
 	if e.hookManager != nil {
 		results, err := e.hookManager.ExecutePreToolUse(ctx, name, input)
 		if err != nil {
 			// Hook blocked execution
-			return map[string]interface{}{
+			return map[string]any{
 				"error":   err.Error(),
 				"blocked": true,
 			}, err
@@ -49,7 +49,7 @@ func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, i
 			if result.Output != nil {
 				// Check if hook wants to block
 				if result.Output.Decision == "block" {
-					return map[string]interface{}{
+					return map[string]any{
 						"error":      result.Output.Reason,
 						"blocked":    true,
 						"hook_name":  result.HookName,
@@ -71,13 +71,13 @@ func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, i
 	}
 
 	// Execute the tool if not suppressed
-	var output interface{}
+	var output any
 	var execErr error
 
 	if shouldExecute {
 		output, execErr = tool.Execute(ctx, modifiedInput)
 	} else {
-		output = map[string]interface{}{
+		output = map[string]any{
 			"suppressed": true,
 			"message":    "Tool execution suppressed by hook",
 		}
@@ -94,7 +94,7 @@ func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, i
 			for _, result := range results {
 				if result.Output != nil {
 					if result.Output.Decision == "modify" && result.Output.Stdout != "" {
-						output = map[string]interface{}{
+						output = map[string]any{
 							"modified": true,
 							"result":   result.Output.Stdout,
 						}
@@ -108,12 +108,12 @@ func (e *HookAwareExecutor) ExecuteWithHooks(ctx context.Context, name string, i
 }
 
 // Execute runs a tool (without hooks, for backward compatibility)
-func (e *HookAwareExecutor) Execute(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func (e *HookAwareExecutor) Execute(ctx context.Context, name string, input map[string]any) (any, error) {
 	return e.ExecuteWithHooks(ctx, name, input)
 }
 
 // ExecuteWithoutHooks runs a tool bypassing all hooks
-func (e *HookAwareExecutor) ExecuteWithoutHooks(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func (e *HookAwareExecutor) ExecuteWithoutHooks(ctx context.Context, name string, input map[string]any) (any, error) {
 	return e.registry.Execute(ctx, name, input)
 }
 
@@ -136,7 +136,7 @@ func (e *HookAwareExecutor) SetHookManager(hookManager *hooks.HookManager) {
 type ToolInfo struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
+	InputSchema map[string]any `json:"input_schema"`
 }
 
 // ListTools returns all registered tools
@@ -171,6 +171,6 @@ func GetHookAwareExecutor() *HookAwareExecutor {
 }
 
 // ExecuteWithGlobalHooks executes a tool using the global hook-aware executor
-func ExecuteWithGlobalHooks(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func ExecuteWithGlobalHooks(ctx context.Context, name string, input map[string]any) (any, error) {
 	return GetHookAwareExecutor().ExecuteWithHooks(ctx, name, input)
 }

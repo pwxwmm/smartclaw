@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -17,24 +17,24 @@ func NewLSPTool() *LSPTool {
 func (t *LSPTool) Name() string        { return "lsp" }
 func (t *LSPTool) Description() string { return "LSP operations for code navigation and analysis" }
 
-func (t *LSPTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *LSPTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type": "string",
 				"enum": []string{"goto_definition", "find_references", "symbols", "diagnostics", "rename", "hover"},
 			},
-			"file_path": map[string]interface{}{"type": "string"},
-			"line":      map[string]interface{}{"type": "integer"},
-			"character": map[string]interface{}{"type": "integer"},
-			"new_name":  map[string]interface{}{"type": "string"},
+			"file_path": map[string]any{"type": "string"},
+			"line":      map[string]any{"type": "integer"},
+			"character": map[string]any{"type": "integer"},
+			"new_name":  map[string]any{"type": "string"},
 		},
 		"required": []string{"operation", "file_path"},
 	}
 }
 
-func (t *LSPTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *LSPTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 	filePath, _ := input["file_path"].(string)
 	line, _ := input["line"].(int)
@@ -56,7 +56,7 @@ func (t *LSPTool) Execute(ctx context.Context, input map[string]interface{}) (in
 		return nil, &Error{Code: "LSP_ERROR", Message: fmt.Sprintf("Failed to create LSP client: %v", err)}
 	}
 
-	content, err := ioutil.ReadFile(absPath)
+	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
@@ -87,9 +87,9 @@ func (t *LSPTool) Execute(ctx context.Context, input map[string]interface{}) (in
 	}
 }
 
-func (t *LSPTool) getDiagnostics(ctx context.Context, client *LSPClient, filePath string) (interface{}, error) {
-	return map[string]interface{}{
-		"diagnostics": []interface{}{},
+func (t *LSPTool) getDiagnostics(ctx context.Context, client *LSPClient, filePath string) (any, error) {
+	return map[string]any{
+		"diagnostics": []any{},
 		"message":     "Diagnostics support requires LSP server with diagnostic support",
 	}, nil
 }
@@ -121,36 +121,36 @@ type SessionTool struct{}
 func (t *SessionTool) Name() string        { return "session" }
 func (t *SessionTool) Description() string { return "Session operations" }
 
-func (t *SessionTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *SessionTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type": "string",
 				"enum": []string{"list", "read", "search", "info"},
 			},
-			"session_id": map[string]interface{}{"type": "string"},
-			"query":      map[string]interface{}{"type": "string"},
-			"limit":      map[string]interface{}{"type": "integer"},
+			"session_id": map[string]any{"type": "string"},
+			"query":      map[string]any{"type": "string"},
+			"limit":      map[string]any{"type": "integer"},
 		},
 		"required": []string{"operation"},
 	}
 }
 
-func (t *SessionTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *SessionTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 
 	switch operation {
 	case "list":
-		return map[string]interface{}{"sessions": []interface{}{}, "message": "Session requires storage"}, nil
+		return map[string]any{"sessions": []any{}, "message": "Session requires storage"}, nil
 	case "read":
 		sessionID, _ := input["session_id"].(string)
-		return map[string]interface{}{"session_id": sessionID, "messages": []interface{}{}}, nil
+		return map[string]any{"session_id": sessionID, "messages": []any{}}, nil
 	case "search":
-		return map[string]interface{}{"results": []interface{}{}}, nil
+		return map[string]any{"results": []any{}}, nil
 	case "info":
 		sessionID, _ := input["session_id"].(string)
-		return map[string]interface{}{"session_id": sessionID}, nil
+		return map[string]any{"session_id": sessionID}, nil
 	default:
 		return nil, &Error{Code: "INVALID_OPERATION", Message: "Unknown operation: " + operation}
 	}

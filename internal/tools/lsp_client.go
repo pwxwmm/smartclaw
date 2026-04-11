@@ -18,20 +18,20 @@ type LSPRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
 	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
+	Params  any `json:"params,omitempty"`
 }
 
 type LSPResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
+	Result  any `json:"result,omitempty"`
 	Error   *LSPError   `json:"error,omitempty"`
 }
 
 type LSPError struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Data    any `json:"data,omitempty"`
 }
 
 // LSPClient manages connection to an LSP server
@@ -143,22 +143,22 @@ func (c *LSPClient) Initialize(ctx context.Context, rootPath string) error {
 		return nil
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"processId": os.Getpid(),
 		"rootUri":   "file://" + rootPath,
-		"capabilities": map[string]interface{}{
-			"textDocument": map[string]interface{}{
-				"definition": map[string]interface{}{
+		"capabilities": map[string]any{
+			"textDocument": map[string]any{
+				"definition": map[string]any{
 					"linkSupport": true,
 				},
-				"references": map[string]interface{}{},
-				"hover": map[string]interface{}{
+				"references": map[string]any{},
+				"hover": map[string]any{
 					"contentFormat": []string{"markdown", "plaintext"},
 				},
-				"rename": map[string]interface{}{
+				"rename": map[string]any{
 					"prepareSupport": true,
 				},
-				"documentSymbol": map[string]interface{}{
+				"documentSymbol": map[string]any{
 					"hierarchicalDocumentSymbolSupport": true,
 				},
 			},
@@ -175,7 +175,7 @@ func (c *LSPClient) Initialize(ctx context.Context, rootPath string) error {
 	}
 
 	// Send initialized notification
-	_, _ = c.sendRequest(ctx, "initialized", map[string]interface{}{})
+	_, _ = c.sendRequest(ctx, "initialized", map[string]any{})
 
 	c.initialized = true
 	return nil
@@ -183,8 +183,8 @@ func (c *LSPClient) Initialize(ctx context.Context, rootPath string) error {
 
 // DidOpen notifies the server that a file was opened
 func (c *LSPClient) DidOpen(ctx context.Context, filePath, languageID, content string) error {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri":        "file://" + filePath,
 			"languageId": languageID,
 			"version":    1,
@@ -197,12 +197,12 @@ func (c *LSPClient) DidOpen(ctx context.Context, filePath, languageID, content s
 }
 
 // GotoDefinition requests definition location
-func (c *LSPClient) GotoDefinition(ctx context.Context, filePath string, line, character int) (interface{}, error) {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+func (c *LSPClient) GotoDefinition(ctx context.Context, filePath string, line, character int) (any, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
 		},
-		"position": map[string]interface{}{
+		"position": map[string]any{
 			"line":      line - 1, // LSP uses 0-based
 			"character": character - 1,
 		},
@@ -221,16 +221,16 @@ func (c *LSPClient) GotoDefinition(ctx context.Context, filePath string, line, c
 }
 
 // FindReferences finds all references to a symbol
-func (c *LSPClient) FindReferences(ctx context.Context, filePath string, line, character int) (interface{}, error) {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+func (c *LSPClient) FindReferences(ctx context.Context, filePath string, line, character int) (any, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
 		},
-		"position": map[string]interface{}{
+		"position": map[string]any{
 			"line":      line - 1,
 			"character": character - 1,
 		},
-		"context": map[string]interface{}{
+		"context": map[string]any{
 			"includeDeclaration": true,
 		},
 	}
@@ -248,9 +248,9 @@ func (c *LSPClient) FindReferences(ctx context.Context, filePath string, line, c
 }
 
 // DocumentSymbols gets all symbols in a document
-func (c *LSPClient) DocumentSymbols(ctx context.Context, filePath string) (interface{}, error) {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+func (c *LSPClient) DocumentSymbols(ctx context.Context, filePath string) (any, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
 		},
 	}
@@ -268,12 +268,12 @@ func (c *LSPClient) DocumentSymbols(ctx context.Context, filePath string) (inter
 }
 
 // Hover gets hover information
-func (c *LSPClient) Hover(ctx context.Context, filePath string, line, character int) (interface{}, error) {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+func (c *LSPClient) Hover(ctx context.Context, filePath string, line, character int) (any, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
 		},
-		"position": map[string]interface{}{
+		"position": map[string]any{
 			"line":      line - 1,
 			"character": character - 1,
 		},
@@ -292,12 +292,12 @@ func (c *LSPClient) Hover(ctx context.Context, filePath string, line, character 
 }
 
 // Rename renames a symbol
-func (c *LSPClient) Rename(ctx context.Context, filePath string, line, character int, newName string) (interface{}, error) {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+func (c *LSPClient) Rename(ctx context.Context, filePath string, line, character int, newName string) (any, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
 		},
-		"position": map[string]interface{}{
+		"position": map[string]any{
 			"line":      line - 1,
 			"character": character - 1,
 		},
@@ -317,7 +317,7 @@ func (c *LSPClient) Rename(ctx context.Context, filePath string, line, character
 }
 
 // sendRequest sends a JSON-RPC request
-func (c *LSPClient) sendRequest(ctx context.Context, method string, params interface{}) (*LSPResponse, error) {
+func (c *LSPClient) sendRequest(ctx context.Context, method string, params any) (*LSPResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -349,7 +349,7 @@ func (c *LSPClient) sendRequest(ctx context.Context, method string, params inter
 }
 
 // sendNotification sends a JSON-RPC notification
-func (c *LSPClient) sendNotification(ctx context.Context, method string, params interface{}) (*LSPResponse, error) {
+func (c *LSPClient) sendNotification(ctx context.Context, method string, params any) (*LSPResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -414,77 +414,77 @@ func (c *LSPClient) readResponse(ctx context.Context) (*LSPResponse, error) {
 }
 
 // parseLocation parses a location result
-func (c *LSPClient) parseLocation(result interface{}) interface{} {
+func (c *LSPClient) parseLocation(result any) any {
 	if result == nil {
-		return map[string]interface{}{
-			"locations": []interface{}{},
+		return map[string]any{
+			"locations": []any{},
 		}
 	}
 
 	// Single location
-	if loc, ok := result.(map[string]interface{}); ok {
-		return map[string]interface{}{
-			"locations": []interface{}{c.formatLocation(loc)},
+	if loc, ok := result.(map[string]any); ok {
+		return map[string]any{
+			"locations": []any{c.formatLocation(loc)},
 		}
 	}
 
 	// Array of locations
-	if locs, ok := result.([]interface{}); ok {
-		locations := make([]interface{}, 0, len(locs))
+	if locs, ok := result.([]any); ok {
+		locations := make([]any, 0, len(locs))
 		for _, loc := range locs {
-			if l, ok := loc.(map[string]interface{}); ok {
+			if l, ok := loc.(map[string]any); ok {
 				locations = append(locations, c.formatLocation(l))
 			}
 		}
-		return map[string]interface{}{
+		return map[string]any{
 			"locations": locations,
 		}
 	}
 
-	return map[string]interface{}{
-		"locations": []interface{}{},
+	return map[string]any{
+		"locations": []any{},
 	}
 }
 
 // parseLocations parses multiple locations
-func (c *LSPClient) parseLocations(result interface{}) interface{} {
+func (c *LSPClient) parseLocations(result any) any {
 	if result == nil {
-		return map[string]interface{}{
-			"references": []interface{}{},
+		return map[string]any{
+			"references": []any{},
 		}
 	}
 
-	if locs, ok := result.([]interface{}); ok {
-		references := make([]interface{}, 0, len(locs))
+	if locs, ok := result.([]any); ok {
+		references := make([]any, 0, len(locs))
 		for _, loc := range locs {
-			if l, ok := loc.(map[string]interface{}); ok {
+			if l, ok := loc.(map[string]any); ok {
 				references = append(references, c.formatLocation(l))
 			}
 		}
-		return map[string]interface{}{
+		return map[string]any{
 			"references": references,
 			"count":      len(references),
 		}
 	}
 
-	return map[string]interface{}{
-		"references": []interface{}{},
+	return map[string]any{
+		"references": []any{},
 	}
 }
 
 // parseSymbols parses document symbols
-func (c *LSPClient) parseSymbols(result interface{}) interface{} {
+func (c *LSPClient) parseSymbols(result any) any {
 	if result == nil {
-		return map[string]interface{}{
-			"symbols": []interface{}{},
+		return map[string]any{
+			"symbols": []any{},
 		}
 	}
 
-	if symbols, ok := result.([]interface{}); ok {
-		parsed := make([]interface{}, 0, len(symbols))
+	if symbols, ok := result.([]any); ok {
+		parsed := make([]any, 0, len(symbols))
 		for _, sym := range symbols {
-			if s, ok := sym.(map[string]interface{}); ok {
-				parsed = append(parsed, map[string]interface{}{
+			if s, ok := sym.(map[string]any); ok {
+				parsed = append(parsed, map[string]any{
 					"name":   s["name"],
 					"kind":   s["kind"],
 					"range":  s["range"],
@@ -492,51 +492,51 @@ func (c *LSPClient) parseSymbols(result interface{}) interface{} {
 				})
 			}
 		}
-		return map[string]interface{}{
+		return map[string]any{
 			"symbols": parsed,
 			"count":   len(parsed),
 		}
 	}
 
-	return map[string]interface{}{
-		"symbols": []interface{}{},
+	return map[string]any{
+		"symbols": []any{},
 	}
 }
 
 // parseHover parses hover result
-func (c *LSPClient) parseHover(result interface{}) interface{} {
+func (c *LSPClient) parseHover(result any) any {
 	if result == nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"contents": nil,
 		}
 	}
 
-	if hover, ok := result.(map[string]interface{}); ok {
-		return map[string]interface{}{
+	if hover, ok := result.(map[string]any); ok {
+		return map[string]any{
 			"contents": hover["contents"],
 			"range":    hover["range"],
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"contents": result,
 	}
 }
 
 // formatLocation formats an LSP location
-func (c *LSPClient) formatLocation(loc map[string]interface{}) map[string]interface{} {
+func (c *LSPClient) formatLocation(loc map[string]any) map[string]any {
 	uri, _ := loc["uri"].(string)
 	// Remove file:// prefix
 	if strings.HasPrefix(uri, "file://") {
 		uri = uri[7:]
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"uri": uri,
 	}
 
-	if range_, ok := loc["range"].(map[string]interface{}); ok {
-		if start, ok := range_["start"].(map[string]interface{}); ok {
+	if range_, ok := loc["range"].(map[string]any); ok {
+		if start, ok := range_["start"].(map[string]any); ok {
 			line, _ := start["line"].(float64)
 			char, _ := start["character"].(float64)
 			result["line"] = int(line) + 1 // Convert to 1-based
@@ -564,12 +564,12 @@ func (c *LSPClient) Close() error {
 
 // DidChange notifies the server that a file was modified
 func (c *LSPClient) DidChange(ctx context.Context, filePath, content string) error {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri":     "file://" + filePath,
 			"version": time.Now().Unix(),
 		},
-		"contentChanges": []map[string]interface{}{
+		"contentChanges": []map[string]any{
 			{
 				"text": content,
 			},
@@ -581,12 +581,12 @@ func (c *LSPClient) DidChange(ctx context.Context, filePath, content string) err
 }
 
 // Completion requests code completions at a position
-func (c *LSPClient) Completion(ctx context.Context, filePath string, line, character int) (interface{}, error) {
-	params := map[string]interface{}{
-		"textDocument": map[string]interface{}{
+func (c *LSPClient) Completion(ctx context.Context, filePath string, line, character int) (any, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
 		},
-		"position": map[string]interface{}{
+		"position": map[string]any{
 			"line":      line - 1,
 			"character": character - 1,
 		},
@@ -605,16 +605,16 @@ func (c *LSPClient) Completion(ctx context.Context, filePath string, line, chara
 }
 
 // parseCompletion parses completion results
-func (c *LSPClient) parseCompletion(result interface{}) interface{} {
+func (c *LSPClient) parseCompletion(result any) any {
 	if result == nil {
-		return map[string]interface{}{
-			"items": []interface{}{},
+		return map[string]any{
+			"items": []any{},
 		}
 	}
 
-	if list, ok := result.(map[string]interface{}); ok {
-		if items, ok := list["items"].([]interface{}); ok {
-			return map[string]interface{}{
+	if list, ok := result.(map[string]any); ok {
+		if items, ok := list["items"].([]any); ok {
+			return map[string]any{
 				"items": items,
 				"count": len(items),
 			}
@@ -622,21 +622,21 @@ func (c *LSPClient) parseCompletion(result interface{}) interface{} {
 		return list
 	}
 
-	if items, ok := result.([]interface{}); ok {
-		return map[string]interface{}{
+	if items, ok := result.([]any); ok {
+		return map[string]any{
 			"items": items,
 			"count": len(items),
 		}
 	}
 
-	return map[string]interface{}{
-		"items": []interface{}{},
+	return map[string]any{
+		"items": []any{},
 	}
 }
 
 // CompletionItem resolves additional information for a completion item
-func (c *LSPClient) ResolveCompletionItem(ctx context.Context, item interface{}) (interface{}, error) {
-	params := map[string]interface{}{
+func (c *LSPClient) ResolveCompletionItem(ctx context.Context, item any) (any, error) {
+	params := map[string]any{
 		"data": item,
 	}
 

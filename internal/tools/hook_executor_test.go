@@ -11,14 +11,14 @@ type MockTool struct {
 	name        string
 	description string
 	executed    bool
-	result      interface{}
+	result      any
 	err         error
 }
 
 func (t *MockTool) Name() string                        { return t.name }
 func (t *MockTool) Description() string                 { return t.description }
-func (t *MockTool) InputSchema() map[string]interface{} { return nil }
-func (t *MockTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *MockTool) InputSchema() map[string]any { return nil }
+func (t *MockTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	t.executed = true
 	return t.result, t.err
 }
@@ -52,7 +52,7 @@ func TestHookAwareExecutorWithHooks(t *testing.T) {
 	hookManager := hooks.NewHookManager("/tmp", "test-session")
 	executor := NewHookAwareExecutor(registry, hookManager)
 
-	result, err := executor.ExecuteWithHooks(context.Background(), "mock", map[string]interface{}{})
+	result, err := executor.ExecuteWithHooks(context.Background(), "mock", map[string]any{})
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -115,7 +115,7 @@ func TestInitHookAwareExecutor(t *testing.T) {
 func TestExecuteWithGlobalHooks(t *testing.T) {
 	InitHookAwareExecutor(nil)
 
-	_, err := ExecuteWithGlobalHooks(context.Background(), "read_file", map[string]interface{}{"path": "/nonexistent"})
+	_, err := ExecuteWithGlobalHooks(context.Background(), "read_file", map[string]any{"path": "/nonexistent"})
 	if err == nil {
 		t.Error("Expected error for nonexistent file, got nil")
 	}

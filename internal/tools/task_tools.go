@@ -20,7 +20,7 @@ type Task struct {
 	UpdatedAt   time.Time              `json:"updated_at"`
 	Assignee    string                 `json:"assignee,omitempty"`
 	Labels      []string               `json:"labels,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type TaskManager struct {
@@ -100,7 +100,7 @@ func (tm *TaskManager) Create(title, description string, priority string) *Task 
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 		Labels:      []string{},
-		Metadata:    make(map[string]interface{}),
+		Metadata:    make(map[string]any),
 	}
 
 	tm.mu.Lock()
@@ -117,7 +117,7 @@ func (tm *TaskManager) Get(id string) *Task {
 	return tm.tasks[id]
 }
 
-func (tm *TaskManager) List(filter map[string]interface{}) []*Task {
+func (tm *TaskManager) List(filter map[string]any) []*Task {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
@@ -144,7 +144,7 @@ func (tm *TaskManager) List(filter map[string]interface{}) []*Task {
 	return result
 }
 
-func (tm *TaskManager) Update(id string, updates map[string]interface{}) error {
+func (tm *TaskManager) Update(id string, updates map[string]any) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -173,7 +173,7 @@ func (tm *TaskManager) Update(id string, updates map[string]interface{}) error {
 }
 
 func (tm *TaskManager) Stop(id string) error {
-	return tm.Update(id, map[string]interface{}{"status": "stopped"})
+	return tm.Update(id, map[string]any{"status": "stopped"})
 }
 
 type TaskCreateTool struct {
@@ -187,19 +187,19 @@ func NewTaskCreateTool(tm *TaskManager) *TaskCreateTool {
 func (t *TaskCreateTool) Name() string        { return "task_create" }
 func (t *TaskCreateTool) Description() string { return "Create a new task" }
 
-func (t *TaskCreateTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TaskCreateTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"title":       map[string]interface{}{"type": "string"},
-			"description": map[string]interface{}{"type": "string"},
-			"priority":    map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"title":       map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string"},
+			"priority":    map[string]any{"type": "string"},
 		},
 		"required": []string{"title"},
 	}
 }
 
-func (t *TaskCreateTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TaskCreateTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	title, _ := input["title"].(string)
 	if title == "" {
 		return nil, ErrRequiredField("title")
@@ -223,17 +223,17 @@ func NewTaskGetTool(tm *TaskManager) *TaskGetTool {
 func (t *TaskGetTool) Name() string        { return "task_get" }
 func (t *TaskGetTool) Description() string { return "Get a task by ID" }
 
-func (t *TaskGetTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TaskGetTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
 		},
 		"required": []string{"id"},
 	}
 }
 
-func (t *TaskGetTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TaskGetTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	id, _ := input["id"].(string)
 	if id == "" {
 		return nil, ErrRequiredField("id")
@@ -258,19 +258,19 @@ func NewTaskListTool(tm *TaskManager) *TaskListTool {
 func (t *TaskListTool) Name() string        { return "task_list" }
 func (t *TaskListTool) Description() string { return "List all tasks" }
 
-func (t *TaskListTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TaskListTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"status":   map[string]interface{}{"type": "string"},
-			"priority": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"status":   map[string]any{"type": "string"},
+			"priority": map[string]any{"type": "string"},
 		},
 	}
 }
 
-func (t *TaskListTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TaskListTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	tasks := t.manager.List(input)
-	return map[string]interface{}{
+	return map[string]any{
 		"tasks": tasks,
 		"count": len(tasks),
 	}, nil
@@ -287,27 +287,27 @@ func NewTaskUpdateTool(tm *TaskManager) *TaskUpdateTool {
 func (t *TaskUpdateTool) Name() string        { return "task_update" }
 func (t *TaskUpdateTool) Description() string { return "Update a task" }
 
-func (t *TaskUpdateTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TaskUpdateTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"id":          map[string]interface{}{"type": "string"},
-			"title":       map[string]interface{}{"type": "string"},
-			"description": map[string]interface{}{"type": "string"},
-			"status":      map[string]interface{}{"type": "string"},
-			"priority":    map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"id":          map[string]any{"type": "string"},
+			"title":       map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string"},
+			"status":      map[string]any{"type": "string"},
+			"priority":    map[string]any{"type": "string"},
 		},
 		"required": []string{"id"},
 	}
 }
 
-func (t *TaskUpdateTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TaskUpdateTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	id, _ := input["id"].(string)
 	if id == "" {
 		return nil, ErrRequiredField("id")
 	}
 
-	updates := make(map[string]interface{})
+	updates := make(map[string]any)
 	for k, v := range input {
 		if k != "id" {
 			updates[k] = v
@@ -332,17 +332,17 @@ func NewTaskStopTool(tm *TaskManager) *TaskStopTool {
 func (t *TaskStopTool) Name() string        { return "task_stop" }
 func (t *TaskStopTool) Description() string { return "Stop a task" }
 
-func (t *TaskStopTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TaskStopTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
 		},
 		"required": []string{"id"},
 	}
 }
 
-func (t *TaskStopTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TaskStopTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	id, _ := input["id"].(string)
 	if id == "" {
 		return nil, ErrRequiredField("id")
@@ -352,7 +352,7 @@ func (t *TaskStopTool) Execute(ctx context.Context, input map[string]interface{}
 		return nil, &Error{Code: "STOP_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"id":     id,
 		"status": "stopped",
 	}, nil
@@ -369,17 +369,17 @@ func NewTaskOutputTool(tm *TaskManager) *TaskOutputTool {
 func (t *TaskOutputTool) Name() string        { return "task_output" }
 func (t *TaskOutputTool) Description() string { return "Get task output" }
 
-func (t *TaskOutputTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TaskOutputTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
 		},
 		"required": []string{"id"},
 	}
 }
 
-func (t *TaskOutputTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *TaskOutputTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	id, _ := input["id"].(string)
 	if id == "" {
 		return nil, ErrRequiredField("id")
@@ -390,7 +390,7 @@ func (t *TaskOutputTool) Execute(ctx context.Context, input map[string]interface
 		return nil, &Error{Code: "NOT_FOUND", Message: "task not found"}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"id":          id,
 		"status":      task.Status,
 		"title":       task.Title,
