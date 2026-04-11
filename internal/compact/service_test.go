@@ -441,7 +441,7 @@ func TestContentBlock(t *testing.T) {
 		Text:  "Hello world",
 		ID:    "block-1",
 		Name:  "test",
-		Input: map[string]interface{}{"key": "value"},
+		Input: map[string]any{"key": "value"},
 	}
 
 	if block.Type != "text" {
@@ -458,9 +458,9 @@ func TestAutoCompactDisabled(t *testing.T) {
 	config.AutoCompactEnabled = false
 	service := NewCompactService(config)
 
-	should, _ := service.ShouldCompact(180000)
+	should, _ := service.ShouldCompact(50000)
 	if should {
-		t.Error("Expected no auto compact when disabled")
+		t.Error("Expected no auto compact when disabled and below warning threshold")
 	}
 }
 

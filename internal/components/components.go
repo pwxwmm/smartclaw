@@ -8,7 +8,7 @@ import (
 
 type Component struct {
 	Name    string
-	Props   map[string]interface{}
+	Props   map[string]any
 	Content string
 }
 
@@ -21,12 +21,12 @@ type RenderedComponent struct {
 func NewComponent(name string) *Component {
 	return &Component{
 		Name:    name,
-		Props:   make(map[string]interface{}),
+		Props:   make(map[string]any),
 		Content: "",
 	}
 }
 
-func (c *Component) SetProp(key string, value interface{}) {
+func (c *Component) SetProp(key string, value any) {
 	c.Props[key] = value
 }
 
@@ -82,7 +82,7 @@ func (c *Component) renderCard() (RenderedComponent, error) {
 	return RenderedComponent{HTML: html}, nil
 }
 
-func RenderTemplate(tmpl string, data interface{}) (string, error) {
+func RenderTemplate(tmpl string, data any) (string, error) {
 	t, err := template.New("").Parse(tmpl)
 	if err != nil {
 		return "", err

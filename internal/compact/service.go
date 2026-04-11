@@ -243,23 +243,23 @@ func (s *CompactService) ResetConsecutiveFailures() {
 type Message interface {
 	GetType() string
 	GetRole() string
-	GetContent() interface{}
+	GetContent() any
 }
 
 type BaseMessage struct {
 	Type    string      `json:"type"`
 	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
+	Content any `json:"content"`
 }
 
 func (m *BaseMessage) GetType() string         { return m.Type }
 func (m *BaseMessage) GetRole() string         { return m.Role }
-func (m *BaseMessage) GetContent() interface{} { return m.Content }
+func (m *BaseMessage) GetContent() any { return m.Content }
 
 type UserMessage struct {
 	BaseMessage
 	Message struct {
-		Content interface{} `json:"content"`
+		Content any `json:"content"`
 	} `json:"message"`
 	IsMeta bool `json:"isMeta,omitempty"`
 }
@@ -269,12 +269,14 @@ type AssistantMessage struct {
 	Content []ContentBlock `json:"content"`
 }
 
+func (m *AssistantMessage) GetContent() any { return m.Content }
+
 type ContentBlock struct {
 	Type      string      `json:"type"`
 	Text      string      `json:"text,omitempty"`
 	ID        string      `json:"id,omitempty"`
 	Name      string      `json:"name,omitempty"`
-	Input     interface{} `json:"input,omitempty"`
+	Input     any `json:"input,omitempty"`
 	ToolUseID string      `json:"tool_use_id,omitempty"`
 }
 
@@ -322,20 +324,20 @@ func stripImagesFromMessages(messages []Message) []Message {
 		}
 
 		content := userMsg.Message.Content
-		if arr, ok := content.([]interface{}); ok {
-			newContent := make([]interface{}, 0, len(arr))
+		if arr, ok := content.([]any); ok {
+			newContent := make([]any, 0, len(arr))
 			for _, block := range arr {
-				if b, ok := block.(map[string]interface{}); ok {
+				if b, ok := block.(map[string]any); ok {
 					if t, ok := b["type"].(string); ok {
 						if t == "image" {
-							newContent = append(newContent, map[string]interface{}{
+							newContent = append(newContent, map[string]any{
 								"type": "text",
 								"text": "[image]",
 							})
 							continue
 						}
 						if t == "document" {
-							newContent = append(newContent, map[string]interface{}{
+							newContent = append(newContent, map[string]any{
 								"type": "text",
 								"text": "[document]",
 							})
@@ -579,7 +581,8 @@ type TimeBasedCompact struct {
 
 func NewTimeBasedCompact(config *TimeBasedCompactConfig) *TimeBasedCompact {
 	return &TimeBasedCompact{
-		config: config,
+		config:  config,
+		lastRun: time.Now(),
 	}
 }
 

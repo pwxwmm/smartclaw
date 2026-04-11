@@ -150,7 +150,7 @@ func TestConfigSet(t *testing.T) {
 func TestConfigCustomFields(t *testing.T) {
 	cfg := &Config{
 		Model: "claude-sonnet-4-5",
-		Custom: map[string]interface{}{
+		Custom: map[string]any{
 			"custom_key": "custom_value",
 			"number":     42,
 		},

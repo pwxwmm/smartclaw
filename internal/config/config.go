@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,7 +21,7 @@ type Config struct {
 	Plugins      []string               `yaml:"plugins"`
 	MCPServers   map[string]MCPServer   `yaml:"mcp_servers"`
 	Hooks        map[string][]Hook      `yaml:"hooks"`
-	Custom       map[string]interface{} `yaml:"custom"`
+	Custom       map[string]any `yaml:"custom"`
 	SessionDir   string                 `yaml:"session_dir"`
 	LogLevel     string                 `yaml:"log_level"`
 	VoiceEnabled bool                   `yaml:"voice_enabled"`
@@ -65,7 +64,7 @@ var defaultConfig = &Config{
 	Plugins:      []string{},
 	MCPServers:   make(map[string]MCPServer),
 	Hooks:        make(map[string][]Hook),
-	Custom:       make(map[string]interface{}),
+	Custom:       make(map[string]any),
 	LogLevel:     "info",
 	VoiceEnabled: false,
 	ShowThinking: true,
@@ -87,7 +86,7 @@ func Load(path string) (*Config, error) {
 		path = filepath.Join(home, ".smartclaw", "config.yaml")
 	}
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return defaultConfig, nil
@@ -124,7 +123,7 @@ func Save(config *Config, path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func mergeDefaults(config *Config) {
@@ -153,7 +152,7 @@ func mergeDefaults(config *Config) {
 		config.Hooks = make(map[string][]Hook)
 	}
 	if config.Custom == nil {
-		config.Custom = make(map[string]interface{})
+		config.Custom = make(map[string]any)
 	}
 	if config.LogLevel == "" {
 		config.LogLevel = defaultConfig.LogLevel
@@ -184,7 +183,7 @@ func Exists() bool {
 	return err == nil
 }
 
-func Set(key string, value interface{}) error {
+func Set(key string, value any) error {
 	config, err := Load("")
 	if err != nil {
 		return err
@@ -224,7 +223,7 @@ func Set(key string, value interface{}) error {
 	return Save(config, "")
 }
 
-func Get(key string) (interface{}, error) {
+func Get(key string) (any, error) {
 	config, err := Load("")
 	if err != nil {
 		return nil, err
@@ -405,11 +404,11 @@ func Export(path string, format string) error {
 		return err
 	}
 
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func Import(path string) error {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,14 +224,14 @@ func setAPIKeyHandler(args []string) error {
 	home, _ := os.UserHomeDir()
 	configPath := filepath.Join(home, ".sparkcode", "config.json")
 
-	config := map[string]interface{}{
+	config := map[string]any{
 		"api_key": apiKey,
 		"model":   cmdCtx.GetModel(),
 	}
 
 	data, _ := json.MarshalIndent(config, "", "  ")
 	os.MkdirAll(filepath.Dir(configPath), 0755)
-	ioutil.WriteFile(configPath, data, 0600)
+	os.WriteFile(configPath, data, 0600)
 
 	fmt.Println("✓ API key saved to", configPath)
 	fmt.Println("  Key: " + maskAPIKey(apiKey))
@@ -346,7 +345,7 @@ func memoryHandler(args []string) error {
 		return nil
 	}
 
-	files, _ := ioutil.ReadDir(memoryPath)
+	files, _ := os.ReadDir(memoryPath)
 	if len(files) == 0 {
 		fmt.Println("  Memory directory is empty")
 		return nil
@@ -355,7 +354,8 @@ func memoryHandler(args []string) error {
 	fmt.Println("  Memory files:")
 	for _, f := range files {
 		if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-			fmt.Printf("    - %s (%d bytes)\n", f.Name(), f.Size())
+			info, _ := f.Info()
+			fmt.Printf("    - %s (%d bytes)\n", f.Name(), info.Size())
 		}
 	}
 
@@ -375,7 +375,7 @@ func sessionHandler(args []string) error {
 		return nil
 	}
 
-	files, _ := ioutil.ReadDir(sessionsPath)
+	files, _ := os.ReadDir(sessionsPath)
 	if len(files) == 0 {
 		fmt.Println("  No sessions found")
 		return nil
@@ -388,7 +388,8 @@ func sessionHandler(args []string) error {
 		}
 
 		sessionID := strings.TrimSuffix(f.Name(), ".jsonl")
-		modTime := f.ModTime().Format("2006-01-02 15:04")
+		info, _ := f.Info()
+		modTime := info.ModTime().Format("2006-01-02 15:04")
 
 		fmt.Printf("  %d. %s\n", i+1, sessionID)
 		fmt.Printf("     Modified: %s\n", modTime)
@@ -435,7 +436,7 @@ func exportHandler(args []string) error {
 		filename = args[0]
 	}
 
-	export := map[string]interface{}{
+	export := map[string]any{
 		"session_id":    s.ID,
 		"model":         cmdCtx.GetModel(),
 		"created_at":    s.CreatedAt,
@@ -448,7 +449,7 @@ func exportHandler(args []string) error {
 	}
 
 	data, _ := json.MarshalIndent(export, "", "  ")
-	ioutil.WriteFile(filename, data, 0644)
+	os.WriteFile(filename, data, 0644)
 
 	fmt.Printf("✓ Session exported to: %s\n", filename)
 	return nil
@@ -461,13 +462,13 @@ func importHandler(args []string) error {
 	}
 
 	filename := args[0]
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("✗ Failed to read file: %v\n", err)
 		return nil
 	}
 
-	var imported map[string]interface{}
+	var imported map[string]any
 	if err := json.Unmarshal(data, &imported); err != nil {
 		fmt.Printf("✗ Invalid session file: %v\n", err)
 		return nil
@@ -564,20 +565,20 @@ func mcpHandler(args []string) error {
 	fmt.Println("│         MCP Servers                 │")
 	fmt.Println("└─────────────────────────────────────┘")
 
-	data, err := ioutil.ReadFile(mcpPath)
+	data, err := os.ReadFile(mcpPath)
 	if err != nil {
 		fmt.Println("  No MCP servers configured")
 		fmt.Println("\n  Use /mcp-add to add a server")
 		return nil
 	}
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal(data, &config); err != nil {
 		fmt.Printf("  Error reading MCP config: %v\n", err)
 		return nil
 	}
 
-	servers, ok := config["mcpServers"].(map[string]interface{})
+	servers, ok := config["mcpServers"].(map[string]any)
 	if !ok || len(servers) == 0 {
 		fmt.Println("  No MCP servers configured")
 		return nil
@@ -585,7 +586,7 @@ func mcpHandler(args []string) error {
 
 	for name, server := range servers {
 		fmt.Printf("\n  %s:\n", name)
-		if s, ok := server.(map[string]interface{}); ok {
+		if s, ok := server.(map[string]any); ok {
 			if cmd, ok := s["command"].(string); ok {
 				fmt.Printf("    Command: %s\n", cmd)
 			}
@@ -608,27 +609,27 @@ func mcpAddHandler(args []string) error {
 	home, _ := os.UserHomeDir()
 	mcpPath := filepath.Join(home, ".sparkcode", "mcp.json")
 
-	var config map[string]interface{}
-	data, _ := ioutil.ReadFile(mcpPath)
+	var config map[string]any
+	data, _ := os.ReadFile(mcpPath)
 	json.Unmarshal(data, &config)
 
 	if config == nil {
-		config = map[string]interface{}{
-			"mcpServers": map[string]interface{}{},
+		config = map[string]any{
+			"mcpServers": map[string]any{},
 		}
 	}
 
-	servers, _ := config["mcpServers"].(map[string]interface{})
+	servers, _ := config["mcpServers"].(map[string]any)
 	if servers == nil {
-		servers = make(map[string]interface{})
+		servers = make(map[string]any)
 	}
 
-	servers[name] = map[string]interface{}{
+	servers[name] = map[string]any{
 		"command": strings.Fields(command)[0],
 	}
 
 	if parts := strings.Fields(command); len(parts) > 1 {
-		servers[name] = map[string]interface{}{
+		servers[name] = map[string]any{
 			"command": parts[0],
 			"args":    parts[1:],
 		}
@@ -637,7 +638,7 @@ func mcpAddHandler(args []string) error {
 	config["mcpServers"] = servers
 	data, _ = json.MarshalIndent(config, "", "  ")
 	os.MkdirAll(filepath.Dir(mcpPath), 0755)
-	ioutil.WriteFile(mcpPath, data, 0644)
+	os.WriteFile(mcpPath, data, 0644)
 
 	fmt.Printf("✓ MCP server added: %s\n", name)
 	return nil
@@ -653,16 +654,16 @@ func mcpRemoveHandler(args []string) error {
 	home, _ := os.UserHomeDir()
 	mcpPath := filepath.Join(home, ".sparkcode", "mcp.json")
 
-	data, err := ioutil.ReadFile(mcpPath)
+	data, err := os.ReadFile(mcpPath)
 	if err != nil {
 		fmt.Println("✗ No MCP servers configured")
 		return nil
 	}
 
-	var config map[string]interface{}
+	var config map[string]any
 	json.Unmarshal(data, &config)
 
-	servers, ok := config["mcpServers"].(map[string]interface{})
+	servers, ok := config["mcpServers"].(map[string]any)
 	if !ok {
 		fmt.Println("✗ No MCP servers configured")
 		return nil
@@ -672,7 +673,7 @@ func mcpRemoveHandler(args []string) error {
 	config["mcpServers"] = servers
 
 	data, _ = json.MarshalIndent(config, "", "  ")
-	ioutil.WriteFile(mcpPath, data, 0644)
+	os.WriteFile(mcpPath, data, 0644)
 
 	fmt.Printf("✓ MCP server removed: %s\n", name)
 	return nil
@@ -793,7 +794,7 @@ Describe your project structure here.
 
 Describe coding conventions here.
 `
-	ioutil.WriteFile(filepath.Join(cmdCtx.WorkDir, "CLAUDE.md"), []byte(claudeMd), 0644)
+	os.WriteFile(filepath.Join(cmdCtx.WorkDir, "CLAUDE.md"), []byte(claudeMd), 0644)
 
 	fmt.Println("✓ Project initialized successfully")
 	return nil
@@ -830,7 +831,7 @@ func saveHandler(args []string) error {
 	sessionsPath := filepath.Join(home, ".sparkcode", "sessions")
 	os.MkdirAll(sessionsPath, 0755)
 
-	sessionData := map[string]interface{}{
+	sessionData := map[string]any{
 		"id":            s.ID,
 		"model":         cmdCtx.GetModel(),
 		"created_at":    s.CreatedAt,
@@ -839,7 +840,7 @@ func saveHandler(args []string) error {
 
 	data, _ := json.MarshalIndent(sessionData, "", "  ")
 	sessionFile := filepath.Join(sessionsPath, s.ID+".json")
-	ioutil.WriteFile(sessionFile, data, 0644)
+	os.WriteFile(sessionFile, data, 0644)
 
 	fmt.Printf("✓ Session saved: %s\n", s.ID)
 	return nil
@@ -1394,15 +1395,11 @@ func passesHandler(args []string) error {
 }
 
 func rewindHandler(args []string) error {
-	fmt.Println("Rewinding session...")
-	fmt.Println("⚠️  Session rewind not implemented")
-	return nil
+	return fmt.Errorf("session rewind is not yet implemented")
 }
 
 func shareHandler(args []string) error {
-	fmt.Println("Sharing session...")
-	fmt.Println("⚠️  Share feature not implemented")
-	return nil
+	return fmt.Errorf("session share is not yet implemented")
 }
 
 func statuslineHandler(args []string) error {
@@ -1712,12 +1709,12 @@ func agentImportHandler(args []string) error {
 }
 
 var globalTemplateManager interface {
-	GetTemplate(id string) (interface{}, error)
-	ListTemplates() []interface{}
-	CreateTemplate(template interface{}) error
+	GetTemplate(id string) (any, error)
+	ListTemplates() []any
+	CreateTemplate(template any) error
 	DeleteTemplate(id string) error
 	RenderTemplate(id string, variables map[string]string) (string, error)
-	FormatTemplateInfo(interface{}) string
+	FormatTemplateInfo(any) string
 	FormatTemplateList() string
 	ExportTemplate(id string, format string) (string, error)
 	ImportTemplate(data string, format string) error
@@ -1742,12 +1739,12 @@ type TemplateVariable struct {
 }
 
 func SetGlobalTemplateManager(tm interface {
-	GetTemplate(id string) (interface{}, error)
-	ListTemplates() []interface{}
-	CreateTemplate(template interface{}) error
+	GetTemplate(id string) (any, error)
+	ListTemplates() []any
+	CreateTemplate(template any) error
 	DeleteTemplate(id string) error
 	RenderTemplate(id string, variables map[string]string) (string, error)
-	FormatTemplateInfo(interface{}) string
+	FormatTemplateInfo(any) string
 	FormatTemplateList() string
 	ExportTemplate(id string, format string) (string, error)
 	ImportTemplate(data string, format string) error

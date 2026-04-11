@@ -226,7 +226,7 @@ func NewOutputWriter(useColor, useJSON bool) *OutputWriter {
 	}
 }
 
-func (w *OutputWriter) Write(data interface{}) error {
+func (w *OutputWriter) Write(data any) error {
 	if w.useJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
@@ -238,7 +238,7 @@ func (w *OutputWriter) Write(data interface{}) error {
 		fmt.Println(v)
 	case []byte:
 		fmt.Println(string(v))
-	case map[string]interface{}:
+	case map[string]any:
 		for k, val := range v {
 			fmt.Printf("%s: %v\n", k, val)
 		}

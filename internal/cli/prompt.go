@@ -107,7 +107,7 @@ func outputText(result *runtime.QueryResult) {
 }
 
 func outputJSON(result *runtime.QueryResult) {
-	output := map[string]interface{}{
+	output := map[string]any{
 		"content":       result.Message.Content,
 		"input_tokens":  result.Usage.InputTokens,
 		"output_tokens": result.Usage.OutputTokens,
@@ -123,7 +123,7 @@ func outputJSON(result *runtime.QueryResult) {
 	fmt.Println(string(jsonOutput))
 }
 
-func jsonMarshal(v interface{}) ([]byte, error) {
+func jsonMarshal(v any) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
 }
 
