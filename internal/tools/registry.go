@@ -9,29 +9,32 @@ import (
 type Tool interface {
 	Name() string
 	Description() string
-	InputSchema() map[string]interface{}
-	Execute(ctx context.Context, input map[string]interface{}) (interface{}, error)
+	InputSchema() map[string]any
+	Execute(ctx context.Context, input map[string]any) (any, error)
 }
 
 type BaseTool struct {
 	name        string
 	description string
-	inputSchema map[string]interface{}
+	inputSchema map[string]any
 }
 
-func (t *BaseTool) Name() string                        { return t.name }
-func (t *BaseTool) Description() string                 { return t.description }
-func (t *BaseTool) InputSchema() map[string]interface{} { return t.inputSchema }
+func (t *BaseTool) Name() string                { return t.name }
+func (t *BaseTool) Description() string         { return t.description }
+func (t *BaseTool) InputSchema() map[string]any { return t.inputSchema }
 
 type ToolRegistry struct {
-	tools map[string]Tool
-	cache *ResultCache
+	tools          map[string]Tool
+	cache          *ResultCache
+	chainOptimizer *ChainOptimizer
+	batchExecutor  *BatchExecutor
 }
 
 func NewRegistry() *ToolRegistry {
 	return &ToolRegistry{
-		tools: make(map[string]Tool),
-		cache: NewResultCache(100, 5*time.Minute),
+		tools:         make(map[string]Tool),
+		cache:         NewResultCache(100, 5*time.Minute),
+		batchExecutor: NewBatchExecutor(),
 	}
 }
 
@@ -69,10 +72,18 @@ func (r *ToolRegistry) Names() []string {
 	return names
 }
 
-func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[string]any) (any, error) {
 	tool := r.Get(name)
 	if tool == nil {
 		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+
+	if r.batchExecutor != nil && r.batchExecutor.Enqueue(name, input) {
+		return map[string]any{
+			"status":     "deferred",
+			"tool":       name,
+			"queue_size": r.batchExecutor.QueueSize(),
+		}, nil
 	}
 
 	if r.cache != nil {
@@ -84,6 +95,10 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[strin
 	result, err := tool.Execute(ctx, input)
 	if err != nil {
 		return nil, err
+	}
+
+	if r.chainOptimizer != nil {
+		r.chainOptimizer.RecordCall(name, input, result)
 	}
 
 	if r.cache != nil {
@@ -108,7 +123,25 @@ func (r *ToolRegistry) InvalidateCache(paths []string) {
 	}
 }
 
-func extractDepFiles(toolName string, input map[string]interface{}) []string {
+// SetChainOptimizer sets the chain optimizer for this registry.
+func (r *ToolRegistry) SetChainOptimizer(o *ChainOptimizer) {
+	r.chainOptimizer = o
+}
+
+// GetChainOptimizer returns the chain optimizer, if any.
+func (r *ToolRegistry) GetChainOptimizer() *ChainOptimizer {
+	return r.chainOptimizer
+}
+
+func (r *ToolRegistry) SetBatchExecutor(be *BatchExecutor) {
+	r.batchExecutor = be
+}
+
+func (r *ToolRegistry) GetBatchExecutor() *BatchExecutor {
+	return r.batchExecutor
+}
+
+func extractDepFiles(toolName string, input map[string]any) []string {
 	var files []string
 
 	pathKeys := []string{"path", "file_path", "filepath", "filename", "directory", "dir"}
@@ -191,7 +224,6 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&SyntheticOutputTool{})
 	defaultRegistry.Register(&ExitPlanModeTool{})
 	defaultRegistry.Register(&McpAuthTool{})
-	defaultRegistry.Register(&BrowseTool{})
 	defaultRegistry.Register(&AttachTool{})
 	defaultRegistry.Register(&DebugTool{})
 	defaultRegistry.Register(&IndexTool{})
@@ -202,6 +234,17 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&DeepThinkTool{})
 	defaultRegistry.Register(&ForkTool{})
 	defaultRegistry.Register(&EnvTool{})
+	defaultRegistry.Register(&ExecuteCodeTool{})
+	defaultRegistry.Register(&DockerSandboxTool{})
+	defaultRegistry.Register(&BrowserNavigateTool{})
+	defaultRegistry.Register(&BrowserClickTool{})
+	defaultRegistry.Register(&BrowserTypeTool{})
+	defaultRegistry.Register(&BrowserScreenshotTool{})
+	defaultRegistry.Register(&BrowserExtractTool{})
+	defaultRegistry.Register(&BrowserWaitTool{})
+	defaultRegistry.Register(&BrowserSelectTool{})
+	defaultRegistry.Register(&BrowserFillFormTool{})
+	defaultRegistry.Register(&MemoryRecallTool{})
 }
 
 func GetRegistry() *ToolRegistry {
@@ -220,6 +263,6 @@ func All() []Tool {
 	return defaultRegistry.All()
 }
 
-func Execute(ctx context.Context, name string, input map[string]interface{}) (interface{}, error) {
+func Execute(ctx context.Context, name string, input map[string]any) (any, error) {
 	return defaultRegistry.Execute(ctx, name, input)
 }

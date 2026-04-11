@@ -14,3 +14,11 @@ func (e *Error) Error() string {
 func ErrRequiredField(field string) *Error {
 	return &Error{Code: "REQUIRED_FIELD", Message: field + " is required"}
 }
+
+func ErrNotImplemented(tool string) *Error {
+	return &Error{Code: "NOT_IMPLEMENTED", Message: tool + " is not yet implemented"}
+}
+
+func ErrToolNotFound(tool string) *Error {
+	return &Error{Code: "TOOL_NOT_FOUND", Message: "unknown tool: " + tool}
+}
