@@ -10,7 +10,7 @@ import (
 
 type WorkflowResult struct {
 	WorkflowName string
-	StepResults  map[string]interface{}
+	StepResults  map[string]any
 	Completed    int
 	Failed       int
 	Skipped      int
@@ -31,7 +31,7 @@ func (we *WorkflowExecutor) Execute(ctx context.Context, workflow *learning.Work
 
 	result := &WorkflowResult{
 		WorkflowName: workflow.Name,
-		StepResults:  make(map[string]interface{}),
+		StepResults:  make(map[string]any),
 	}
 
 	completed := make(map[string]bool)
@@ -53,7 +53,7 @@ func (we *WorkflowExecutor) Execute(ctx context.Context, workflow *learning.Work
 			if err != nil {
 				slog.Warn("workflow: step failed", "step", step.Name, "error", err)
 				result.Failed++
-				result.StepResults[step.Name] = map[string]interface{}{
+				result.StepResults[step.Name] = map[string]any{
 					"error": err.Error(),
 				}
 				completed[step.Name] = true
@@ -95,7 +95,7 @@ func (we *WorkflowExecutor) depsSatisfied(stepName string, deps map[string][]str
 	return true
 }
 
-func (we *WorkflowExecutor) executeStep(ctx context.Context, step learning.WorkflowStep) (interface{}, error) {
+func (we *WorkflowExecutor) executeStep(ctx context.Context, step learning.WorkflowStep) (any, error) {
 	input := fmt.Sprintf("Execute skill '%s'", step.SkillName)
 
 	for key, hint := range step.InputHints {

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +15,7 @@ type Session struct {
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
 	Messages  []Message              `json:"messages"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 type SessionManager struct {
@@ -43,7 +42,7 @@ func (sm *SessionManager) NewSession() *Session {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Messages:  make([]Message, 0),
-		Metadata:  make(map[string]interface{}),
+		Metadata:  make(map[string]any),
 	}
 }
 
@@ -84,7 +83,7 @@ func (sm *SessionManager) Load(id string) (*Session, error) {
 	session := &Session{
 		ID:       id,
 		Messages: make([]Message, 0),
-		Metadata: make(map[string]interface{}),
+		Metadata: make(map[string]any),
 	}
 
 	stat, err := file.Stat()
@@ -107,7 +106,7 @@ func (sm *SessionManager) Load(id string) (*Session, error) {
 }
 
 func (sm *SessionManager) List() ([]*Session, error) {
-	entries, err := ioutil.ReadDir(sm.basePath)
+	entries, err := os.ReadDir(sm.basePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []*Session{}, nil
@@ -122,9 +121,13 @@ func (sm *SessionManager) List() ([]*Session, error) {
 		}
 
 		id := strings.TrimSuffix(entry.Name(), ".jsonl")
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
 		session := &Session{
 			ID:        id,
-			UpdatedAt: entry.ModTime(),
+			UpdatedAt: info.ModTime(),
 		}
 		sessions = append(sessions, session)
 	}

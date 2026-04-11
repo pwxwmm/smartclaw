@@ -9,7 +9,7 @@ import (
 
 type Message struct {
 	Role      string      `json:"role"`
-	Content   interface{} `json:"content"`
+	Content   any `json:"content"`
 	Timestamp time.Time   `json:"timestamp,omitempty"`
 	UUID      string      `json:"uuid,omitempty"`
 }
@@ -23,13 +23,13 @@ type ToolUseContent struct {
 	Type  string                 `json:"type"`
 	ID    string                 `json:"id"`
 	Name  string                 `json:"name"`
-	Input map[string]interface{} `json:"input"`
+	Input map[string]any `json:"input"`
 }
 
 type ToolResultContent struct {
 	Type      string      `json:"type"`
 	ToolUseID string      `json:"tool_use_id"`
-	Content   interface{} `json:"content"`
+	Content   any `json:"content"`
 	IsError   bool        `json:"is_error,omitempty"`
 }
 
@@ -69,7 +69,7 @@ type StreamHandler func(event QueryEvent) error
 
 type QueryEvent struct {
 	Type      string      `json:"type"`
-	Data      interface{} `json:"data"`
+	Data      any `json:"data"`
 	Timestamp time.Time   `json:"timestamp"`
 }
 

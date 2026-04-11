@@ -22,33 +22,33 @@ func TestQueryStream(t *testing.T) {
 			Role:  "assistant",
 			Usage: api.Usage{InputTokens: 10, OutputTokens: 0},
 		}
-		startData, _ := json.Marshal(map[string]interface{}{
+		startData, _ := json.Marshal(map[string]any{
 			"type":    "message_start",
 			"message": msgStart,
 		})
 		w.Write([]byte("event: message_start\ndata: " + string(startData) + "\n\n"))
 
-		cbStartData, _ := json.Marshal(map[string]interface{}{
+		cbStartData, _ := json.Marshal(map[string]any{
 			"type":          "content_block_start",
 			"index":         0,
 			"content_block": map[string]string{"type": "text", "text": ""},
 		})
 		w.Write([]byte("event: content_block_start\ndata: " + string(cbStartData) + "\n\n"))
 
-		deltaData, _ := json.Marshal(map[string]interface{}{
+		deltaData, _ := json.Marshal(map[string]any{
 			"type":  "content_block_delta",
 			"index": 0,
 			"delta": map[string]string{"type": "text_delta", "text": "Hello streaming"},
 		})
 		w.Write([]byte("event: content_block_delta\ndata: " + string(deltaData) + "\n\n"))
 
-		deltaStopData, _ := json.Marshal(map[string]interface{}{
+		deltaStopData, _ := json.Marshal(map[string]any{
 			"type":  "content_block_stop",
 			"index": 0,
 		})
 		w.Write([]byte("event: content_block_stop\ndata: " + string(deltaStopData) + "\n\n"))
 
-		msgDeltaData, _ := json.Marshal(map[string]interface{}{
+		msgDeltaData, _ := json.Marshal(map[string]any{
 			"type": "message_delta",
 			"delta": map[string]string{
 				"stop_reason": "end_turn",
