@@ -112,8 +112,8 @@ func DefaultQueryConfig() *QueryConfig {
 type QueryDeps struct {
 	Config       *QueryConfig
 	TokenBudget  *TokenBudget
-	ToolRegistry interface{}
-	StateStore   interface{}
+	ToolRegistry any
+	StateStore   any
 }
 
 func NewQueryDeps(config *QueryConfig) *QueryDeps {

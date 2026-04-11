@@ -124,7 +124,7 @@ func (s *Store) GetAllLearnedSkills() ([]*SkillRecord, error) {
 	return skills, nil
 }
 
-func nullTime(t *time.Time) interface{} {
+func nullTime(t *time.Time) any {
 	if t == nil {
 		return nil
 	}

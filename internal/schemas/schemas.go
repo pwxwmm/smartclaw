@@ -6,7 +6,7 @@ import (
 )
 
 type Schema interface {
-	Validate(data interface{}) error
+	Validate(data any) error
 }
 
 type JSONSchema struct {
@@ -15,9 +15,9 @@ type JSONSchema struct {
 	Required   []string               `json:"required"`
 }
 
-func (s *JSONSchema) Validate(data interface{}) error {
+func (s *JSONSchema) Validate(data any) error {
 	if s.Required != nil {
-		m, ok := data.(map[string]interface{})
+		m, ok := data.(map[string]any)
 		if !ok {
 			return fmt.Errorf("data must be a map")
 		}
@@ -41,7 +41,7 @@ func ValidateJSON(data []byte, schemaData []byte) error {
 	if err != nil {
 		return err
 	}
-	var dataObj interface{}
+	var dataObj any
 	json.Unmarshal(data, &dataObj)
 	return schema.Validate(dataObj)
 }

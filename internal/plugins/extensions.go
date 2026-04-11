@@ -29,8 +29,8 @@ type Extension struct {
 	Type       ExtensionType          `json:"type"`
 	PluginName string                 `json:"plugin_name"`
 	Enabled    bool                   `json:"enabled"`
-	Config     map[string]interface{} `json:"config,omitempty"`
-	Handler    interface{}            `json:"-"`
+	Config     map[string]any `json:"config,omitempty"`
+	Handler    any            `json:"-"`
 	LoadedAt   time.Time              `json:"loaded_at"`
 }
 
@@ -44,7 +44,7 @@ type HookExtension struct {
 type ToolExtension struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
+	InputSchema map[string]any `json:"input_schema"`
 	Command     string                 `json:"command"`
 }
 
@@ -201,7 +201,7 @@ func (l *ExtensionLoader) LoadCommandExtensions(ctx context.Context, p *Plugin) 
 			Type:       ExtensionTypeCommand,
 			PluginName: p.Name,
 			Enabled:    true,
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"description": cmdExt.Description,
 				"command":     cmdExt.Command,
 			},
@@ -275,7 +275,7 @@ func (l *ExtensionLoader) GetExtensionsByPlugin(pluginName string) []*Extension 
 type PluginTool struct {
 	name        string
 	description string
-	inputSchema map[string]interface{}
+	inputSchema map[string]any
 	command     string
 	pluginPath  string
 }
@@ -298,11 +298,11 @@ func (t *PluginTool) Description() string {
 	return t.description
 }
 
-func (t *PluginTool) InputSchema() map[string]interface{} {
+func (t *PluginTool) InputSchema() map[string]any {
 	return t.inputSchema
 }
 
-func (t *PluginTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *PluginTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("marshal input: %w", err)
@@ -320,9 +320,9 @@ func (t *PluginTool) Execute(ctx context.Context, input map[string]interface{}) 
 		return nil, fmt.Errorf("tool failed: %w", err)
 	}
 
-	var result interface{}
+	var result any
 	if err := json.Unmarshal(output, &result); err != nil {
-		return map[string]interface{}{"output": string(output)}, nil
+		return map[string]any{"output": string(output)}, nil
 	}
 
 	return result, nil

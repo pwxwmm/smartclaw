@@ -161,7 +161,7 @@ func scanMessages(rows *sql.Rows) ([]*Message, error) {
 	return messages, nil
 }
 
-func nullStr(s string) interface{} {
+func nullStr(s string) any {
 	if s == "" {
 		return nil
 	}
