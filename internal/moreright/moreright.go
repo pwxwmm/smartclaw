@@ -88,10 +88,10 @@ func (m *MoreRightClient) Generate(ctx context.Context, req GenerationRequest) (
 	}, nil
 }
 
-func (m *MoreRightClient) Analyze(code string) (map[string]interface{}, error) {
+func (m *MoreRightClient) Analyze(code string) (map[string]any, error) {
 	lines := strings.Count(code, "\n")
 	chars := len(code)
-	return map[string]interface{}{
+	return map[string]any{
 		"lines":      lines,
 		"characters": chars,
 		"words":      len(strings.Fields(code)),

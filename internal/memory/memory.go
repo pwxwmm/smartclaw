@@ -3,7 +3,6 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,7 +11,7 @@ import (
 
 type Memory struct {
 	Key       string      `json:"key"`
-	Value     interface{} `json:"value"`
+	Value     any `json:"value"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	ExpiresAt *time.Time  `json:"expires_at,omitempty"`
@@ -46,7 +45,7 @@ func NewMemoryStore() (*MemoryStore, error) {
 	return store, nil
 }
 
-func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) error {
+func (s *MemoryStore) Set(key string, value any, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -68,7 +67,7 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 	return s.saveToFile(memory)
 }
 
-func (s *MemoryStore) Get(key string) (interface{}, error) {
+func (s *MemoryStore) Get(key string) (any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -116,7 +115,7 @@ func (s *MemoryStore) Clear() error {
 
 	s.items = make(map[string]*Memory)
 
-	entries, err := ioutil.ReadDir(s.basePath)
+	entries, err := os.ReadDir(s.basePath)
 	if err != nil {
 		return err
 	}
@@ -207,7 +206,7 @@ func (s *MemoryStore) saveToFile(memory *Memory) error {
 	}
 
 	path := filepath.Join(s.basePath, memory.Key+".json")
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func (s *MemoryStore) deleteFile(key string) error {
@@ -216,7 +215,7 @@ func (s *MemoryStore) deleteFile(key string) error {
 }
 
 func (s *MemoryStore) loadAll() error {
-	entries, err := ioutil.ReadDir(s.basePath)
+	entries, err := os.ReadDir(s.basePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -230,7 +229,7 @@ func (s *MemoryStore) loadAll() error {
 		}
 
 		path := filepath.Join(s.basePath, entry.Name())
-		data, err := ioutil.ReadFile(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}

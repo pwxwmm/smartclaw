@@ -3,7 +3,6 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -82,7 +81,7 @@ func NewEnhancedMemoryStore(basePath string, scope MemoryScope) (*EnhancedMemory
 }
 
 func (s *EnhancedMemoryStore) scanMemories() error {
-	entries, err := ioutil.ReadDir(s.basePath)
+	entries, err := os.ReadDir(s.basePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -118,7 +117,7 @@ func (s *EnhancedMemoryStore) scanMemories() error {
 }
 
 func (s *EnhancedMemoryStore) loadMemoryFile(path string) (*MemoryFile, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +235,7 @@ func (s *EnhancedMemoryStore) CreateMemory(memType MemoryType, description, cont
 		UpdatedAt:   now,
 	}
 
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"type":        memType,
 		"description": description,
 		"tags":        tags,
@@ -250,7 +249,7 @@ func (s *EnhancedMemoryStore) CreateMemory(memType MemoryType, description, cont
 
 	fullContent := fmt.Sprintf("---\n%s\n---\n\n%s", string(fmBytes), content)
 
-	if err := ioutil.WriteFile(path, []byte(fullContent), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(fullContent), 0644); err != nil {
 		return nil, err
 	}
 
@@ -289,7 +288,7 @@ func (s *EnhancedMemoryStore) UpdateMemory(id, content string) error {
 
 	fullContent := fmt.Sprintf("---\n%s\n---\n\n%s", mem.RawFrontmatter, content)
 
-	if err := ioutil.WriteFile(mem.Header.Filepath, []byte(fullContent), 0644); err != nil {
+	if err := os.WriteFile(mem.Header.Filepath, []byte(fullContent), 0644); err != nil {
 		return err
 	}
 
@@ -482,7 +481,7 @@ func (s *EnhancedMemoryStore) BuildMemoryPrompt(maxTokens int) string {
 	return result
 }
 
-func (s *EnhancedMemoryStore) GetStats() map[string]interface{} {
+func (s *EnhancedMemoryStore) GetStats() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -491,7 +490,7 @@ func (s *EnhancedMemoryStore) GetStats() map[string]interface{} {
 		typeCounts[h.Type]++
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_memories": len(s.headers),
 		"by_type":        typeCounts,
 		"scope":          s.scope,

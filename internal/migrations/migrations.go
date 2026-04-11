@@ -12,7 +12,7 @@ type Migration struct {
 	ID          string
 	Name        string
 	Description string
-	Execute     func(config map[string]interface{}) error
+	Execute     func(config map[string]any) error
 }
 
 func GetMigrations() []Migration {
@@ -80,7 +80,7 @@ func GetMigrations() []Migration {
 	}
 }
 
-func migrateSonnet45To46(config map[string]interface{}) error {
+func migrateSonnet45To46(config map[string]any) error {
 	if model, ok := config["model"].(string); ok {
 		if strings.Contains(model, "sonnet-4-5") && !strings.Contains(model, "sonnet-4-6") {
 			config["model"] = strings.ReplaceAll(model, "sonnet-4-5", "sonnet-4-6")
@@ -89,7 +89,7 @@ func migrateSonnet45To46(config map[string]interface{}) error {
 	return nil
 }
 
-func migrateFennecToOpus(config map[string]interface{}) error {
+func migrateFennecToOpus(config map[string]any) error {
 	if model, ok := config["model"].(string); ok {
 		if strings.Contains(model, "fennec") {
 			config["model"] = strings.ReplaceAll(model, "fennec", "opus")
@@ -98,7 +98,7 @@ func migrateFennecToOpus(config map[string]interface{}) error {
 	return nil
 }
 
-func migrateOpusToOpus1M(config map[string]interface{}) error {
+func migrateOpusToOpus1M(config map[string]any) error {
 	if model, ok := config["model"].(string); ok {
 		if model == "opus" {
 			config["model"] = "opus-1m"
@@ -107,7 +107,7 @@ func migrateOpusToOpus1M(config map[string]interface{}) error {
 	return nil
 }
 
-func migrateLegacyOpus(config map[string]interface{}) error {
+func migrateLegacyOpus(config map[string]any) error {
 	if model, ok := config["model"].(string); ok {
 		if strings.HasPrefix(model, "opus-") && !strings.HasSuffix(model, "-1m") {
 			config["model"] = "opus-1m"
@@ -116,60 +116,60 @@ func migrateLegacyOpus(config map[string]interface{}) error {
 	return nil
 }
 
-func migrateBypassPermissions(config map[string]interface{}) error {
+func migrateBypassPermissions(config map[string]any) error {
 	if bypass, ok := config["bypass_permissions_accepted"].(bool); ok && bypass {
-		if perms, ok := config["permissions"].(map[string]interface{}); ok {
+		if perms, ok := config["permissions"].(map[string]any); ok {
 			perms["bypass_accepted"] = true
 		} else {
-			config["permissions"] = map[string]interface{}{"bypass_accepted": true}
+			config["permissions"] = map[string]any{"bypass_accepted": true}
 		}
 		delete(config, "bypass_permissions_accepted")
 	}
 	return nil
 }
 
-func migrateAutoUpdates(config map[string]interface{}) error {
+func migrateAutoUpdates(config map[string]any) error {
 	if autoUpdate, ok := config["auto_updates_enabled"].(bool); ok {
-		if settings, ok := config["settings"].(map[string]interface{}); ok {
+		if settings, ok := config["settings"].(map[string]any); ok {
 			settings["auto_updates"] = autoUpdate
 		} else {
-			config["settings"] = map[string]interface{}{"auto_updates": autoUpdate}
+			config["settings"] = map[string]any{"auto_updates": autoUpdate}
 		}
 		delete(config, "auto_updates_enabled")
 	}
 	return nil
 }
 
-func migrateEnableAllMCP(config map[string]interface{}) error {
+func migrateEnableAllMCP(config map[string]any) error {
 	if enableAll, ok := config["enable_all_project_mcp_servers"].(bool); ok {
-		if mcp, ok := config["mcp"].(map[string]interface{}); ok {
+		if mcp, ok := config["mcp"].(map[string]any); ok {
 			mcp["enable_all_project_servers"] = enableAll
 		} else {
-			config["mcp"] = map[string]interface{}{"enable_all_project_servers": enableAll}
+			config["mcp"] = map[string]any{"enable_all_project_servers": enableAll}
 		}
 		delete(config, "enable_all_project_mcp_servers")
 	}
 	return nil
 }
 
-func migrateReplBridge(config map[string]interface{}) error {
+func migrateReplBridge(config map[string]any) error {
 	if enabled, ok := config["repl_bridge_enabled"].(bool); ok {
-		if remote, ok := config["remote"].(map[string]interface{}); ok {
+		if remote, ok := config["remote"].(map[string]any); ok {
 			remote["control_at_startup"] = enabled
 		} else {
-			config["remote"] = map[string]interface{}{"control_at_startup": enabled}
+			config["remote"] = map[string]any{"control_at_startup": enabled}
 		}
 		delete(config, "repl_bridge_enabled")
 	}
 	return nil
 }
 
-func resetAutoModeOptIn(config map[string]interface{}) error {
+func resetAutoModeOptIn(config map[string]any) error {
 	delete(config, "auto_mode_opt_in")
 	return nil
 }
 
-func resetProToOpus(config map[string]interface{}) error {
+func resetProToOpus(config map[string]any) error {
 	if accountType, ok := config["account_type"].(string); ok && accountType == "pro" {
 		config["model"] = "opus-1m"
 	}
@@ -227,7 +227,7 @@ func (r *MigrationRunner) SaveApplied() error {
 	return os.WriteFile(r.configPath, data, 0644)
 }
 
-func (r *MigrationRunner) Run(config map[string]interface{}) error {
+func (r *MigrationRunner) Run(config map[string]any) error {
 	migrations := GetMigrations()
 
 	for _, migration := range migrations {
