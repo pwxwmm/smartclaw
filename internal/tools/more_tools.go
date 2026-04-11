@@ -5,10 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/instructkr/smartclaw/internal/logger"
 )
 
 // Global todo manager instance
@@ -46,26 +53,26 @@ func (t *TodoWriteTool) Description() string {
 	return "Manage the session task checklist. Use this to track progress and plan work."
 }
 
-func (t *TodoWriteTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *TodoWriteTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"todos": map[string]interface{}{
+		"properties": map[string]any{
+			"todos": map[string]any{
 				"type":        "array",
 				"description": "The updated todo list",
-				"items": map[string]interface{}{
+				"items": map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"content": map[string]interface{}{
+					"properties": map[string]any{
+						"content": map[string]any{
 							"type":        "string",
 							"description": "Brief description of the task",
 						},
-						"status": map[string]interface{}{
+						"status": map[string]any{
 							"type":        "string",
 							"enum":        []string{"pending", "in_progress", "completed", "cancelled"},
 							"description": "Current status of the todo",
 						},
-						"priority": map[string]interface{}{
+						"priority": map[string]any{
 							"type":        "string",
 							"enum":        []string{"high", "medium", "low"},
 							"description": "Priority level",
@@ -79,8 +86,8 @@ func (t *TodoWriteTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *TodoWriteTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	todosRaw, ok := input["todos"].([]interface{})
+func (t *TodoWriteTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	todosRaw, ok := input["todos"].([]any)
 	if !ok {
 		return nil, &Error{Code: "INVALID_INPUT", Message: "todos must be an array"}
 	}
@@ -88,7 +95,7 @@ func (t *TodoWriteTool) Execute(ctx context.Context, input map[string]interface{
 	// Parse todos
 	todos := make([]TodoItem, 0, len(todosRaw))
 	for _, item := range todosRaw {
-		if itemMap, ok := item.(map[string]interface{}); ok {
+		if itemMap, ok := item.(map[string]any); ok {
 			todo := TodoItem{}
 			if content, ok := itemMap["content"].(string); ok {
 				todo.Content = content
@@ -128,7 +135,7 @@ func (t *TodoWriteTool) Execute(ctx context.Context, input map[string]interface{
 	verificationNudge := manager.CheckVerificationNudge(sessionID, todos)
 
 	// Prepare response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"success":            true,
 		"old_todos":          oldTodos,
 		"new_todos":          todos,
@@ -154,35 +161,35 @@ func (t *AskUserQuestionTool) Description() string {
 	return "Ask the user questions to gather information, clarify ambiguity, or get decisions"
 }
 
-func (t *AskUserQuestionTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *AskUserQuestionTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"questions": map[string]interface{}{
+		"properties": map[string]any{
+			"questions": map[string]any{
 				"type":        "array",
 				"description": "Questions to ask the user",
-				"items": map[string]interface{}{
+				"items": map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"question": map[string]interface{}{
+					"properties": map[string]any{
+						"question": map[string]any{
 							"type":        "string",
 							"description": "The question to ask",
 						},
-						"header": map[string]interface{}{
+						"header": map[string]any{
 							"type":        "string",
 							"description": "Short header for the question (max 30 chars)",
 						},
-						"options": map[string]interface{}{
+						"options": map[string]any{
 							"type":        "array",
 							"description": "Available choices",
-							"items": map[string]interface{}{
+							"items": map[string]any{
 								"type": "object",
-								"properties": map[string]interface{}{
-									"label": map[string]interface{}{
+								"properties": map[string]any{
+									"label": map[string]any{
 										"type":        "string",
 										"description": "Display text (1-5 words)",
 									},
-									"description": map[string]interface{}{
+									"description": map[string]any{
 										"type":        "string",
 										"description": "Explanation of choice",
 									},
@@ -190,7 +197,7 @@ func (t *AskUserQuestionTool) InputSchema() map[string]interface{} {
 								"required": []string{"label"},
 							},
 						},
-						"multiple": map[string]interface{}{
+						"multiple": map[string]any{
 							"type":        "boolean",
 							"description": "Allow selecting multiple choices",
 						},
@@ -203,8 +210,8 @@ func (t *AskUserQuestionTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *AskUserQuestionTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	questionsRaw, ok := input["questions"].([]interface{})
+func (t *AskUserQuestionTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	questionsRaw, ok := input["questions"].([]any)
 	if !ok {
 		return nil, &Error{Code: "INVALID_INPUT", Message: "questions must be an array"}
 	}
@@ -213,14 +220,14 @@ func (t *AskUserQuestionTool) Execute(ctx context.Context, input map[string]inte
 	// In interactive mode, this would prompt the user via CLI
 	// For now, we return a structured response that the runtime can handle
 
-	questions := make([]map[string]interface{}, 0, len(questionsRaw))
+	questions := make([]map[string]any, 0, len(questionsRaw))
 	for _, q := range questionsRaw {
-		if qMap, ok := q.(map[string]interface{}); ok {
+		if qMap, ok := q.(map[string]any); ok {
 			questions = append(questions, qMap)
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"status":         "pending_user_response",
 		"questions":      questions,
 		"question_count": len(questions),
@@ -247,20 +254,20 @@ func (t *ConfigTool) Description() string {
 	return "Get or set Claude Code settings"
 }
 
-func (t *ConfigTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *ConfigTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"operation": map[string]interface{}{
+		"properties": map[string]any{
+			"operation": map[string]any{
 				"type":        "string",
 				"enum":        []string{"get", "set", "list"},
 				"description": "Operation to perform",
 			},
-			"key": map[string]interface{}{
+			"key": map[string]any{
 				"type":        "string",
 				"description": "Configuration key (e.g., 'model', 'theme')",
 			},
-			"value": map[string]interface{}{
+			"value": map[string]any{
 				"description": "New value for set operation",
 			},
 		},
@@ -268,7 +275,7 @@ func (t *ConfigTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *ConfigTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *ConfigTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	operation, _ := input["operation"].(string)
 
 	switch operation {
@@ -283,7 +290,7 @@ func (t *ConfigTool) Execute(ctx context.Context, input map[string]interface{}) 
 	}
 }
 
-func (t *ConfigTool) get(input map[string]interface{}) (interface{}, error) {
+func (t *ConfigTool) get(input map[string]any) (any, error) {
 	key, _ := input["key"].(string)
 	if key == "" {
 		return nil, &Error{Code: "MISSING_KEY", Message: "key is required for get operation"}
@@ -292,20 +299,20 @@ func (t *ConfigTool) get(input map[string]interface{}) (interface{}, error) {
 	config := t.loadConfig()
 	value, exists := config[key]
 	if !exists {
-		return map[string]interface{}{
+		return map[string]any{
 			"success": false,
 			"error":   fmt.Sprintf("Unknown setting: %s", key),
 		}, nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"key":     key,
 		"value":   value,
 	}, nil
 }
 
-func (t *ConfigTool) set(input map[string]interface{}) (interface{}, error) {
+func (t *ConfigTool) set(input map[string]any) (any, error) {
 	key, _ := input["key"].(string)
 	if key == "" {
 		return nil, &Error{Code: "MISSING_KEY", Message: "key is required for set operation"}
@@ -321,7 +328,7 @@ func (t *ConfigTool) set(input map[string]interface{}) (interface{}, error) {
 		return nil, &Error{Code: "SAVE_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":        true,
 		"key":            key,
 		"previous_value": previousValue,
@@ -329,45 +336,45 @@ func (t *ConfigTool) set(input map[string]interface{}) (interface{}, error) {
 	}, nil
 }
 
-func (t *ConfigTool) list() (interface{}, error) {
+func (t *ConfigTool) list() (any, error) {
 	config := t.loadConfig()
 
-	settings := make([]map[string]interface{}, 0, len(config))
+	settings := make([]map[string]any, 0, len(config))
 	for k, v := range config {
-		settings = append(settings, map[string]interface{}{
+		settings = append(settings, map[string]any{
 			"key":   k,
 			"value": v,
 		})
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":  true,
 		"settings": settings,
 		"count":    len(settings),
 	}, nil
 }
 
-func (t *ConfigTool) loadConfig() map[string]interface{} {
+func (t *ConfigTool) loadConfig() map[string]any {
 	configPath := filepath.Join(t.configDir, "config.json")
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"model":      "claude-sonnet-4-5",
 			"permission": "ask",
 			"log_level":  "info",
 		}
 	}
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal(data, &config); err != nil {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 
 	return config
 }
 
-func (t *ConfigTool) saveConfig(config map[string]interface{}) error {
+func (t *ConfigTool) saveConfig(config map[string]any) error {
 	if err := os.MkdirAll(t.configDir, 0755); err != nil {
 		return err
 	}
@@ -399,15 +406,15 @@ func (t *SkillTool) Description() string {
 	return "Load a skill or slash command to get specialized instructions"
 }
 
-func (t *SkillTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *SkillTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"name": map[string]interface{}{
+		"properties": map[string]any{
+			"name": map[string]any{
 				"type":        "string",
 				"description": "The skill name (e.g., 'commit', 'review-pr', 'git-master')",
 			},
-			"user_message": map[string]interface{}{
+			"user_message": map[string]any{
 				"type":        "string",
 				"description": "Optional context or arguments for the skill",
 			},
@@ -416,7 +423,7 @@ func (t *SkillTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *SkillTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *SkillTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	name, _ := input["name"].(string)
 	if name == "" {
 		return nil, ErrRequiredField("name")
@@ -430,13 +437,13 @@ func (t *SkillTool) Execute(ctx context.Context, input map[string]interface{}) (
 	// Try to load skill from various locations
 	skillContent, skillPath, err := t.loadSkill(name)
 	if err != nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"success": false,
 			"error":   fmt.Sprintf("Skill not found: %s", name),
 		}, nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":      true,
 		"skill_name":   name,
 		"skill_path":   skillPath,
@@ -492,23 +499,23 @@ func (t *NotebookEditTool) Description() string {
 	return "Edit Jupyter notebook cells"
 }
 
-func (t *NotebookEditTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *NotebookEditTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
+		"properties": map[string]any{
+			"path": map[string]any{
 				"type":        "string",
 				"description": "Path to the notebook file",
 			},
-			"cell_number": map[string]interface{}{
+			"cell_number": map[string]any{
 				"type":        "integer",
 				"description": "Cell number to edit (0-indexed)",
 			},
-			"source": map[string]interface{}{
+			"source": map[string]any{
 				"type":        "string",
 				"description": "New cell source code",
 			},
-			"cell_type": map[string]interface{}{
+			"cell_type": map[string]any{
 				"type":        "string",
 				"enum":        []string{"code", "markdown"},
 				"description": "Type of cell",
@@ -518,7 +525,7 @@ func (t *NotebookEditTool) InputSchema() map[string]interface{} {
 	}
 }
 
-func (t *NotebookEditTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *NotebookEditTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	if path == "" {
 		return nil, ErrRequiredField("path")
@@ -546,12 +553,12 @@ func (t *NotebookEditTool) Execute(ctx context.Context, input map[string]interfa
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
 
-	var notebook map[string]interface{}
+	var notebook map[string]any
 	if err := json.Unmarshal(data, &notebook); err != nil {
 		return nil, &Error{Code: "PARSE_ERROR", Message: "invalid notebook format"}
 	}
 
-	cells, ok := notebook["cells"].([]interface{})
+	cells, ok := notebook["cells"].([]any)
 	if !ok {
 		return nil, &Error{Code: "INVALID_NOTEBOOK", Message: "notebook has no cells"}
 	}
@@ -561,7 +568,7 @@ func (t *NotebookEditTool) Execute(ctx context.Context, input map[string]interfa
 	}
 
 	// Update cell
-	cell, ok := cells[cellNumber].(map[string]interface{})
+	cell, ok := cells[cellNumber].(map[string]any)
 	if !ok {
 		return nil, &Error{Code: "INVALID_CELL", Message: "invalid cell format"}
 	}
@@ -583,7 +590,7 @@ func (t *NotebookEditTool) Execute(ctx context.Context, input map[string]interfa
 		return nil, &Error{Code: "WRITE_ERROR", Message: err.Error()}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":     true,
 		"path":        path,
 		"cell_number": cellNumber,
@@ -604,255 +611,592 @@ func InteractivePrompt(prompt string) (string, error) {
 
 type BrowseTool struct{}
 
-func (t *BrowseTool) Name() string        { return "browse" }
-func (t *BrowseTool) Description() string { return "Open URL in browser" }
+func (t *BrowseTool) Name() string { return "browse" }
+func (t *BrowseTool) Description() string {
+	return "Open URL in a headless browser. Delegates to browser_navigate for actual page loading."
+}
 
-func (t *BrowseTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *BrowseTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"url": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"url": map[string]any{"type": "string", "description": "URL to navigate to"},
 		},
 		"required": []string{"url"},
 	}
 }
 
-func (t *BrowseTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *BrowseTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	url, _ := input["url"].(string)
 	if url == "" {
 		return nil, ErrRequiredField("url")
 	}
-	return map[string]interface{}{
-		"url":     url,
-		"message": "Browser opened",
-	}, nil
+
+	nav := &BrowserNavigateTool{}
+	result, err := nav.Execute(ctx, map[string]any{"url": url})
+	if err != nil {
+		return map[string]any{
+			"url":    url,
+			"status": "fallback",
+			"note":   "Browser not available; URL prepared for manual opening",
+		}, nil
+	}
+	return result, nil
 }
 
 type AttachTool struct{}
 
-func (t *AttachTool) Name() string        { return "attach" }
-func (t *AttachTool) Description() string { return "Attach to running process" }
+func (t *AttachTool) Name() string { return "attach" }
+func (t *AttachTool) Description() string {
+	return "List running processes or inspect a process. Use action=list to see processes, action=inspect for details."
+}
 
-func (t *AttachTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *AttachTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"pid": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"pid":    map[string]any{"type": "string", "description": "Process ID to inspect"},
+			"action": map[string]any{"type": "string", "default": "list", "description": "Action: list or inspect"},
 		},
-		"required": []string{"pid"},
 	}
 }
 
-func (t *AttachTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	pid, _ := input["pid"].(string)
-	if pid == "" {
-		return nil, ErrRequiredField("pid")
+func (t *AttachTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	action, _ := input["action"].(string)
+	if action == "" {
+		action = "list"
 	}
-	return map[string]interface{}{
-		"pid":     pid,
-		"message": "Process attach not implemented",
-	}, nil
+
+	switch action {
+	case "list":
+		cmd := exec.CommandContext(ctx, "ps", "aux")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("ps command failed: %w", err)
+		}
+		lines := strings.Split(string(output), "\n")
+		if len(lines) > 50 {
+			lines = append(lines[:1], lines[1:50]...)
+			lines = append(lines, "... (truncated)")
+		}
+		return map[string]any{
+			"processes": strings.Join(lines, "\n"),
+			"action":    "list",
+		}, nil
+
+	case "inspect":
+		pid, _ := input["pid"].(string)
+		if pid == "" {
+			return nil, ErrRequiredField("pid")
+		}
+		cmd := exec.CommandContext(ctx, "ps", "-p", pid, "-o", "pid,ppid,user,%cpu,%mem,etime,command")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("process %s not found: %w", pid, err)
+		}
+		return map[string]any{
+			"pid":     pid,
+			"details": strings.TrimSpace(string(output)),
+			"action":  "inspect",
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown action: %s (valid: list, inspect)", action)
+	}
 }
 
 type DebugTool struct{}
 
-func (t *DebugTool) Name() string        { return "debug" }
-func (t *DebugTool) Description() string { return "Debug mode toggle" }
+func (t *DebugTool) Name() string { return "debug" }
+func (t *DebugTool) Description() string {
+	return "Toggle debug logging level. When enabled, sets log level to debug; when disabled, reverts to info."
+}
 
-func (t *DebugTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *DebugTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"enable": map[string]interface{}{"type": "boolean"},
+		"properties": map[string]any{
+			"enable": map[string]any{"type": "boolean"},
 		},
 	}
 }
 
-func (t *DebugTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *DebugTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	enable, _ := input["enable"].(bool)
-	return map[string]interface{}{
-		"debug":   enable,
-		"message": "Debug mode toggled",
+
+	logLevel := "info"
+	if enable {
+		logLevel = "debug"
+		os.Setenv("SMARTCLAW_LOG_LEVEL", "debug")
+		logger.SetLevel(logger.LevelDebug)
+	} else {
+		os.Setenv("SMARTCLAW_LOG_LEVEL", "info")
+		logger.SetLevel(logger.LevelInfo)
+	}
+
+	return map[string]any{
+		"debug":     enable,
+		"log_level": logLevel,
 	}, nil
 }
 
 type IndexTool struct{}
 
-func (t *IndexTool) Name() string        { return "index" }
-func (t *IndexTool) Description() string { return "Build code index" }
+func (t *IndexTool) Name() string { return "index" }
+func (t *IndexTool) Description() string {
+	return "Build a code index of symbols (functions, types, variables) in a directory for fast lookup"
+}
 
-func (t *IndexTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *IndexTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path":    map[string]interface{}{"type": "string"},
-			"exclude": map[string]interface{}{"type": "array"},
+		"properties": map[string]any{
+			"path":    map[string]any{"type": "string", "description": "Directory to index"},
+			"exclude": map[string]any{"type": "array", "description": "Patterns to exclude"},
 		},
 	}
 }
 
-func (t *IndexTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *IndexTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	if path == "" {
 		path = "."
 	}
-	return map[string]interface{}{
+
+	symbolPattern := regexp.MustCompile(`(?m)^(func |type |var |const |def |class |async def |fn |pub fn |let |interface |struct |enum |trait |impl |module )`)
+
+	var symbols []map[string]any
+	maxSymbols := 200
+
+	filepath.WalkDir(path, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil || len(symbols) >= maxSymbols {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" || name == "build" || name == "bin" || name == "__pycache__" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+
+		ext := filepath.Ext(filePath)
+		supported := map[string]bool{".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".rs": true, ".java": true, ".rb": true}
+		if !supported[ext] {
+			return nil
+		}
+
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil
+		}
+
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if len(symbols) >= maxSymbols {
+				break
+			}
+			if symbolPattern.MatchString(line) {
+				symbols = append(symbols, map[string]any{
+					"file": filePath,
+					"line": i + 1,
+					"text": strings.TrimSpace(line),
+				})
+			}
+		}
+		return nil
+	})
+
+	return map[string]any{
 		"path":    path,
-		"message": "Indexing not fully implemented",
+		"symbols": symbols,
+		"count":   len(symbols),
 	}, nil
 }
 
 type CacheTool struct{}
 
-func (t *CacheTool) Name() string        { return "cache" }
-func (t *CacheTool) Description() string { return "Cache management" }
+func (t *CacheTool) Name() string { return "cache" }
+func (t *CacheTool) Description() string {
+	return "Manage tool result cache. Actions: get, set, clear, stats"
+}
 
-func (t *CacheTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *CacheTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"action": map[string]interface{}{"type": "string", "enum": []string{"get", "set", "clear", "stats"}},
-			"key":    map[string]interface{}{"type": "string"},
-			"value":  map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"action": map[string]any{"type": "string", "enum": []string{"get", "set", "clear", "stats"}, "description": "Cache operation"},
+			"key":    map[string]any{"type": "string", "description": "Cache key"},
+			"value":  map[string]any{"type": "string", "description": "Value for set operation"},
 		},
 	}
 }
 
-func (t *CacheTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *CacheTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	action, _ := input["action"].(string)
 	key, _ := input["key"].(string)
 
 	switch action {
+	case "get":
+		if key == "" {
+			return nil, ErrRequiredField("key")
+		}
+		registry := GetRegistry()
+		if rc := registry.GetCache(); rc != nil {
+			inputMap := map[string]any{"key": key}
+			if result, ok := rc.Get("cache_tool", inputMap); ok {
+				return map[string]any{"key": key, "found": true, "value": result}, nil
+			}
+		}
+		home, _ := os.UserHomeDir()
+		cacheDir := filepath.Join(home, ".smartclaw", "cache")
+		data, err := os.ReadFile(filepath.Join(cacheDir, key))
+		if err != nil {
+			return map[string]any{"key": key, "found": false}, nil
+		}
+		return map[string]any{"key": key, "found": true, "value": string(data)}, nil
+
+	case "set":
+		value, _ := input["value"].(string)
+		if key == "" {
+			return nil, ErrRequiredField("key")
+		}
+		registry := GetRegistry()
+		if rc := registry.GetCache(); rc != nil {
+			rc.Set("cache_tool", map[string]any{"key": key}, value, []string{})
+		}
+		home, _ := os.UserHomeDir()
+		cacheDir := filepath.Join(home, ".smartclaw", "cache")
+		os.MkdirAll(cacheDir, 0755)
+		if err := os.WriteFile(filepath.Join(cacheDir, key), []byte(value), 0644); err != nil {
+			return nil, fmt.Errorf("cache set failed: %w", err)
+		}
+		return map[string]any{"key": key, "stored": true}, nil
+
 	case "clear":
-		return map[string]interface{}{"message": "Cache cleared"}, nil
+		registry := GetRegistry()
+		if rc := registry.GetCache(); rc != nil {
+			rc.Clear()
+		}
+		home, _ := os.UserHomeDir()
+		cacheDir := filepath.Join(home, ".smartclaw", "cache")
+		entries, _ := os.ReadDir(cacheDir)
+		count := 0
+		for _, e := range entries {
+			os.Remove(filepath.Join(cacheDir, e.Name()))
+			count++
+		}
+		return map[string]any{"cleared": count, "memory_cache_cleared": true}, nil
+
 	case "stats":
-		return map[string]interface{}{"hits": 0, "misses": 0, "size": 0}, nil
+		registry := GetRegistry()
+		rc := registry.GetCache()
+		home, _ := os.UserHomeDir()
+		cacheDir := filepath.Join(home, ".smartclaw", "cache")
+		entries, _ := os.ReadDir(cacheDir)
+		totalSize := int64(0)
+		for _, e := range entries {
+			if info, err := e.Info(); err == nil {
+				totalSize += info.Size()
+			}
+		}
+		stats := map[string]any{
+			"disk_items":     len(entries),
+			"disk_size":      totalSize,
+			"disk_cache_dir": cacheDir,
+		}
+		if rc != nil {
+			stats["memory_cache_size"] = rc.Size()
+		}
+		return stats, nil
+
 	default:
-		return map[string]interface{}{"key": key, "message": "Cache operation completed"}, nil
+		return map[string]any{"key": key, "action": action, "note": "use action: get, set, clear, stats"}, nil
 	}
 }
 
 type ObserveTool struct{}
 
-func (t *ObserveTool) Name() string        { return "observe" }
-func (t *ObserveTool) Description() string { return "Watch for file changes" }
+func (t *ObserveTool) Name() string { return "observe" }
+func (t *ObserveTool) Description() string {
+	return "Watch for file changes in a directory. Returns recent file modification events."
+}
 
-func (t *ObserveTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *ObserveTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"path":    map[string]interface{}{"type": "string"},
-			"pattern": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"path":        map[string]any{"type": "string", "description": "Directory or file to watch"},
+			"pattern":     map[string]any{"type": "string", "description": "Glob pattern filter (e.g. '*.go')"},
+			"debounce_ms": map[string]any{"type": "integer", "default": 500, "description": "Debounce interval in milliseconds"},
 		},
 	}
 }
 
-func (t *ObserveTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *ObserveTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	path, _ := input["path"].(string)
 	if path == "" {
 		path = "."
 	}
-	return map[string]interface{}{
-		"path":    path,
-		"message": "File watching not fully implemented",
+	pattern, _ := input["pattern"].(string)
+
+	debounceMs := 500
+	if d, ok := input["debounce_ms"].(int); ok && d > 0 {
+		debounceMs = d
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("file watcher unavailable: %w", err)
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(path); err != nil {
+		return nil, fmt.Errorf("cannot watch %s: %w", path, err)
+	}
+
+	var events []map[string]any
+	timeout := time.After(time.Duration(debounceMs) * time.Millisecond)
+
+WatchLoop:
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				break WatchLoop
+			}
+			if pattern != "" {
+				matched, _ := filepath.Match(pattern, filepath.Base(event.Name))
+				if !matched {
+					continue
+				}
+			}
+			events = append(events, map[string]any{
+				"file": event.Name,
+				"op":   event.Op.String(),
+				"time": time.Now().Format(time.RFC3339),
+			})
+		case <-timeout:
+			break WatchLoop
+		case <-ctx.Done():
+			break WatchLoop
+		}
+	}
+
+	return map[string]any{
+		"path":        path,
+		"pattern":     pattern,
+		"events":      events,
+		"event_count": len(events),
 	}, nil
 }
 
 type LazyTool struct{}
 
-func (t *LazyTool) Name() string        { return "lazy" }
-func (t *LazyTool) Description() string { return "Lazy mode for batching" }
+func (t *LazyTool) Name() string { return "lazy" }
+func (t *LazyTool) Description() string {
+	return "Toggle lazy/batch execution mode. When enabled, tool calls are queued and executed in batch rather than immediately."
+}
 
-func (t *LazyTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *LazyTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"enable": map[string]interface{}{"type": "boolean"},
+		"properties": map[string]any{
+			"enable": map[string]any{"type": "boolean"},
 		},
 	}
 }
 
-func (t *LazyTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *LazyTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	enable, _ := input["enable"].(bool)
-	return map[string]interface{}{
-		"lazy":    enable,
-		"message": "Lazy mode toggled",
+
+	registry := GetRegistry()
+	be := registry.GetBatchExecutor()
+	if be != nil {
+		be.SetLazyMode(enable)
+	}
+
+	if enable {
+		os.Setenv("SMARTCLAW_LAZY_MODE", "true")
+	} else {
+		os.Setenv("SMARTCLAW_LAZY_MODE", "false")
+		if be != nil && be.QueueSize() > 0 {
+			results := be.Flush(ctx, registry)
+			return map[string]any{
+				"lazy":       false,
+				"batch_mode": false,
+				"flushed":    len(results),
+				"results":    results,
+			}, nil
+		}
+	}
+
+	return map[string]any{
+		"lazy":       enable,
+		"batch_mode": enable,
 	}, nil
 }
 
 type ThinkTool struct{}
 
-func (t *ThinkTool) Name() string        { return "think" }
-func (t *ThinkTool) Description() string { return "Think mode for reasoning" }
+func (t *ThinkTool) Name() string { return "think" }
+func (t *ThinkTool) Description() string {
+	return "Enable extended thinking mode for the current session. Sets a flag that the runtime uses to request thinking tokens from the LLM."
+}
 
-func (t *ThinkTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *ThinkTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"prompt": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"prompt": map[string]any{"type": "string", "description": "Optional prompt to focus thinking on"},
+			"budget": map[string]any{"type": "integer", "default": 10000, "description": "Token budget for thinking"},
 		},
 		"required": []string{"prompt"},
 	}
 }
 
-func (t *ThinkTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *ThinkTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	prompt, _ := input["prompt"].(string)
-	return map[string]interface{}{
-		"thinking": prompt,
-		"message":  "Think mode enabled",
+	budget := 10000
+	if b, ok := input["budget"].(int); ok && b > 0 {
+		budget = b
+	}
+
+	os.Setenv("SMARTCLAW_THINKING_ENABLED", "true")
+	os.Setenv("SMARTCLAW_THINKING_BUDGET", fmt.Sprintf("%d", budget))
+
+	return map[string]any{
+		"thinking_enabled": true,
+		"budget":           budget,
+		"prompt":           prompt,
 	}, nil
 }
 
 type DeepThinkTool struct{}
 
-func (t *DeepThinkTool) Name() string        { return "deepthink" }
-func (t *DeepThinkTool) Description() string { return "Deep thinking for complex problems" }
+func (t *DeepThinkTool) Name() string { return "deepthink" }
+func (t *DeepThinkTool) Description() string {
+	return "Enable deep thinking with higher token budget for complex problems. Equivalent to think with budget=50000."
+}
 
-func (t *DeepThinkTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *DeepThinkTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"prompt": map[string]interface{}{"type": "string"},
-			"depth":  map[string]interface{}{"type": "integer", "default": 5},
+		"properties": map[string]any{
+			"prompt": map[string]any{"type": "string", "description": "Problem to think deeply about"},
+			"depth":  map[string]any{"type": "integer", "default": 5, "description": "Depth level 1-10"},
 		},
 		"required": []string{"prompt"},
 	}
 }
 
-func (t *DeepThinkTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *DeepThinkTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	prompt, _ := input["prompt"].(string)
-	depth, _ := input["depth"].(int)
-	if depth == 0 {
-		depth = 5
+	depth := 5
+	if d, ok := input["depth"].(int); ok && d > 0 {
+		depth = d
 	}
-	return map[string]interface{}{
-		"prompt":   prompt,
-		"depth":    depth,
-		"thinking": "Deep thinking enabled",
-		"message":  "Using extended reasoning",
+
+	budget := 10000 + depth*8000
+
+	os.Setenv("SMARTCLAW_THINKING_ENABLED", "true")
+	os.Setenv("SMARTCLAW_THINKING_BUDGET", fmt.Sprintf("%d", budget))
+
+	return map[string]any{
+		"thinking_enabled": true,
+		"budget":           budget,
+		"depth":            depth,
+		"prompt":           prompt,
 	}, nil
 }
 
 type ForkTool struct{}
 
-func (t *ForkTool) Name() string        { return "fork" }
-func (t *ForkTool) Description() string { return "Fork current session" }
+func (t *ForkTool) Name() string { return "fork" }
+func (t *ForkTool) Description() string {
+	return "Fork current session into a new branch. Creates a copy of the session state with a new ID."
+}
 
-func (t *ForkTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *ForkTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"label": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"label": map[string]any{"type": "string", "description": "Label for the forked session"},
 		},
 	}
 }
 
-func (t *ForkTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *ForkTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	label, _ := input["label"].(string)
-	return map[string]interface{}{
-		"session_id": fmt.Sprintf("fork_%d", os.Getpid()),
+
+	home, _ := os.UserHomeDir()
+	sessionsDir := filepath.Join(home, ".smartclaw", "sessions")
+	os.MkdirAll(sessionsDir, 0755)
+
+	sessionID := fmt.Sprintf("fork_%d", time.Now().UnixNano())
+
+	// Clone current session if it exists
+	forkMeta := map[string]any{
+		"id":         sessionID,
 		"label":      label,
-		"message":    "Session forked",
+		"forked_at":  time.Now().Format(time.RFC3339),
+		"parent_pid": os.Getpid(),
+	}
+
+	// Find the most recent session file to clone
+	entries, err := os.ReadDir(sessionsDir)
+	if err == nil {
+		var latestEntry os.DirEntry
+		var latestTime time.Time
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			if strings.HasPrefix(e.Name(), "fork_") {
+				continue
+			}
+			info, statErr := e.Info()
+			if statErr != nil {
+				continue
+			}
+			if info.ModTime().After(latestTime) {
+				latestTime = info.ModTime()
+				latestEntry = e
+			}
+		}
+
+		if latestEntry != nil {
+			srcPath := filepath.Join(sessionsDir, latestEntry.Name())
+			srcData, readErr := os.ReadFile(srcPath)
+			if readErr == nil {
+				var srcSession map[string]any
+				if json.Unmarshal(srcData, &srcSession) == nil {
+					srcSession["id"] = sessionID
+					srcSession["title"] = fmt.Sprintf("Fork: %s", label)
+					if _, ok := srcSession["messages"]; ok {
+						forkMeta["cloned_messages"] = len(srcSession["messages"].([]any))
+					}
+					dstData, marshalErr := json.MarshalIndent(srcSession, "", "  ")
+					if marshalErr == nil {
+						dstPath := filepath.Join(sessionsDir, sessionID+".json")
+						os.WriteFile(dstPath, dstData, 0644)
+						forkMeta["source_session"] = latestEntry.Name()
+					}
+				}
+			}
+		}
+	}
+
+	data, _ := json.MarshalIndent(forkMeta, "", "  ")
+	metaPath := filepath.Join(sessionsDir, sessionID+"_fork_meta.json")
+	os.WriteFile(metaPath, data, 0644)
+
+	return map[string]any{
+		"session_id":      sessionID,
+		"label":           label,
+		"meta_path":       metaPath,
+		"cloned_session":  forkMeta["source_session"] != nil,
+		"cloned_messages": forkMeta["cloned_messages"],
 	}, nil
 }
 
@@ -861,26 +1205,26 @@ type EnvTool struct{}
 func (t *EnvTool) Name() string        { return "env" }
 func (t *EnvTool) Description() string { return "Environment variable access" }
 
-func (t *EnvTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+func (t *EnvTool) InputSchema() map[string]any {
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"key":   map[string]interface{}{"type": "string"},
-			"value": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"key":   map[string]any{"type": "string"},
+			"value": map[string]any{"type": "string"},
 		},
 	}
 }
 
-func (t *EnvTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *EnvTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	key, _ := input["key"].(string)
 	value, _ := input["value"].(string)
 
 	if key != "" && value != "" {
 		os.Setenv(key, value)
-		return map[string]interface{}{"key": key, "message": "Environment set"}, nil
+		return map[string]any{"key": key, "message": "Environment set"}, nil
 	}
 	if key != "" {
-		return map[string]interface{}{"key": key, "value": os.Getenv(key)}, nil
+		return map[string]any{"key": key, "value": os.Getenv(key)}, nil
 	}
-	return map[string]interface{}{"message": "Environment access"}, nil
+	return map[string]any{"message": "Environment access"}, nil
 }
