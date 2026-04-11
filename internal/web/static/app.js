@@ -50,6 +50,8 @@
     { name: '/help', desc: 'Show help', shortcut: 'Ctrl+H' },
   ];
 
+  let reconnectTimer = null;
+
   function wsConnect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws`);
@@ -57,6 +59,8 @@
     ws.onopen = () => {
       setState('connected', true);
       $('#connection-status').dataset.status = 'on';
+      const reconnecting = $('.conn-reconnecting');
+      if (reconnecting) reconnecting.remove();
       toast('Connected', 'success');
       wsSend('file_tree', { path: '.' });
       wsSend('session_list', {});
@@ -65,7 +69,25 @@
     ws.onclose = () => {
       setState('connected', false);
       $('#connection-status').dataset.status = 'off';
-      setTimeout(wsConnect, 3000);
+      let reconnecting = $('.conn-reconnecting');
+      if (!reconnecting) {
+        reconnecting = document.createElement('span');
+        reconnecting.className = 'conn-reconnecting';
+        $('.topbar-left').appendChild(reconnecting);
+      }
+      let countdown = 3;
+      reconnecting.innerHTML = `<span class="spin"></span>Reconnecting ${countdown}s`;
+      if (reconnectTimer) clearInterval(reconnectTimer);
+      reconnectTimer = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(reconnectTimer);
+          reconnectTimer = null;
+          wsConnect();
+        } else {
+          reconnecting.innerHTML = `<span class="spin"></span>Reconnecting ${countdown}s`;
+        }
+      }, 1000);
     };
 
     ws.onerror = () => { ws.close(); };
@@ -161,6 +183,7 @@
   let thinkingBlock = null;
   let renderRAF = null;
   let doneTimeout = null;
+  let lastStreamRender = 0;
 
   function forceFinishIfStale() {
     if (currentAssistantEl && currentContent) {
@@ -195,10 +218,14 @@
   }
 
   function addMessage(role, content) {
+    const welcome = $('.welcome');
+    if (welcome) welcome.remove();
     const el = document.createElement('div');
     el.className = `message ${role}`;
     const roleLabel = role === 'user' ? 'You' : 'SmartClaw';
-    el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${escapeHtml(content)}</div>`;
+    const now = new Date();
+    const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${escapeHtml(content)}</div><div class="msg-ts">${ts}</div>`;
     $('#messages').appendChild(el);
     scrollChat();
     state.messages.push({ role, content, ts: Date.now() });
@@ -215,7 +242,25 @@
       const bubble = currentAssistantEl.querySelector('.msg-bubble');
       const thinking = bubble.querySelector('.thinking');
       if (thinking) thinking.remove();
-      bubble.innerHTML = renderPlainText(currentContent);
+      const thinkingBlockEl = bubble.querySelector('.thinking-block');
+      const now = Date.now();
+      if (currentContent.length > 200 && now - lastStreamRender > 300) {
+        lastStreamRender = now;
+        try {
+          const rendered = renderMarkdown(currentContent);
+          if (thinkingBlockEl) {
+            bubble.innerHTML = rendered;
+            bubble.prepend(thinkingBlockEl);
+          } else {
+            bubble.innerHTML = rendered;
+          }
+          bubble.classList.add('rendered');
+        } catch (e) {
+          bubble.innerHTML = renderPlainText(currentContent);
+        }
+      } else {
+        bubble.innerHTML = renderPlainText(currentContent);
+      }
       scrollChat();
     });
   }
@@ -246,12 +291,19 @@
       if (bubble) {
         const thinking = bubble.querySelector('.thinking');
         if (thinking) thinking.remove();
+        const thinkingBlockEl = bubble.querySelector('.thinking-block');
         try {
           bubble.innerHTML = renderMarkdown(currentContent);
           bubble.classList.add('rendered');
         } catch (e) {
           console.error('renderMarkdown error:', e);
           bubble.innerHTML = renderPlainText(currentContent);
+        }
+        if (thinkingBlockEl) {
+          thinkingBlockEl.open = false;
+          thinkingBlockEl.querySelector('summary').textContent = 'Thought process (' + currentThinking.length + ' chars)';
+          bubble.prepend(thinkingBlockEl);
+          thinkingBlock = null;
         }
         bindCodeCopy(bubble);
       }
@@ -308,12 +360,20 @@
       card.className = 'agent-card';
       card.id = `agent-${msg.id}`;
       $('#agent-list').appendChild(card);
+      if (!state.agents.find(a => a.id === msg.id)) {
+        state.agents.push({ id: msg.id });
+      }
     }
     const pct = Math.round((msg.progress || 0) * 100);
     card.innerHTML = `
       <div class="agent-head"><span class="agent-name">${msg.id?.slice(0,8) || 'Agent'}</span><span class="agent-status">${msg.status || 'running'}</span></div>
       <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
     `;
+    if (msg.status === 'done' || msg.status === 'error') {
+      state.agents = state.agents.filter(a => a.id !== msg.id);
+      setTimeout(() => card.remove(), 2000);
+    }
+    updateStats();
   }
 
   let dirCounter = 0;
@@ -334,6 +394,10 @@
   function renderFileTree(nodes, parent) {
     const container = parent || $('#file-tree');
     container.innerHTML = '';
+    if (!parent && nodes.length === 0) {
+      container.innerHTML = '<div class="loading-placeholder"><span class="spin"></span>Loading files...</div>';
+      return;
+    }
     nodes.forEach(node => {
       const el = document.createElement('div');
       el.className = `file-node ${node.type === 'dir' ? 'dir' : ''}`;
@@ -398,6 +462,12 @@
   function renderSessions(sessions) {
     const list = $('#session-list');
     list.innerHTML = '';
+    if (sessions.length === 0) {
+      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No sessions yet</div>';
+      setState('sessions', sessions);
+      $('#s-total-sessions').textContent = '0';
+      return;
+    }
     sessions.forEach(s => {
       const el = document.createElement('div');
       el.className = 'session-item' + (s.id === state.ui.currentSessionId ? ' active' : '');
@@ -423,7 +493,8 @@
       const el = document.createElement('div');
       el.className = `message ${m.role}`;
       const roleLabel = m.role === 'user' ? 'You' : 'SmartClaw';
-      el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${m.role === 'assistant' ? renderMarkdown(m.content) : escapeHtml(m.content)}</div>`;
+      const ts = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${m.role === 'assistant' ? renderMarkdown(m.content) : escapeHtml(m.content)}</div>${ts ? `<div class="msg-ts">${ts}</div>` : ''}`;
       container.appendChild(el);
       if (m.role === 'assistant') {
         bindCodeCopy(el.querySelector('.msg-bubble'));
@@ -470,8 +541,18 @@
     lineNumsEl.textContent = lineNums;
     const codeEl = document.createElement('code');
     const lang = langFromPath(path);
-    if (lang) {
-      codeEl.innerHTML = simpleHighlight(content, lang);
+    if (lang && typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
+      try {
+        codeEl.innerHTML = hljs.highlight(content, { language: lang }).value;
+      } catch (e) {
+        codeEl.textContent = content;
+      }
+    } else if (typeof hljs !== 'undefined') {
+      try {
+        codeEl.innerHTML = hljs.highlightAuto(content).value;
+      } catch (e) {
+        codeEl.textContent = content;
+      }
     } else {
       codeEl.textContent = content;
     }
@@ -560,32 +641,27 @@
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = getCSS('--bg-0');
     ctx.fillRect(0, 0, w, h);
-    const segments = [
-      { label: 'Input', value: state.cost * 0.3, color: getCSS('--info') },
-      { label: 'Output', value: state.cost * 0.6, color: getCSS('--accent') },
-      { label: 'Tools', value: state.cost * 0.1, color: getCSS('--ok') },
-    ];
-    const total = segments.reduce((s, d) => s + d.value, 0) || 1;
-    const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 30;
-    let start = -Math.PI / 2;
-    segments.forEach(seg => {
-      const angle = (seg.value / total) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, start, start + angle);
-      ctx.closePath();
-      ctx.fillStyle = seg.color;
-      ctx.fill();
-      start += angle;
-    });
+    const data = state.costHistory.slice(-20);
+    if (data.length < 2) { ctx.fillStyle = getCSS('--tx-2'); ctx.font = '12px Inter'; ctx.fillText('Waiting for data...', w/2-50, h/2); return; }
+    const max = Math.max(...data.map(d => d.v), 0.01);
+    ctx.strokeStyle = getCSS('--accent');
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
-    ctx.fillStyle = getCSS('--bg-0');
+    data.forEach((d, i) => {
+      const x = (i / (data.length - 1)) * (w - 40) + 20;
+      const y = h - 20 - ((d.v / max) * (h - 40));
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.lineTo((w - 20), h - 20);
+    ctx.lineTo(20, h - 20);
+    ctx.closePath();
+    ctx.fillStyle = getCSS('--accent-bg');
     ctx.fill();
     ctx.fillStyle = getCSS('--tx-0');
-    ctx.font = 'bold 14px IBM Plex Mono';
+    ctx.font = 'bold 12px JetBrains Mono';
     ctx.textAlign = 'center';
-    ctx.fillText(`$${state.cost.toFixed(2)}`, cx, cy + 5);
+    ctx.fillText(`$${state.cost.toFixed(3)}`, w/2, h/2);
   }
 
   function drawAgentChart() {
@@ -777,9 +853,20 @@
         Array.from(files).forEach(f => {
           const reader = new FileReader();
           reader.onload = (ev) => {
-            addMessage('user', `Attached: ${f.name} (${(f.size / 1024).toFixed(1)}KB)`);
+            const text = ev.target.result;
+            const isText = typeof text === 'string' && text.length < 50000;
+            if (isText) {
+              const snippet = `\n\`\`\`${f.name}\n${text.slice(0, 10000)}${text.length > 10000 ? '\n... (truncated)' : ''}\n\`\`\`\n`;
+              const input = $('#input');
+              input.value += snippet;
+              input.style.height = 'auto';
+              input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+              toast(`Added ${f.name}`, 'success');
+            } else {
+              addMessage('user', `Attached: ${f.name} (${(f.size / 1024).toFixed(1)}KB) - binary file, cannot include content`);
+            }
           };
-          reader.readAsArrayBuffer(f);
+          reader.readAsText(f);
         });
       }
     });
@@ -1041,6 +1128,32 @@
     }
   }
 
+  function showWelcome() {
+    const messages = $('#messages');
+    if (messages.children.length > 0) return;
+    messages.innerHTML = `
+      <div class="welcome">
+        <svg class="welcome-icon" width="48" height="48" viewBox="0 0 24 24" fill="none">
+          <ellipse cx="12" cy="14" rx="8" ry="9" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M4 3l4.5 7M20 3l-4.5 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <circle cx="9" cy="12.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="15" cy="12.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="9" cy="12.5" r="1.1" fill="currentColor"/>
+          <circle cx="15" cy="12.5" r="1.1" fill="currentColor"/>
+          <path d="M11.2 16l.8 2.5.8-2.5" fill="currentColor"/>
+        </svg>
+        <h2>SmartClaw</h2>
+        <p>Your AI coding assistant. Ask me anything about your codebase, write features, debug issues, or explore your project.</p>
+        <div class="shortcuts">
+          <span class="shortcut"><kbd>Enter</kbd> Send</span>
+          <span class="shortcut"><kbd>Shift+Enter</kbd> New line</span>
+          <span class="shortcut"><kbd>@</kbd> Add files</span>
+          <span class="shortcut"><kbd>/</kbd> Commands</span>
+          <span class="shortcut"><kbd>Ctrl+K</kbd> Focus input</span>
+        </div>
+      </div>`;
+  }
+
   function init() {
     loadSettings();
     wsConnect();
@@ -1048,6 +1161,7 @@
     initCmdPalette();
     initFileMention();
     initThemeEditor();
+    showWelcome();
 
     $('#btn-send').addEventListener('click', sendMessage);
     $('#input').addEventListener('keydown', (e) => {
@@ -1170,7 +1284,22 @@
       input.multiple = true;
       input.onchange = (e) => {
         Array.from(e.target.files).forEach(f => {
-          addMessage('user', `Attached: ${f.name} (${(f.size / 1024).toFixed(1)}KB)`);
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const text = ev.target.result;
+            const isText = typeof text === 'string' && text.length < 50000;
+            if (isText) {
+              const snippet = `\n\`\`\`${f.name}\n${text.slice(0, 10000)}${text.length > 10000 ? '\n... (truncated)' : ''}\n\`\`\`\n`;
+              const inputEl = $('#input');
+              inputEl.value += snippet;
+              inputEl.style.height = 'auto';
+              inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
+              toast(`Added ${f.name}`, 'success');
+            } else {
+              addMessage('user', `Attached: ${f.name} (${(f.size / 1024).toFixed(1)}KB) - binary file`);
+            }
+          };
+          reader.readAsText(f);
         });
       };
       input.click();
@@ -1179,4 +1308,62 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+})();
+
+// Telemetry Dashboard
+(function() {
+  function fetchTelemetry() {
+    fetch('/api/telemetry')
+      .then(r => r.json())
+      .then(data => {
+        const el = id => document.getElementById(id);
+        if (el('t-queries')) el('t-queries').textContent = data.query_count || 0;
+        if (el('t-input-tokens')) el('t-input-tokens').textContent = (data.total_input_tokens || 0).toLocaleString();
+        if (el('t-output-tokens')) el('t-output-tokens').textContent = (data.total_output_tokens || 0).toLocaleString();
+        if (el('t-cost')) el('t-cost').textContent = '$' + (data.estimated_cost_usd || 0).toFixed(4);
+        if (el('t-cache-rate')) el('t-cache-rate').textContent = ((data.cache_hit_rate || 0) * 100).toFixed(1) + '%';
+        if (el('t-avg-latency')) {
+          const qCount = data.query_count || 0;
+          const totalMs = data.query_total_time_ms || 0;
+          el('t-avg-latency').textContent = qCount > 0 ? Math.round(totalMs / qCount) + 'ms' : '0ms';
+        }
+
+        // Tool executions list
+        const toolList = el('tool-exec-list');
+        if (toolList && data.tool_executions) {
+          toolList.innerHTML = '';
+          const tools = Object.entries(data.tool_executions).sort((a, b) => b[1].Count - a[1].Count);
+          tools.slice(0, 15).forEach(([name, stats]) => {
+            const item = document.createElement('div');
+            item.className = 'tool-exec-item';
+            item.innerHTML = `<span class="tool-name">${name}</span><span class="tool-stats">${stats.Count}x · ${stats.Errors}err · ${Math.round(stats.Duration / 1e6)}ms</span>`;
+            toolList.appendChild(item);
+          });
+        }
+      })
+      .catch(() => {});
+  }
+
+  // Refresh button
+  document.addEventListener('click', e => {
+    if (e.target && e.target.id === 'telemetry-refresh') fetchTelemetry();
+  });
+
+  // Auto-refresh every 5s when dashboard is visible
+  let telemetryInterval = null;
+  const observer = new MutationObserver(() => {
+    const panel = document.getElementById('dashboard-panel');
+    if (panel && panel.classList.contains('visible')) {
+      if (!telemetryInterval) {
+        fetchTelemetry();
+        telemetryInterval = setInterval(fetchTelemetry, 5000);
+      }
+    } else {
+      if (telemetryInterval) {
+        clearInterval(telemetryInterval);
+        telemetryInterval = null;
+      }
+    }
+  });
+  observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] });
 })();

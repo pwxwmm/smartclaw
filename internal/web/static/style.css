@@ -123,6 +123,10 @@ body { font-family: var(--font-b); font-size: 14px; color: var(--tx-0); backgrou
 .think-label { font-size: 12px; font-weight: 500; color: var(--tx-2); letter-spacing: 0.8px; text-transform: uppercase; display: inline-flex; align-items: baseline; animation: thinkBreathe 3s var(--ease) infinite; }
 .think-dots { display: inline-flex; margin-left: 1px; overflow: hidden; width: 0; animation: thinkDotsWidth 1.5s steps(4,end) infinite; }
 .think-dots span { display: inline-block; font-size: 12px; line-height: 1; }
+.thinking-block { margin: 8px 0; border: 1px solid var(--bd); border-radius: var(--r); overflow: hidden; background: var(--bg-1); }
+.thinking-block summary { padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--tx-2); cursor: pointer; font-family: var(--font-d); user-select: none; transition: color var(--dur-s) var(--ease); }
+.thinking-block summary:hover { color: var(--tx-1); }
+.thinking-content { padding: 8px 12px; font-size: 12px; font-family: var(--font-d); line-height: 1.5; color: var(--tx-2); white-space: pre-wrap; max-height: 300px; overflow-y: auto; border-top: 1px solid var(--bd); background: var(--bg-0); }
 @keyframes pupilOrbit {
   0%   { transform: translate(0, 0); }
   25%  { transform: translate(1.5px, -1.2px); }
@@ -232,6 +236,20 @@ body { font-family: var(--font-b); font-size: 14px; color: var(--tx-0); backgrou
 .toast.err { border-color: var(--err); }
 .toast.warn { border-color: var(--warn); }
 .hidden { display: none !important; }
+.welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px; opacity: 0.6; }
+.welcome-icon { color: var(--accent); opacity: 0.5; }
+.welcome h2 { font-size: 20px; font-weight: 600; color: var(--tx-1); }
+.welcome p { font-size: 14px; color: var(--tx-2); text-align: center; max-width: 380px; line-height: 1.6; }
+.welcome .shortcuts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.welcome .shortcut { padding: 4px 10px; background: var(--bg-2); border: 1px solid var(--bd); border-radius: var(--r); font-size: 12px; font-family: var(--font-d); color: var(--tx-2); }
+.welcome .shortcut kbd { color: var(--accent); font-weight: 600; }
+.msg-ts { font-size: 10px; color: var(--tx-2); font-family: var(--font-d); margin-top: 2px; opacity: 0; transition: opacity var(--dur-s) var(--ease); }
+.message:hover .msg-ts { opacity: 1; }
+.conn-reconnecting { font-size: 11px; color: var(--warn); font-family: var(--font-d); display: flex; align-items: center; gap: 6px; }
+.conn-reconnecting .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--warn); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-placeholder { display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--tx-2); font-size: 13px; }
+.loading-placeholder .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--tx-2); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
 .file-mention { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 240px; overflow-y: auto; background: var(--bg-2); border: 1px solid var(--bd); border-radius: var(--r); box-shadow: var(--sh-l); z-index: 50; margin-bottom: 4px; }
 .file-mention-list { list-style: none; padding: 4px; }
 .file-mention-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-radius: var(--r); font-size: 13px; color: var(--tx-1); transition: background var(--dur-s) var(--ease); }
@@ -251,4 +269,10 @@ body { font-family: var(--font-b); font-size: 14px; color: var(--tx-0); backgrou
   #app { grid-template-columns: 1fr; }
   .drawer { width: 100%; }
 }
+
+.telemetry-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tool-exec-list { max-height: 200px; overflow-y: auto; font-family: var(--font-d); font-size: 12px; }
+.tool-exec-item { display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--bd); }
+.tool-exec-item .tool-name { color: var(--accent); }
+.tool-exec-item .tool-stats { color: var(--tx-1); }
 

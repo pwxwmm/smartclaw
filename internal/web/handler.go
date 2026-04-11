@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/provider"
+	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/session"
 )
 
@@ -18,9 +19,11 @@ type Handler struct {
 	hub          *Hub
 	workDir      string
 	apiClient    *api.Client
+	router       *provider.Router
 	sessMgr      *session.Manager
 	showThinking bool
 	clientSess   map[string]*session.Session
+	prompt       *runtime.PromptBuilder
 }
 
 func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
@@ -30,6 +33,30 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 	}
 
 	showThinking := loadShowThinking()
+
+	resolver, err := provider.LoadFromConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: provider config load failed: %v\n", err)
+		resolver = provider.NewResolver()
+	}
+	router := provider.NewRouter(resolver)
+
+	if apiClient != nil {
+		p := &provider.Provider{
+			Name:    "default",
+			APIKey:  apiClient.APIKey,
+			BaseURL: apiClient.BaseURL,
+			Model:   apiClient.Model,
+		}
+		if apiClient.IsOpenAI {
+			p.Mode = provider.ModeChatCompletions
+		} else {
+			p.Mode = provider.ModeAnthropicMessages
+		}
+		resolver.Register("default", p)
+	} else if client, err := router.PrimaryClient(); err == nil {
+		apiClient = client
+	}
 
 	if apiClient == nil {
 		apiKey, baseURL, model := loadAPIConfig()
@@ -45,9 +72,11 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 		hub:          hub,
 		workDir:      workDir,
 		apiClient:    apiClient,
+		router:       router,
 		sessMgr:      mgr,
 		showThinking: showThinking,
 		clientSess:   make(map[string]*session.Session),
+		prompt:       runtime.NewPromptBuilder(),
 	}
 }
 
@@ -58,7 +87,7 @@ func loadAPIConfig() (apiKey, baseURL, model string) {
 	}
 
 	configPath := filepath.Join(homeDir, ".smartclaw", "config.json")
-	data, err := ioutil.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
 		return
@@ -87,7 +116,7 @@ func loadAPIConfig() (apiKey, baseURL, model string) {
 func isOpenAI() bool {
 	homeDir, _ := os.UserHomeDir()
 	configPath := filepath.Join(homeDir, ".smartclaw", "config.json")
-	data, err := ioutil.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return false
 	}
@@ -103,7 +132,7 @@ func isOpenAI() bool {
 func loadShowThinking() bool {
 	homeDir, _ := os.UserHomeDir()
 	configPath := filepath.Join(homeDir, ".smartclaw", "config.json")
-	data, err := ioutil.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return false
 	}
@@ -131,7 +160,7 @@ type WSResponse struct {
 	Type     string        `json:"type"`
 	Content  string        `json:"content,omitempty"`
 	Tool     string        `json:"tool,omitempty"`
-	Input    interface{}   `json:"input,omitempty"`
+	Input    any           `json:"input,omitempty"`
 	Output   string        `json:"output,omitempty"`
 	Duration int64         `json:"duration,omitempty"`
 	ID       string        `json:"id,omitempty"`
@@ -143,7 +172,7 @@ type WSResponse struct {
 	Message  string        `json:"message,omitempty"`
 	Tree     []FileNode    `json:"tree,omitempty"`
 	Sessions []SessionInfo `json:"sessions,omitempty"`
-	Config   interface{}   `json:"config,omitempty"`
+	Config   any           `json:"config,omitempty"`
 	Text     string        `json:"text,omitempty"`
 	Messages []MsgItem     `json:"messages,omitempty"`
 }
@@ -235,7 +264,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		messages = append(messages, api.Message{Role: m.Role, Content: m.Content})
 	}
 
-	systemPrompt := "You are SmartClaw, an advanced AI coding assistant. Help the user with their coding tasks with precision and clarity."
+	systemPrompt := h.prompt.Build()
 
 	var fullContent string
 
@@ -293,13 +322,10 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		}
 	}
 
-	for _, ch := range content {
-		h.sendToClient(client, WSResponse{
-			Type:    "token",
-			Content: string(ch),
-		})
-		time.Sleep(5 * time.Millisecond)
-	}
+	h.sendToClient(client, WSResponse{
+		Type:    "token",
+		Content: content,
+	})
 
 	tokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
 
@@ -326,14 +352,20 @@ func (h *Handler) handleCommand(client *Client, msg WSMessage) {
 }
 
 func (h *Handler) handleModelSwitch(client *Client, msg WSMessage) {
-	if h.apiClient == nil {
-		h.sendError(client, "API client not configured")
-		return
+	if msg.Model != "" {
+		if h.router != nil {
+			if pClient, err := h.router.ClientForModel(msg.Model); err == nil {
+				h.apiClient = pClient
+			} else {
+				h.apiClient.SetModel(msg.Model)
+			}
+		} else {
+			h.apiClient.SetModel(msg.Model)
+		}
 	}
-	h.apiClient.SetModel(msg.Model)
 	h.sendToClient(client, WSResponse{
 		Type:    "model_changed",
-		Message: fmt.Sprintf("Model switched to %s", msg.Model),
+		Message: fmt.Sprintf("Model switched to %s", h.apiClient.Model),
 	})
 }
 
@@ -346,7 +378,7 @@ func (h *Handler) handleFileOpen(client *Client, msg WSMessage) {
 		return
 	}
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		h.sendError(client, fmt.Sprintf("Failed to read file: %v", err))
 		return
@@ -373,7 +405,7 @@ func (h *Handler) handleFileSave(client *Client, msg WSMessage) {
 		return
 	}
 
-	if err := ioutil.WriteFile(path, []byte(msg.Content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(msg.Content), 0644); err != nil {
 		h.sendError(client, fmt.Sprintf("Failed to write file: %v", err))
 		return
 	}

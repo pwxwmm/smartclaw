@@ -153,12 +153,26 @@
     <div id="dashboard-panel" class="panel">
       <div class="panel-head">
         <span class="panel-title">Dashboard</span>
-        <button class="icon-btn" id="dashboard-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <div class="panel-actions">
+          <button class="btn-ghost sm" id="telemetry-refresh">Refresh</button>
+          <button class="icon-btn" id="dashboard-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
       </div>
       <div class="dash-grid">
         <div class="dash-card"><h3>Token Usage</h3><canvas id="chart-tokens" width="300" height="160"></canvas></div>
         <div class="dash-card"><h3>Cost Breakdown</h3><canvas id="chart-cost" width="300" height="160"></canvas></div>
         <div class="dash-card"><h3>Agent Activity</h3><canvas id="chart-agents" width="300" height="160"></canvas></div>
+        <div class="dash-card">
+          <h3>Live Telemetry</h3>
+          <div class="telemetry-grid">
+            <div class="stat"><span class="stat-val" id="t-queries">0</span><span class="stat-lbl">Queries</span></div>
+            <div class="stat"><span class="stat-val" id="t-input-tokens">0</span><span class="stat-lbl">Input Tok</span></div>
+            <div class="stat"><span class="stat-val" id="t-output-tokens">0</span><span class="stat-lbl">Output Tok</span></div>
+            <div class="stat"><span class="stat-val" id="t-cost">$0.00</span><span class="stat-lbl">Est. Cost</span></div>
+            <div class="stat"><span class="stat-val" id="t-cache-rate">0%</span><span class="stat-lbl">Cache Hit</span></div>
+            <div class="stat"><span class="stat-val" id="t-avg-latency">0ms</span><span class="stat-lbl">Avg Latency</span></div>
+          </div>
+        </div>
         <div class="dash-card">
           <h3>Session Stats</h3>
           <div class="stats-grid">
@@ -167,6 +181,10 @@
             <div class="stat"><span class="stat-val" id="s-total-cost">$0.00</span><span class="stat-lbl">Cost</span></div>
             <div class="stat"><span class="stat-val" id="s-total-sessions">0</span><span class="stat-lbl">Sessions</span></div>
           </div>
+        </div>
+        <div class="dash-card">
+          <h3>Tool Executions</h3>
+          <div id="tool-exec-list" class="tool-exec-list"></div>
         </div>
       </div>
     </div>
