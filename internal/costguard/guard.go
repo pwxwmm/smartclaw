@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/constants"
 )
 
 // PricingTier defines per-model token costs.
@@ -31,8 +33,8 @@ func DefaultBudgetConfig() BudgetConfig {
 	return BudgetConfig{
 		DailyLimitUSD:      50.0,
 		SessionLimitUSD:    10.0,
-		WarningThreshold:   0.7,
-		DowngradeThreshold: 0.9,
+		WarningThreshold:   constants.BudgetWarningThreshold,
+		DowngradeThreshold: constants.BudgetDowngradeThreshold,
 		DowngradeModel:     "claude-3-5-haiku-20241022",
 		Enabled:            false,
 	}
@@ -287,11 +289,17 @@ func (cg *CostGuard) initPricing() {
 			CacheReadPer1M:   1.5,
 			CacheCreatePer1M: 18.75,
 		},
-		"glm-5": {
+		"glm-4-plus": {
 			InputPricePer1M:  2.0,
 			OutputPricePer1M: 8.0,
 			CacheReadPer1M:   0.2,
 			CacheCreatePer1M: 2.5,
+		},
+		"sre-model": {
+			InputPricePer1M:  0.0,
+			OutputPricePer1M: 0.0,
+			CacheReadPer1M:   0.0,
+			CacheCreatePer1M: 0.0,
 		},
 	}
 }

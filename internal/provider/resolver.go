@@ -124,7 +124,16 @@ func (r *Resolver) loadFromEnv() {
 			Name:    "zhipu",
 			APIKey:  apiKey,
 			BaseURL: "https://open.bigmodel.cn/api/paas/v4",
-			Model:   "glm-5",
+			Model:   "glm-4-plus",
+			Mode:    ModeChatCompletions,
+		})
+	}
+	if apiKey := os.Getenv("SRE_MODEL_API_KEY"); apiKey != "" {
+		r.Register("sre-model", &Provider{
+			Name:    "sre-model",
+			APIKey:  apiKey,
+			BaseURL: os.Getenv("SRE_MODEL_BASE_URL"),
+			Model:   "sre-model",
 			Mode:    ModeChatCompletions,
 		})
 	}
