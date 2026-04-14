@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/constants"
 	"github.com/instructkr/smartclaw/internal/costguard"
 	"github.com/instructkr/smartclaw/internal/hooks"
 	"github.com/instructkr/smartclaw/internal/learning"
@@ -42,10 +43,13 @@ type QueryEngine struct {
 	prefetcher          *tools.PredictivePrefetcher
 	shutdownCh          chan struct{}
 	shutdownOnce        sync.Once
+	bgWg                sync.WaitGroup     // tracks background goroutines
+	cancelBg            context.CancelFunc // cancels background goroutine contexts
 }
 
 func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 	registry := tools.GetRegistry()
+	_, cancelBg := context.WithCancel(context.Background())
 	e := &QueryEngine{
 		client:          client,
 		cacheClient:     api.NewCacheAwareClient(client),
@@ -55,6 +59,7 @@ func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 		hookExecutor:    tools.NewHookAwareExecutor(registry, nil),
 		thinkingManager: NewThinkingManager(),
 		shutdownCh:      make(chan struct{}),
+		cancelBg:        cancelBg,
 	}
 
 	if client != nil && config.EnableLLMCompaction {
@@ -67,6 +72,7 @@ func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 // NewQueryEngineWithHooks creates a QueryEngine with hook support
 func NewQueryEngineWithHooks(client *api.Client, config QueryConfig, hookManager *hooks.HookManager) *QueryEngine {
 	registry := tools.GetRegistry()
+	_, cancelBg := context.WithCancel(context.Background())
 	return &QueryEngine{
 		client:          client,
 		cacheClient:     api.NewCacheAwareClient(client),
@@ -77,6 +83,7 @@ func NewQueryEngineWithHooks(client *api.Client, config QueryConfig, hookManager
 		hookManager:     hookManager,
 		thinkingManager: NewThinkingManager(),
 		shutdownCh:      make(chan struct{}),
+		cancelBg:        cancelBg,
 	}
 }
 
@@ -673,10 +680,7 @@ func extractResponseText(resp *api.MessageResponse) string {
 }
 
 func CalculateCost(usage api.Usage) float64 {
-	inputPrice := 0.000015
-	outputPrice := 0.000075
-
-	cost := float64(usage.InputTokens)*inputPrice + float64(usage.OutputTokens)*outputPrice
+	cost := float64(usage.InputTokens)*constants.TokenPricingInput + float64(usage.OutputTokens)*constants.TokenPricingOutput
 	return cost
 }
 
@@ -719,7 +723,22 @@ func (e *QueryEngine) CompactIfNeeded() {
 // Safe to call multiple times.
 func (e *QueryEngine) Shutdown() {
 	e.shutdownOnce.Do(func() {
+		if e.cancelBg != nil {
+			e.cancelBg()
+		}
 		close(e.shutdownCh)
+
+		done := make(chan struct{})
+		go func() {
+			e.bgWg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(constants.ShutdownWaitTimeout):
+			slog.Warn("engine: timed out waiting for background goroutines to finish")
+		}
 	})
 }
 
@@ -769,8 +788,10 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 			Content: nudge.Content,
 		})
 
+		e.bgWg.Add(1)
 		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer e.bgWg.Done()
+			bgCtx, cancel := context.WithTimeout(context.Background(), constants.BackgroundTaskTimeout)
 			defer cancel()
 
 			select {
@@ -786,8 +807,10 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 			}
 		}()
 
+		e.bgWg.Add(1)
 		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer e.bgWg.Done()
+			bgCtx, cancel := context.WithTimeout(context.Background(), constants.BackgroundTaskTimeout)
 			defer cancel()
 
 			select {
@@ -808,7 +831,9 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 		}()
 	}
 
+	e.bgWg.Add(1)
 	go func() {
+		defer e.bgWg.Done()
 		learningResult := &learning.TaskResult{
 			StopReason: string(result.StopReason),
 			Duration:   result.Duration,

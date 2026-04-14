@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/constants"
 )
 
 type SpeculativeResult struct {
@@ -31,7 +32,7 @@ func NewSpeculativeExecutor(primary, secondary *api.Client) *SpeculativeExecutor
 	return &SpeculativeExecutor{
 		primaryClient:    primary,
 		secondaryClient:  secondary,
-		maxDiffThreshold: 0.3,
+		maxDiffThreshold: constants.SpeculativeSimilarityThreshold,
 		enabled:          false,
 	}
 }
