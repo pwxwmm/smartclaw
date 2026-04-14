@@ -12,27 +12,27 @@ import (
 )
 
 type Config struct {
-	APIKey       string                 `yaml:"api_key"`
-	Model        string                 `yaml:"model"`
-	BaseURL      string                 `yaml:"base_url"`
-	MaxTokens    int                    `yaml:"max_tokens"`
-	Temperature  float64                `yaml:"temperature"`
-	Permission   string                 `yaml:"permission"`
-	Plugins      []string               `yaml:"plugins"`
-	MCPServers   map[string]MCPServer   `yaml:"mcp_servers"`
-	Hooks        map[string][]Hook      `yaml:"hooks"`
-	Custom       map[string]any `yaml:"custom"`
-	SessionDir   string                 `yaml:"session_dir"`
-	LogLevel     string                 `yaml:"log_level"`
-	VoiceEnabled bool                   `yaml:"voice_enabled"`
-	ShowThinking bool                   `yaml:"show_thinking"`
-	OpenAI       bool                   `yaml:"openai"`
-	Session      string                 `yaml:"session"`
-	Editor       string                 `yaml:"editor"`
-	Theme        string                 `yaml:"theme"`
-	Language     string                 `yaml:"language"`
-	AutoSave     bool                   `yaml:"auto_save"`
-	Routing      RoutingConfig          `yaml:"routing"`
+	APIKey       string               `yaml:"api_key"`
+	Model        string               `yaml:"model"`
+	BaseURL      string               `yaml:"base_url"`
+	MaxTokens    int                  `yaml:"max_tokens"`
+	Temperature  float64              `yaml:"temperature"`
+	Permission   string               `yaml:"permission"`
+	Plugins      []string             `yaml:"plugins"`
+	MCPServers   map[string]MCPServer `yaml:"mcp_servers"`
+	Hooks        map[string][]Hook    `yaml:"hooks"`
+	Custom       map[string]any       `yaml:"custom"`
+	SessionDir   string               `yaml:"session_dir"`
+	LogLevel     string               `yaml:"log_level"`
+	VoiceEnabled bool                 `yaml:"voice_enabled"`
+	ShowThinking bool                 `yaml:"show_thinking"`
+	OpenAI       bool                 `yaml:"openai"`
+	Session      string               `yaml:"session"`
+	Editor       string               `yaml:"editor"`
+	Theme        string               `yaml:"theme"`
+	Language     string               `yaml:"language"`
+	AutoSave     bool                 `yaml:"auto_save"`
+	Routing      RoutingConfig        `yaml:"routing"`
 }
 
 type RoutingConfig struct {
@@ -56,8 +56,8 @@ type Hook struct {
 }
 
 var defaultConfig = &Config{
-	Model:        "claude-sonnet-4-5",
-	BaseURL:      "https://api.anthropic.com",
+	Model:        "sre-model",
+	BaseURL:      "http://10.10.190.43:8000/v1",
 	MaxTokens:    4096,
 	Temperature:  1.0,
 	Permission:   "ask",
@@ -68,6 +68,7 @@ var defaultConfig = &Config{
 	LogLevel:     "info",
 	VoiceEnabled: false,
 	ShowThinking: true,
+	OpenAI:       true,
 	Theme:        "dark",
 	Language:     "zh-CN",
 	AutoSave:     true,

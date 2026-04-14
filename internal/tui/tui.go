@@ -60,6 +60,7 @@ type Model struct {
 	showDialog         bool
 	tabs               *Tab
 	mouse              *MouseSupport
+	mouseEnabled       bool
 	updater            *AutoUpdater
 	autocomplete       *AutoComplete
 	streaming          *StreamingOutput
@@ -68,7 +69,7 @@ type Model struct {
 	apiMu              *sync.Mutex
 	messages           []api.Message
 	showThinking       bool
-	currentResponse    strings.Builder
+	streamState        *streamingState
 	markdown           *MarkdownRenderer
 	viewportOffset     int
 	streamingIdx       int
@@ -185,13 +186,15 @@ func InitialModel() Model {
 		loading:            false,
 		tabs:               tabs,
 		mouse:              mouse,
+		mouseEnabled:       false,
 		updater:            updater,
 		autocomplete:       autocomplete,
 		streaming:          streaming,
 		imageViewer:        imageViewer,
 		messages:           make([]api.Message, 0),
 		apiMu:              &sync.Mutex{},
-		showThinking:       viper.GetBool("show_thinking"),
+		streamState:        &streamingState{},
+		showThinking:       false,
 		markdown:           markdown,
 		viewportOffset:     0,
 		streamingIdx:       -1,
@@ -386,6 +389,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case tea.KeyPgUp:
 			m.viewportOffset = max(0, m.viewportOffset-10)
+			return m, nil
 		case tea.KeyPgDown:
 			totalLines := 0
 			for _, msg := range m.output {
@@ -400,6 +404,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			maxOffset := max(0, totalLines-estimatedHeight)
 			m.viewportOffset = min(m.viewportOffset+10, maxOffset)
+			return m, nil
 		case tea.KeyCtrlH:
 			m.showHelp = !m.showHelp
 		case tea.KeyCtrlS:
@@ -453,6 +458,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commandPalette.Show()
 			}
 			return m, nil
+		case tea.KeyCtrlG:
+			m.mouseEnabled = !m.mouseEnabled
+			if m.mouseEnabled {
+				m.copyFeedback = "Mouse mode: scroll + click"
+			} else {
+				m.copyFeedback = "Mouse mode: scroll only (select/copy via keyboard c/C/b)"
+			}
+			return m, nil
+		case tea.KeyCtrlW:
+			m.showThinking = !m.showThinking
+			if m.showThinking {
+				m.copyFeedback = "Thinking block: expanded"
+			} else {
+				m.copyFeedback = "Thinking block: collapsed"
+			}
+			return m, nil
 		default:
 			switch msg.String() {
 			case "c":
@@ -504,6 +525,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.MouseWheelUp:
 			m.viewportOffset = max(0, m.viewportOffset-3)
+			return m, nil
 		case tea.MouseWheelDown:
 			totalLines := 0
 			for _, outputMsg := range m.output {
@@ -518,13 +540,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			maxOffset := max(0, totalLines-estimatedHeight)
 			m.viewportOffset = min(m.viewportOffset+3, maxOffset)
+			return m, nil
+		}
+		if !m.mouseEnabled {
+			return m, nil
 		}
 		return m, nil
 	case TickMsg:
 		m.spinnerFrame = (m.spinnerFrame + 1) % 4
 		if m.loading && m.streamingIdx >= 0 && m.streamingIdx < len(m.output) && m.streamingIdx < len(m.rawOutput) {
-			currentContent := m.currentResponse.String()
+			m.streamState.mu.Lock()
+			currentContent := m.streamState.text.String()
+			m.streamState.mu.Unlock()
 			m.output[m.streamingIdx] = m.formatAssistantOutput(currentContent)
+			m.scrollToBottom()
 			return m, tickCmd()
 		}
 		return m, nil
@@ -536,11 +565,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case UserInputMsg:
 		m.output = append(m.output, m.formatAssistantOutput("Processing: "+msg.text))
 		m.rawOutput = append(m.rawOutput, "SmartClaw: Processing: "+msg.text)
+		m.scrollToBottom()
 	case APICallMsg:
 		m.output = append(m.output, m.formatUserInput(msg.text))
 		m.output = append(m.output, m.formatAssistantOutput(""))
 		m.rawOutput = append(m.rawOutput, "\nYou: "+msg.text)
 		m.rawOutput = append(m.rawOutput, "")
+		m.scrollToBottom()
 
 		m.lastInput = msg.text
 		m.lastError = nil
@@ -556,7 +587,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.streamingIdx = len(m.output) - 1
-		m.currentResponse.Reset()
+		m.streamState.mu.Lock()
+		m.streamState.text.Reset()
+		m.streamState.thinking.Reset()
+		m.streamState.mu.Unlock()
 		m.loading = true
 		return m, tea.Batch(m.callAPI(msg.text), tickCmd())
 	case APIResponseMsg:
@@ -564,6 +598,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.streamingIdx >= 0 && m.streamingIdx < len(m.output) && m.streamingIdx < len(m.rawOutput) {
 			m.output[m.streamingIdx] = m.formatAssistantOutput(msg.text)
 			m.rawOutput[m.streamingIdx] = "\nSmartClaw: " + msg.text
+			m.scrollToBottom()
 
 			if m.currentSession != nil {
 				m.currentSession.AddMessage("assistant", msg.text)
@@ -598,11 +633,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case OutputMsg:
 		m.output = append(m.output, msg.text)
 		m.rawOutput = append(m.rawOutput, msg.text)
+		m.scrollToBottom()
 	case ErrorMsg:
 		smartErr := ClassifyError(fmt.Errorf("%s", msg.err))
 		m.lastError = smartErr
 		m.output = append(m.output, m.formatSmartError(smartErr))
 		m.rawOutput = append(m.rawOutput, smartErr.Message)
+		m.scrollToBottom()
 	}
 
 	var cmd tea.Cmd
@@ -1032,6 +1069,8 @@ func (m Model) renderHelp() string {
 		{"Ctrl+R", "Retry last request"},
 		{"Ctrl+N", "New session"},
 		{"Ctrl+H", "Toggle help"},
+		{"Ctrl+G", "Toggle mouse (scroll vs select/copy)"},
+		{"Ctrl+W", "Toggle thinking block expand/collapse"},
 		{"", ""},
 		{"Copy Shortcuts", ""},
 		{"c", "Copy visible text"},
@@ -1097,7 +1136,7 @@ func (m Model) formatUserInput(input string) string {
 	return header + "\n" + textStyle.Render(input)
 }
 
-func (m Model) formatAssistantOutput(output string) string {
+func (m Model) formatAssistantOutput(output string, rawPrefix ...string) string {
 	asstLabelStyle := lipgloss.NewStyle().
 		Foreground(m.theme.OutputAssistant).
 		Bold(true)
@@ -1120,7 +1159,19 @@ func (m Model) formatAssistantOutput(output string) string {
 		header = asstLabelStyle.Render("◆ SmartClaw:")
 	}
 
-	return header + "\n" + contentStyle.Render(rendered)
+	result := header + "\n"
+
+	if len(rawPrefix) > 0 && rawPrefix[0] != "" {
+		prefix := rawPrefix[0]
+		indentedLines := make([]string, 0, strings.Count(prefix, "\n")+1)
+		for _, line := range strings.Split(prefix, "\n") {
+			indentedLines = append(indentedLines, "  "+line)
+		}
+		result += strings.Join(indentedLines, "\n") + "\n"
+	}
+
+	result += contentStyle.Render(rendered)
+	return result
 }
 
 func (m Model) formatError(err string) string {
@@ -1158,8 +1209,9 @@ type APICallMsg struct {
 }
 
 type APIResponseMsg struct {
-	text   string
-	tokens int
+	text          string
+	thinkingBlock string
+	tokens        int
 }
 
 type UserInputMsg struct {
@@ -1185,8 +1237,9 @@ type StreamChunkMsg struct {
 type TickMsg struct{}
 
 type streamingState struct {
-	mu   sync.Mutex
-	text strings.Builder
+	mu       sync.Mutex
+	text     strings.Builder
+	thinking strings.Builder
 }
 
 func tickCmd() tea.Cmd {
@@ -1196,7 +1249,7 @@ func tickCmd() tea.Cmd {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tickCmd()
+	return tea.Batch(tickCmd(), tea.EnableMouseCellMotion)
 }
 
 func (m *Model) callAPI(input string) tea.Cmd {
@@ -1216,7 +1269,11 @@ func (m *Model) callAPI(input string) tea.Cmd {
 			Messages:  m.messages,
 		}
 
-		m.currentResponse.Reset()
+		m.streamState.mu.Lock()
+		m.streamState.text.Reset()
+		m.streamState.thinking.Reset()
+		m.streamState.mu.Unlock()
+
 		parser := api.NewStreamMessageParser()
 
 		var err error
@@ -1227,13 +1284,14 @@ func (m *Model) callAPI(input string) tea.Cmd {
 					return err
 				}
 
+				m.streamState.mu.Lock()
 				if result.TextDelta != "" {
-					m.currentResponse.WriteString(result.TextDelta)
+					m.streamState.text.WriteString(result.TextDelta)
 				}
-
-				if m.showThinking && result.ThinkingDelta != "" {
-					m.currentResponse.WriteString(result.ThinkingDelta)
+				if result.ThinkingDelta != "" {
+					m.streamState.thinking.WriteString(result.ThinkingDelta)
 				}
+				m.streamState.mu.Unlock()
 
 				return nil
 			})
@@ -1244,13 +1302,14 @@ func (m *Model) callAPI(input string) tea.Cmd {
 					return err
 				}
 
+				m.streamState.mu.Lock()
 				if result.TextDelta != "" {
-					m.currentResponse.WriteString(result.TextDelta)
+					m.streamState.text.WriteString(result.TextDelta)
 				}
-
-				if m.showThinking && result.ThinkingDelta != "" {
-					m.currentResponse.WriteString(result.ThinkingDelta)
+				if result.ThinkingDelta != "" {
+					m.streamState.thinking.WriteString(result.ThinkingDelta)
 				}
+				m.streamState.mu.Unlock()
 
 				return nil
 			})
@@ -1260,8 +1319,17 @@ func (m *Model) callAPI(input string) tea.Cmd {
 			return ErrorMsg{err: err.Error()}
 		}
 
-		finalResponse := m.currentResponse.String()
-		m.currentResponse.Reset()
+		m.streamState.mu.Lock()
+		finalResponse := m.streamState.text.String()
+		thinkingText := m.streamState.thinking.String()
+		m.streamState.text.Reset()
+		m.streamState.thinking.Reset()
+		m.streamState.mu.Unlock()
+
+		var thinkingBlock string
+		if thinkingText != "" {
+			thinkingBlock = formatThinkingBlock(thinkingText, m.showThinking, m.width-2)
+		}
 
 		assistantMsg := api.Message{
 			Role:    "assistant",
@@ -1269,7 +1337,7 @@ func (m *Model) callAPI(input string) tea.Cmd {
 		}
 		m.messages = append(m.messages, assistantMsg)
 
-		return APIResponseMsg{text: finalResponse, tokens: 0}
+		return APIResponseMsg{text: finalResponse, thinkingBlock: thinkingBlock, tokens: 0}
 	}
 }
 
@@ -1285,11 +1353,29 @@ func AddError(m *Model, err string) {
 	m.rawOutput = append(m.rawOutput, "Error: "+err)
 }
 
+func (m *Model) scrollToBottom() {
+	totalLines := 0
+	for _, msg := range m.output {
+		totalLines += len(strings.Split(msg, "\n"))
+	}
+	estimatedHeight := m.height - 10
+	if m.showHelp {
+		estimatedHeight -= 12
+	}
+	if estimatedHeight <= 0 {
+		estimatedHeight = 20
+	}
+	m.viewportOffset = max(0, totalLines-estimatedHeight)
+}
+
 func ClearOutput(m *Model) {
 	m.output = make([]string, 0)
 	m.rawOutput = make([]string, 0)
 	m.streamingIdx = -1
-	m.currentResponse.Reset()
+	m.streamState.mu.Lock()
+	m.streamState.text.Reset()
+	m.streamState.thinking.Reset()
+	m.streamState.mu.Unlock()
 	m.viewportOffset = 0
 	m.tokens = 0
 	m.cost = 0
@@ -1316,4 +1402,111 @@ func (m Model) renderLoading() string {
 		Foreground(m.theme.TextMuted)
 
 	return style.Render(frame) + textStyle.Render(" Thinking...")
+}
+
+func formatThinkingBlock(content string, expanded bool, termWidth int) string {
+	if content == "" {
+		return ""
+	}
+
+	if !expanded {
+		label := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243")).
+			Italic(true).
+			Render(fmt.Sprintf("◈ Thought process (%d chars) — Ctrl+T to expand", len(content)))
+		return label + "\n\n"
+	}
+
+	if termWidth < 40 {
+		termWidth = 40
+	}
+	if termWidth > 120 {
+		termWidth = 120
+	}
+
+	borderColor := lipgloss.Color("240")
+	labelColor := lipgloss.Color("180")
+	contentColor := lipgloss.Color("244")
+
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
+	labelStyle := lipgloss.NewStyle().Foreground(labelColor).Bold(true)
+	contentStyle := lipgloss.NewStyle().Foreground(contentColor).Italic(true)
+
+	innerWidth := termWidth - 4
+
+	labelText := "◈ Thought Process"
+	labelRendered := labelStyle.Render(labelText)
+	labelWidth := lipgloss.Width(labelRendered)
+
+	leftBorder := borderStyle.Render("╭─ ")
+	cornerRight := borderStyle.Render("╮")
+	dashCount := innerWidth - 3 - labelWidth - 1
+	if dashCount < 1 {
+		dashCount = 1
+	}
+	top := leftBorder + labelRendered + " " + borderStyle.Render(strings.Repeat("─", dashCount)) + cornerRight
+
+	var wrappedLines []string
+	for _, line := range strings.Split(content, "\n") {
+		if line == "" {
+			wrappedLines = append(wrappedLines, "")
+			continue
+		}
+		for _, wl := range wrapLineRunes(line, innerWidth) {
+			wrappedLines = append(wrappedLines, contentStyle.Render(wl))
+		}
+	}
+
+	if len(wrappedLines) > 50 {
+		wrappedLines = wrappedLines[:50]
+		wrappedLines = append(wrappedLines, contentStyle.Render("... (truncated)"))
+	}
+
+	var bodyBuilder strings.Builder
+	sideBorder := borderStyle.Render("│")
+	for _, line := range wrappedLines {
+		visualWidth := lipgloss.Width(line)
+		padCount := innerWidth - visualWidth
+		if padCount < 0 {
+			padCount = 0
+		}
+		bodyBuilder.WriteString(sideBorder + " " + line + strings.Repeat(" ", padCount) + " " + sideBorder + "\n")
+	}
+
+	bottomLeft := borderStyle.Render("╰")
+	bottomRight := borderStyle.Render("╯")
+	bottomDashes := borderStyle.Render(strings.Repeat("─", innerWidth+2))
+	bottom := bottomLeft + bottomDashes + bottomRight
+
+	return top + "\n" + bodyBuilder.String() + bottom + "\n\n"
+}
+
+func wrapLineRunes(line string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{line}
+	}
+	runes := []rune(line)
+	if len(runes) <= maxWidth {
+		return []string{line}
+	}
+	var result []string
+	for len(runes) > 0 {
+		if len(runes) <= maxWidth {
+			result = append(result, string(runes))
+			break
+		}
+		breakAt := maxWidth
+		for i := maxWidth; i > maxWidth/2; i-- {
+			if runes[i] == ' ' {
+				breakAt = i
+				break
+			}
+		}
+		result = append(result, string(runes[:breakAt]))
+		runes = runes[breakAt:]
+		if len(runes) > 0 && runes[0] == ' ' {
+			runes = runes[1:]
+		}
+	}
+	return result
 }

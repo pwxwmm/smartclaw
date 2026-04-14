@@ -74,7 +74,7 @@ func init() {
 	rootCmd.PersistentFlags().String("api-key", "", "Anthropic API key (or set ANTHROPIC_API_KEY)")
 	rootCmd.PersistentFlags().String("url", "", "API base URL (for custom API endpoints)")
 	rootCmd.PersistentFlags().Bool("openai", false, "Use OpenAI-compatible API format")
-	rootCmd.PersistentFlags().Bool("show-thinking", true, "Show thinking/reasoning content from models like GLM-5")
+	rootCmd.PersistentFlags().Bool("show-thinking", true, "Show thinking/reasoning content in a styled block")
 	rootCmd.PersistentFlags().String("session", "", "Resume session by ID")
 	rootCmd.PersistentFlags().String("system-prompt", "", "Custom system prompt")
 
