@@ -90,6 +90,12 @@ body { font-family: var(--font-b); font-size: 14px; color: var(--tx-0); backgrou
 .btn-primary.sm { padding: 4px 10px; }
 .btn-stop { padding: 4px 12px; font-size: 11px; font-family: var(--font-b); font-weight: 600; background: var(--err); color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: opacity var(--dur-s); }
 .btn-stop:hover { opacity: 0.85; }
+.cfg-input { background: var(--bg-2); color: var(--tx-0); border: 1px solid var(--bd); border-radius: 4px; padding: 5px 8px; font-family: var(--font-d); font-size: 12px; outline: none; width: 180px; transition: border-color var(--dur-s) var(--ease); }
+.cfg-input:focus { border-color: var(--accent-bd); box-shadow: 0 0 0 2px var(--accent-bg); }
+.cfg-input::placeholder { color: var(--tx-2); font-size: 11px; }
+.settings-divider { border-top: 1px solid var(--bd); margin: 8px 0; }
+.settings-group-title { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.6px; margin: 4px 0 6px; }
+.setting-row input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
 .btn-send { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; background: var(--accent); color: var(--bg-0); border: none; border-radius: var(--r); cursor: pointer; transition: all var(--dur-s) var(--ease); flex-shrink: 0; }
 .btn-send:hover { background: var(--accent-h); transform: scale(1.04); }
 .btn-send:active { transform: scale(0.96); }
@@ -123,10 +129,63 @@ body { font-family: var(--font-b); font-size: 14px; color: var(--tx-0); backgrou
 .think-label { font-size: 12px; font-weight: 500; color: var(--tx-2); letter-spacing: 0.8px; text-transform: uppercase; display: inline-flex; align-items: baseline; animation: thinkBreathe 3s var(--ease) infinite; }
 .think-dots { display: inline-flex; margin-left: 1px; overflow: hidden; width: 0; animation: thinkDotsWidth 1.5s steps(4,end) infinite; }
 .think-dots span { display: inline-block; font-size: 12px; line-height: 1; }
-.thinking-block { margin: 8px 0; border: 1px solid var(--bd); border-radius: var(--r); overflow: hidden; background: var(--bg-1); }
-.thinking-block summary { padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--tx-2); cursor: pointer; font-family: var(--font-d); user-select: none; transition: color var(--dur-s) var(--ease); }
-.thinking-block summary:hover { color: var(--tx-1); }
-.thinking-content { padding: 8px 12px; font-size: 12px; font-family: var(--font-d); line-height: 1.5; color: var(--tx-2); white-space: pre-wrap; max-height: 300px; overflow-y: auto; border-top: 1px solid var(--bd); background: var(--bg-0); }
+.thinking-block {
+  margin: 10px 0;
+  border-radius: var(--r-l);
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(200,164,78,0.04) 0%, rgba(200,164,78,0.01) 100%);
+  border-left: 3px solid;
+  border-image: linear-gradient(180deg, var(--accent), transparent) 1;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.thinking-block summary {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-d);
+  user-select: none;
+  transition: all var(--dur-s) var(--ease);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.thinking-block summary::-webkit-details-marker { display: none; }
+.thinking-block summary::before {
+  content: '▸';
+  font-size: 10px;
+  transition: transform var(--dur-s) var(--ease);
+  display: inline-block;
+}
+.thinking-block[open] summary::before {
+  transform: rotate(90deg);
+}
+.thinking-block summary:hover {
+  color: var(--accent-h);
+  background: rgba(200,164,78,0.06);
+}
+.thinking-block[open] summary {
+  animation: thinkPulse 2s var(--ease) infinite;
+}
+.thinking-content {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: var(--font-d);
+  line-height: 1.6;
+  color: var(--tx-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  background: rgba(0,0,0,0.15);
+}
+@keyframes thinkPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
 @keyframes pupilOrbit {
   0%   { transform: translate(0, 0); }
   25%  { transform: translate(1.5px, -1.2px); }

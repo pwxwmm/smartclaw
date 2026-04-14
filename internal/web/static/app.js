@@ -6,7 +6,7 @@
 
   const state = {
     messages: [], sessions: [], tools: [], agents: [], files: [],
-    settings: { theme: 'dark', fontSize: 14, model: 'glm-5' },
+    settings: { theme: 'dark', fontSize: 14, model: 'sre-model' },
     ui: { sidebarOpen: true, activeSection: 'files', currentFile: null, editorFile: null, currentSessionId: null },
     tokens: { used: 0, limit: 200000 },
     cost: 0,
@@ -242,24 +242,13 @@
       const bubble = currentAssistantEl.querySelector('.msg-bubble');
       const thinking = bubble.querySelector('.thinking');
       if (thinking) thinking.remove();
+
       const thinkingBlockEl = bubble.querySelector('.thinking-block');
-      const now = Date.now();
-      if (currentContent.length > 200 && now - lastStreamRender > 300) {
-        lastStreamRender = now;
-        try {
-          const rendered = renderMarkdown(currentContent);
-          if (thinkingBlockEl) {
-            bubble.innerHTML = rendered;
-            bubble.prepend(thinkingBlockEl);
-          } else {
-            bubble.innerHTML = rendered;
-          }
-          bubble.classList.add('rendered');
-        } catch (e) {
-          bubble.innerHTML = renderPlainText(currentContent);
-        }
-      } else {
-        bubble.innerHTML = renderPlainText(currentContent);
+
+      bubble.innerHTML = renderPlainText(currentContent);
+
+      if (thinkingBlockEl) {
+        bubble.prepend(thinkingBlockEl);
       }
       scrollChat();
     });
@@ -273,14 +262,14 @@
       thinkingBlock = document.createElement('details');
       thinkingBlock.className = 'thinking-block';
       thinkingBlock.open = true;
-      thinkingBlock.innerHTML = '<summary>Thinking...</summary><div class="thinking-content"></div>';
+      thinkingBlock.innerHTML = '<summary>💭 Thinking...</summary><div class="thinking-content"></div>';
       const thinking = bubble.querySelector('.thinking');
       if (thinking) thinking.replaceWith(thinkingBlock);
       else bubble.prepend(thinkingBlock);
     }
     const content = thinkingBlock.querySelector('.thinking-content');
     content.textContent = currentThinking;
-    thinkingBlock.querySelector('summary').textContent = 'Thinking...';
+    thinkingBlock.querySelector('summary').textContent = '💭 Thinking...';
     scrollChat();
   }
 
@@ -301,7 +290,7 @@
         }
         if (thinkingBlockEl) {
           thinkingBlockEl.open = false;
-          thinkingBlockEl.querySelector('summary').textContent = 'Thought process (' + currentThinking.length + ' chars)';
+          thinkingBlockEl.querySelector('summary').textContent = '💭 Thought process (' + currentThinking.length + ' chars)';
           bubble.prepend(thinkingBlockEl);
           thinkingBlock = null;
         }
@@ -317,7 +306,7 @@
     }
     if (thinkingBlock) {
       thinkingBlock.open = false;
-      thinkingBlock.querySelector('summary').textContent = 'Thought process (' + currentThinking.length + ' chars)';
+      thinkingBlock.querySelector('summary').textContent = '💭 Thought process (' + currentThinking.length + ' chars)';
       thinkingBlock = null;
     }
     if (doneTimeout) { clearTimeout(doneTimeout); doneTimeout = null; }
@@ -1133,14 +1122,23 @@
     if (messages.children.length > 0) return;
     messages.innerHTML = `
       <div class="welcome">
-        <svg class="welcome-icon" width="48" height="48" viewBox="0 0 24 24" fill="none">
-          <ellipse cx="12" cy="14" rx="8" ry="9" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M4 3l4.5 7M20 3l-4.5 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <circle cx="9" cy="12.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
-          <circle cx="15" cy="12.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
-          <circle cx="9" cy="12.5" r="1.1" fill="currentColor"/>
-          <circle cx="15" cy="12.5" r="1.1" fill="currentColor"/>
-          <path d="M11.2 16l.8 2.5.8-2.5" fill="currentColor"/>
+        <svg class="welcome-icon" width="64" height="64" viewBox="0 0 512 512" fill="none">
+          <circle cx="256" cy="256" r="240" fill="#0f172a" opacity=".95"/>
+          <path d="M190 170L175 110L210 155Z" fill="#2d3748"/>
+          <path d="M322 170L337 110L302 155Z" fill="#2d3748"/>
+          <path d="M120 220Q80 280 100 360Q130 340 160 300Q170 260 155 230Z" fill="#2d3748"/>
+          <path d="M392 220Q432 280 412 360Q382 340 352 300Q342 260 357 230Z" fill="#2d3748"/>
+          <ellipse cx="256" cy="310" rx="100" ry="120" fill="#2d3748"/>
+          <ellipse cx="256" cy="195" rx="85" ry="70" fill="#2d3748"/>
+          <circle cx="225" cy="190" r="24" fill="#ed8936"/>
+          <circle cx="287" cy="190" r="24" fill="#ed8936"/>
+          <circle cx="225" cy="190" r="14" fill="#0d0d1a"/>
+          <circle cx="287" cy="190" r="14" fill="#0d0d1a"/>
+          <circle cx="225" cy="190" r="7" fill="#000"/>
+          <circle cx="287" cy="190" r="7" fill="#000"/>
+          <circle cx="219" cy="184" r="3.5" fill="#fff" opacity=".85"/>
+          <circle cx="281" cy="184" r="3.5" fill="#fff" opacity=".85"/>
+          <path d="M248 208L256 228L264 208Z" fill="#ed8936"/>
         </svg>
         <h2>SmartClaw</h2>
         <p>Your AI coding assistant. Ask me anything about your codebase, write features, debug issues, or explore your project.</p>
@@ -1251,6 +1249,17 @@
       applySettings();
     });
 
+    loadProviderConfig();
+
+    $('#btn-save-provider').addEventListener('click', saveProviderConfig);
+
+    $('#model-select').addEventListener('change', (e) => {
+      const custom = $('#cfg-custom-model');
+      if (e.target.value !== '__custom__') {
+        if (custom) custom.value = e.target.value;
+      }
+    });
+
     $('#btn-voice').addEventListener('click', () => {
       if (state.isRecording) stopVoice();
       else startVoice();
@@ -1304,6 +1313,71 @@
       };
       input.click();
     });
+  }
+
+  function loadProviderConfig() {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        if (cfg.api_key) {
+          const el = $('#cfg-api-key');
+          if (el) el.value = cfg.api_key;
+        }
+        if (cfg.base_url) {
+          const el = $('#cfg-base-url');
+          if (el) el.value = cfg.base_url;
+        }
+        if (cfg.model) {
+          const el = $('#cfg-custom-model');
+          if (el) el.value = cfg.model;
+          const sel = $('#model-select');
+          if (sel) {
+            let found = false;
+            for (const opt of sel.options) {
+              if (opt.value === cfg.model) { found = true; break; }
+            }
+            if (found) sel.value = cfg.model;
+          }
+          $('#current-model').textContent = cfg.model;
+          state.settings.model = cfg.model;
+        }
+        if (cfg.openai !== undefined) {
+          const el = $('#cfg-openai');
+          if (el) el.checked = cfg.openai;
+        }
+      })
+      .catch(() => {});
+  }
+
+  function saveProviderConfig() {
+    const apiKey = $('#cfg-api-key')?.value?.trim() || '';
+    const baseUrl = $('#cfg-base-url')?.value?.trim() || '';
+    const customModel = $('#cfg-custom-model')?.value?.trim() || '';
+    const openai = $('#cfg-openai')?.checked ?? true;
+
+    const model = customModel || $('#model-select')?.value || 'sre-model';
+
+    const config = {
+      api_key: apiKey,
+      base_url: baseUrl,
+      model: model,
+      openai: openai,
+      show_thinking: true,
+    };
+
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    })
+    .then(r => r.json())
+    .then(() => {
+      state.settings.model = model;
+      $('#current-model').textContent = model;
+      wsSend('model', { model: model });
+      toast('Provider config saved & applied', 'success');
+    })
+    .catch(() => toast('Failed to save config', 'error'));
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

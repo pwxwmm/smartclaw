@@ -108,7 +108,7 @@ func loadAPIConfig() (apiKey, baseURL, model string) {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
 	}
 	if model == "" {
-		model = "glm-5"
+		model = "sre-model"
 	}
 	return
 }
@@ -291,9 +291,6 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 						fullContent += payload.Delta.Text
 						h.sendToClient(client, WSResponse{Type: "token", Content: payload.Delta.Text})
 					} else if payload.Delta.Type == "thinking_delta" && payload.Delta.Thinking != "" {
-						if h.showThinking {
-							h.sendToClient(client, WSResponse{Type: "thinking", Content: payload.Delta.Thinking})
-						}
 					}
 				}
 			case "message_stop":
@@ -608,7 +605,7 @@ type StatsResponse struct {
 }
 
 func (h *Handler) GetStats() StatsResponse {
-	model := "glm-5"
+	model := "sre-model"
 	if h.apiClient != nil {
 		model = h.apiClient.Model
 	}

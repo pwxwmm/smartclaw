@@ -283,6 +283,9 @@ func (s *WebServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save config"})
 			return
 		}
+
+		s.reloadAPIClient(config)
+
 		writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 		return
 	}
@@ -329,6 +332,27 @@ func estimateCost(snapshot observability.MetricsSnapshot) float64 {
 	inputPrice := 0.000003
 	outputPrice := 0.000015
 	return float64(snapshot.TotalInputTokens)*inputPrice + float64(snapshot.TotalOutputTokens)*outputPrice
+}
+
+func (s *WebServer) reloadAPIClient(config map[string]any) {
+	apiKey, _ := config["api_key"].(string)
+	baseURL, _ := config["base_url"].(string)
+	model, _ := config["model"].(string)
+
+	if apiKey == "" || baseURL == "" || model == "" {
+		return
+	}
+
+	openai := false
+	if v, ok := config["openai"]; ok {
+		openai, _ = v.(bool)
+	}
+
+	newClient := api.NewClientWithModel(apiKey, baseURL, model)
+	newClient.IsOpenAI = openai
+	s.apiClient = newClient
+	s.handler.apiClient = newClient
+	log.Printf("Provider config reloaded: model=%s base_url=%s openai=%v", model, baseURL, openai)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
