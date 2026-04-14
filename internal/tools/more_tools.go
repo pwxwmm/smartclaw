@@ -20,9 +20,9 @@ import (
 
 // Global todo manager instance
 var (
-	todoManager     *TodoManager
-	todoManagerOnce sync.Once
-	todoManagerErr  error
+	todoManager	*TodoManager
+	todoManagerOnce	sync.Once
+	todoManagerErr	error
 )
 
 func getTodoManager() *TodoManager {
@@ -48,41 +48,41 @@ func NewTodoWriteTool(sessionID string) *TodoWriteTool {
 	return &TodoWriteTool{sessionID: sessionID}
 }
 
-func (t *TodoWriteTool) Name() string { return "todowrite" }
+func (t *TodoWriteTool) Name() string	{ return "todowrite" }
 func (t *TodoWriteTool) Description() string {
 	return "Manage the session task checklist. Use this to track progress and plan work."
 }
 
 func (t *TodoWriteTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"todos": map[string]any{
-				"type":        "array",
-				"description": "The updated todo list",
+				"type":		"array",
+				"description":	"The updated todo list",
 				"items": map[string]any{
-					"type": "object",
+					"type":	"object",
 					"properties": map[string]any{
 						"content": map[string]any{
-							"type":        "string",
-							"description": "Brief description of the task",
+							"type":		"string",
+							"description":	"Brief description of the task",
 						},
 						"status": map[string]any{
-							"type":        "string",
-							"enum":        []string{"pending", "in_progress", "completed", "cancelled"},
-							"description": "Current status of the todo",
+							"type":		"string",
+							"enum":		[]string{"pending", "in_progress", "completed", "cancelled"},
+							"description":	"Current status of the todo",
 						},
 						"priority": map[string]any{
-							"type":        "string",
-							"enum":        []string{"high", "medium", "low"},
-							"description": "Priority level",
+							"type":		"string",
+							"enum":		[]string{"high", "medium", "low"},
+							"description":	"Priority level",
 						},
 					},
-					"required": []string{"content", "status"},
+					"required":	[]string{"content", "status"},
 				},
 			},
 		},
-		"required": []string{"todos"},
+		"required":	[]string{"todos"},
 	}
 }
 
@@ -136,11 +136,11 @@ func (t *TodoWriteTool) Execute(ctx context.Context, input map[string]any) (any,
 
 	// Prepare response
 	response := map[string]any{
-		"success":            true,
-		"old_todos":          oldTodos,
-		"new_todos":          todos,
-		"count":              len(todos),
-		"verification_nudge": verificationNudge,
+		"success":		true,
+		"old_todos":		oldTodos,
+		"new_todos":		todos,
+		"count":		len(todos),
+		"verification_nudge":	verificationNudge,
 	}
 
 	// Add nudge message if needed
@@ -154,59 +154,59 @@ func (t *TodoWriteTool) Execute(ctx context.Context, input map[string]any) (any,
 }
 
 // AskUserQuestionTool asks the user questions during execution
-type AskUserQuestionTool struct{}
+type AskUserQuestionTool struct{ BaseTool }
 
-func (t *AskUserQuestionTool) Name() string { return "ask_user" }
+func (t *AskUserQuestionTool) Name() string	{ return "ask_user" }
 func (t *AskUserQuestionTool) Description() string {
 	return "Ask the user questions to gather information, clarify ambiguity, or get decisions"
 }
 
 func (t *AskUserQuestionTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"questions": map[string]any{
-				"type":        "array",
-				"description": "Questions to ask the user",
+				"type":		"array",
+				"description":	"Questions to ask the user",
 				"items": map[string]any{
-					"type": "object",
+					"type":	"object",
 					"properties": map[string]any{
 						"question": map[string]any{
-							"type":        "string",
-							"description": "The question to ask",
+							"type":		"string",
+							"description":	"The question to ask",
 						},
 						"header": map[string]any{
-							"type":        "string",
-							"description": "Short header for the question (max 30 chars)",
+							"type":		"string",
+							"description":	"Short header for the question (max 30 chars)",
 						},
 						"options": map[string]any{
-							"type":        "array",
-							"description": "Available choices",
+							"type":		"array",
+							"description":	"Available choices",
 							"items": map[string]any{
-								"type": "object",
+								"type":	"object",
 								"properties": map[string]any{
 									"label": map[string]any{
-										"type":        "string",
-										"description": "Display text (1-5 words)",
+										"type":		"string",
+										"description":	"Display text (1-5 words)",
 									},
 									"description": map[string]any{
-										"type":        "string",
-										"description": "Explanation of choice",
+										"type":		"string",
+										"description":	"Explanation of choice",
 									},
 								},
-								"required": []string{"label"},
+								"required":	[]string{"label"},
 							},
 						},
 						"multiple": map[string]any{
-							"type":        "boolean",
-							"description": "Allow selecting multiple choices",
+							"type":		"boolean",
+							"description":	"Allow selecting multiple choices",
 						},
 					},
-					"required": []string{"question"},
+					"required":	[]string{"question"},
 				},
 			},
 		},
-		"required": []string{"questions"},
+		"required":	[]string{"questions"},
 	}
 }
 
@@ -228,11 +228,11 @@ func (t *AskUserQuestionTool) Execute(ctx context.Context, input map[string]any)
 	}
 
 	return map[string]any{
-		"status":         "pending_user_response",
-		"questions":      questions,
-		"question_count": len(questions),
-		"message":        "User interaction required. Questions prepared for display.",
-		"instructions":   "Present these questions to the user and collect responses before continuing.",
+		"status":		"pending_user_response",
+		"questions":		questions,
+		"question_count":	len(questions),
+		"message":		"User interaction required. Questions prepared for display.",
+		"instructions":		"Present these questions to the user and collect responses before continuing.",
 	}, nil
 }
 
@@ -249,29 +249,29 @@ func NewConfigTool() *ConfigTool {
 	}
 }
 
-func (t *ConfigTool) Name() string { return "config" }
+func (t *ConfigTool) Name() string	{ return "config" }
 func (t *ConfigTool) Description() string {
 	return "Get or set Claude Code settings"
 }
 
 func (t *ConfigTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"operation": map[string]any{
-				"type":        "string",
-				"enum":        []string{"get", "set", "list"},
-				"description": "Operation to perform",
+				"type":		"string",
+				"enum":		[]string{"get", "set", "list"},
+				"description":	"Operation to perform",
 			},
 			"key": map[string]any{
-				"type":        "string",
-				"description": "Configuration key (e.g., 'model', 'theme')",
+				"type":		"string",
+				"description":	"Configuration key (e.g., 'model', 'theme')",
 			},
 			"value": map[string]any{
 				"description": "New value for set operation",
 			},
 		},
-		"required": []string{"operation"},
+		"required":	[]string{"operation"},
 	}
 }
 
@@ -300,15 +300,15 @@ func (t *ConfigTool) get(input map[string]any) (any, error) {
 	value, exists := config[key]
 	if !exists {
 		return map[string]any{
-			"success": false,
-			"error":   fmt.Sprintf("Unknown setting: %s", key),
+			"success":	false,
+			"error":	fmt.Sprintf("Unknown setting: %s", key),
 		}, nil
 	}
 
 	return map[string]any{
-		"success": true,
-		"key":     key,
-		"value":   value,
+		"success":	true,
+		"key":		key,
+		"value":	value,
 	}, nil
 }
 
@@ -329,10 +329,10 @@ func (t *ConfigTool) set(input map[string]any) (any, error) {
 	}
 
 	return map[string]any{
-		"success":        true,
-		"key":            key,
-		"previous_value": previousValue,
-		"new_value":      value,
+		"success":		true,
+		"key":			key,
+		"previous_value":	previousValue,
+		"new_value":		value,
 	}, nil
 }
 
@@ -342,15 +342,15 @@ func (t *ConfigTool) list() (any, error) {
 	settings := make([]map[string]any, 0, len(config))
 	for k, v := range config {
 		settings = append(settings, map[string]any{
-			"key":   k,
-			"value": v,
+			"key":		k,
+			"value":	v,
 		})
 	}
 
 	return map[string]any{
-		"success":  true,
-		"settings": settings,
-		"count":    len(settings),
+		"success":	true,
+		"settings":	settings,
+		"count":	len(settings),
 	}, nil
 }
 
@@ -360,9 +360,9 @@ func (t *ConfigTool) loadConfig() map[string]any {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return map[string]any{
-			"model":      "claude-sonnet-4-5",
-			"permission": "ask",
-			"log_level":  "info",
+			"model":	"claude-sonnet-4-5",
+			"permission":	"ask",
+			"log_level":	"info",
 		}
 	}
 
@@ -401,25 +401,25 @@ func NewSkillTool() *SkillTool {
 	}
 }
 
-func (t *SkillTool) Name() string { return "skill" }
+func (t *SkillTool) Name() string	{ return "skill" }
 func (t *SkillTool) Description() string {
 	return "Load a skill or slash command to get specialized instructions"
 }
 
 func (t *SkillTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"name": map[string]any{
-				"type":        "string",
-				"description": "The skill name (e.g., 'commit', 'review-pr', 'git-master')",
+				"type":		"string",
+				"description":	"The skill name (e.g., 'commit', 'review-pr', 'git-master')",
 			},
 			"user_message": map[string]any{
-				"type":        "string",
-				"description": "Optional context or arguments for the skill",
+				"type":		"string",
+				"description":	"Optional context or arguments for the skill",
 			},
 		},
-		"required": []string{"name"},
+		"required":	[]string{"name"},
 	}
 }
 
@@ -438,18 +438,18 @@ func (t *SkillTool) Execute(ctx context.Context, input map[string]any) (any, err
 	skillContent, skillPath, err := t.loadSkill(name)
 	if err != nil {
 		return map[string]any{
-			"success": false,
-			"error":   fmt.Sprintf("Skill not found: %s", name),
+			"success":	false,
+			"error":	fmt.Sprintf("Skill not found: %s", name),
 		}, nil
 	}
 
 	return map[string]any{
-		"success":      true,
-		"skill_name":   name,
-		"skill_path":   skillPath,
-		"content":      skillContent,
-		"user_message": userMessage,
-		"message":      fmt.Sprintf("Skill '%s' loaded successfully", name),
+		"success":	true,
+		"skill_name":	name,
+		"skill_path":	skillPath,
+		"content":	skillContent,
+		"user_message":	userMessage,
+		"message":	fmt.Sprintf("Skill '%s' loaded successfully", name),
 	}, nil
 }
 
@@ -481,47 +481,47 @@ func (t *SkillTool) loadSkill(name string) (string, string, error) {
 func (t *SkillTool) getBundledSkill(name string) string {
 	// Bundled skills that are always available
 	bundledSkills := map[string]string{
-		"help": "# Help Skill\n\nThis skill provides guidance on using Claude Code.\n\nAvailable features:\n- File operations (read, write, edit, glob, grep)\n- Code analysis (LSP, AST grep)\n- Web tools (fetch, search)\n- Agent spawning for parallel tasks\n- Session management\n- MCP protocol integration\n\nUse /help to see all available commands.\n",
+		"help":	"# Help Skill\n\nThis skill provides guidance on using Claude Code.\n\nAvailable features:\n- File operations (read, write, edit, glob, grep)\n- Code analysis (LSP, AST grep)\n- Web tools (fetch, search)\n- Agent spawning for parallel tasks\n- Session management\n- MCP protocol integration\n\nUse /help to see all available commands.\n",
 
-		"commit": "# Commit Skill\n\nThis skill helps create well-structured git commits.\n\n## Guidelines\n\n1. **Atomic commits**: One logical change per commit\n2. **Clear messages**: Describe what and why, not how\n3. **Conventional commits**: Use prefixes (feat, fix, docs, style, refactor, test, chore)\n\n## Commit Message Format\n\n<type>(<scope>): <subject>\n\n<body>\n\n<footer>\n\n## Types\n- feat: New feature\n- fix: Bug fix\n- docs: Documentation\n- style: Formatting\n- refactor: Code restructuring\n- test: Adding tests\n- chore: Maintenance\n\n## Example\n\nfeat(auth): add OAuth2 support\n\nImplement OAuth2 authentication flow with PKCE challenge.\nSupports Google, GitHub, and custom providers.\n\nCloses #123\n",
+		"commit":	"# Commit Skill\n\nThis skill helps create well-structured git commits.\n\n## Guidelines\n\n1. **Atomic commits**: One logical change per commit\n2. **Clear messages**: Describe what and why, not how\n3. **Conventional commits**: Use prefixes (feat, fix, docs, style, refactor, test, chore)\n\n## Commit Message Format\n\n<type>(<scope>): <subject>\n\n<body>\n\n<footer>\n\n## Types\n- feat: New feature\n- fix: Bug fix\n- docs: Documentation\n- style: Formatting\n- refactor: Code restructuring\n- test: Adding tests\n- chore: Maintenance\n\n## Example\n\nfeat(auth): add OAuth2 support\n\nImplement OAuth2 authentication flow with PKCE challenge.\nSupports Google, GitHub, and custom providers.\n\nCloses #123\n",
 
-		"git-master": "# Git Master Skill\n\nExpert-level git operations and workflows.\n\n## Best Practices\n\n1. **Atomic commits**: One logical change per commit\n2. **Meaningful messages**: Clear, descriptive commit messages\n3. **Branch hygiene**: Delete merged branches\n4. **Rebase over merge**: Keep history linear when possible\n5. **Sign commits**: Use GPG signing for security\n\n## Common Workflows\n\n### Feature Development\n\ngit checkout -b feature/my-feature\n# Make changes\ngit add -p\ngit commit -m \"feat: add new feature\"\ngit push -u origin feature/my-feature\n# Create PR\n\n### Bug Fix\n\ngit checkout -b fix/bug-description\n# Fix bug\ngit add .\ngit commit -m \"fix: correct issue with X\"\ngit push -u origin fix/bug-description\n# Create PR\n\n### Hotfix\n\ngit checkout main\ngit pull\ngit checkout -b hotfix/critical-fix\n# Apply fix\ngit commit -m \"fix: critical security issue\"\ngit push -u origin hotfix/critical-fix\n# Create PR and merge immediately\n\n## Useful Commands\n\n- Interactive rebase: git rebase -i HEAD~3\n- Cherry pick: git cherry-pick <commit>\n- Stash: git stash push -m \"message\"\n- Clean branches: git branch --merged | grep -v \"*\" | xargs -n 1 git branch -d\n",
+		"git-master":	"# Git Master Skill\n\nExpert-level git operations and workflows.\n\n## Best Practices\n\n1. **Atomic commits**: One logical change per commit\n2. **Meaningful messages**: Clear, descriptive commit messages\n3. **Branch hygiene**: Delete merged branches\n4. **Rebase over merge**: Keep history linear when possible\n5. **Sign commits**: Use GPG signing for security\n\n## Common Workflows\n\n### Feature Development\n\ngit checkout -b feature/my-feature\n# Make changes\ngit add -p\ngit commit -m \"feat: add new feature\"\ngit push -u origin feature/my-feature\n# Create PR\n\n### Bug Fix\n\ngit checkout -b fix/bug-description\n# Fix bug\ngit add .\ngit commit -m \"fix: correct issue with X\"\ngit push -u origin fix/bug-description\n# Create PR\n\n### Hotfix\n\ngit checkout main\ngit pull\ngit checkout -b hotfix/critical-fix\n# Apply fix\ngit commit -m \"fix: critical security issue\"\ngit push -u origin hotfix/critical-fix\n# Create PR and merge immediately\n\n## Useful Commands\n\n- Interactive rebase: git rebase -i HEAD~3\n- Cherry pick: git cherry-pick <commit>\n- Stash: git stash push -m \"message\"\n- Clean branches: git branch --merged | grep -v \"*\" | xargs -n 1 git branch -d\n",
 	}
 
 	return bundledSkills[name]
 }
 
 // NotebookEditTool edits Jupyter notebook cells
-type NotebookEditTool struct{}
+type NotebookEditTool struct{ BaseTool }
 
-func (t *NotebookEditTool) Name() string { return "notebook_edit" }
+func (t *NotebookEditTool) Name() string	{ return "notebook_edit" }
 func (t *NotebookEditTool) Description() string {
 	return "Edit Jupyter notebook cells"
 }
 
 func (t *NotebookEditTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"path": map[string]any{
-				"type":        "string",
-				"description": "Path to the notebook file",
+				"type":		"string",
+				"description":	"Path to the notebook file",
 			},
 			"cell_number": map[string]any{
-				"type":        "integer",
-				"description": "Cell number to edit (0-indexed)",
+				"type":		"integer",
+				"description":	"Cell number to edit (0-indexed)",
 			},
 			"source": map[string]any{
-				"type":        "string",
-				"description": "New cell source code",
+				"type":		"string",
+				"description":	"New cell source code",
 			},
 			"cell_type": map[string]any{
-				"type":        "string",
-				"enum":        []string{"code", "markdown"},
-				"description": "Type of cell",
+				"type":		"string",
+				"enum":		[]string{"code", "markdown"},
+				"description":	"Type of cell",
 			},
 		},
-		"required": []string{"path", "cell_number"},
+		"required":	[]string{"path", "cell_number"},
 	}
 }
 
@@ -591,10 +591,10 @@ func (t *NotebookEditTool) Execute(ctx context.Context, input map[string]any) (a
 	}
 
 	return map[string]any{
-		"success":     true,
-		"path":        path,
-		"cell_number": cellNumber,
-		"message":     fmt.Sprintf("Cell %d updated successfully", cellNumber),
+		"success":	true,
+		"path":		path,
+		"cell_number":	cellNumber,
+		"message":	fmt.Sprintf("Cell %d updated successfully", cellNumber),
 	}, nil
 }
 
@@ -609,20 +609,20 @@ func InteractivePrompt(prompt string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-type BrowseTool struct{}
+type BrowseTool struct{ BaseTool }
 
-func (t *BrowseTool) Name() string { return "browse" }
+func (t *BrowseTool) Name() string	{ return "browse" }
 func (t *BrowseTool) Description() string {
 	return "Open URL in a headless browser. Delegates to browser_navigate for actual page loading."
 }
 
 func (t *BrowseTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"url": map[string]any{"type": "string", "description": "URL to navigate to"},
 		},
-		"required": []string{"url"},
+		"required":	[]string{"url"},
 	}
 }
 
@@ -636,27 +636,27 @@ func (t *BrowseTool) Execute(ctx context.Context, input map[string]any) (any, er
 	result, err := nav.Execute(ctx, map[string]any{"url": url})
 	if err != nil {
 		return map[string]any{
-			"url":    url,
-			"status": "fallback",
-			"note":   "Browser not available; URL prepared for manual opening",
+			"url":		url,
+			"status":	"fallback",
+			"note":		"Browser not available; URL prepared for manual opening",
 		}, nil
 	}
 	return result, nil
 }
 
-type AttachTool struct{}
+type AttachTool struct{ BaseTool }
 
-func (t *AttachTool) Name() string { return "attach" }
+func (t *AttachTool) Name() string	{ return "attach" }
 func (t *AttachTool) Description() string {
 	return "List running processes or inspect a process. Use action=list to see processes, action=inspect for details."
 }
 
 func (t *AttachTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"pid":    map[string]any{"type": "string", "description": "Process ID to inspect"},
-			"action": map[string]any{"type": "string", "default": "list", "description": "Action: list or inspect"},
+			"pid":		map[string]any{"type": "string", "description": "Process ID to inspect"},
+			"action":	map[string]any{"type": "string", "default": "list", "description": "Action: list or inspect"},
 		},
 	}
 }
@@ -680,8 +680,8 @@ func (t *AttachTool) Execute(ctx context.Context, input map[string]any) (any, er
 			lines = append(lines, "... (truncated)")
 		}
 		return map[string]any{
-			"processes": strings.Join(lines, "\n"),
-			"action":    "list",
+			"processes":	strings.Join(lines, "\n"),
+			"action":	"list",
 		}, nil
 
 	case "inspect":
@@ -695,9 +695,9 @@ func (t *AttachTool) Execute(ctx context.Context, input map[string]any) (any, er
 			return nil, fmt.Errorf("process %s not found: %w", pid, err)
 		}
 		return map[string]any{
-			"pid":     pid,
-			"details": strings.TrimSpace(string(output)),
-			"action":  "inspect",
+			"pid":		pid,
+			"details":	strings.TrimSpace(string(output)),
+			"action":	"inspect",
 		}, nil
 
 	default:
@@ -705,16 +705,16 @@ func (t *AttachTool) Execute(ctx context.Context, input map[string]any) (any, er
 	}
 }
 
-type DebugTool struct{}
+type DebugTool struct{ BaseTool }
 
-func (t *DebugTool) Name() string { return "debug" }
+func (t *DebugTool) Name() string	{ return "debug" }
 func (t *DebugTool) Description() string {
 	return "Toggle debug logging level. When enabled, sets log level to debug; when disabled, reverts to info."
 }
 
 func (t *DebugTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"enable": map[string]any{"type": "boolean"},
 		},
@@ -735,24 +735,24 @@ func (t *DebugTool) Execute(ctx context.Context, input map[string]any) (any, err
 	}
 
 	return map[string]any{
-		"debug":     enable,
-		"log_level": logLevel,
+		"debug":	enable,
+		"log_level":	logLevel,
 	}, nil
 }
 
-type IndexTool struct{}
+type IndexTool struct{ BaseTool }
 
-func (t *IndexTool) Name() string { return "index" }
+func (t *IndexTool) Name() string	{ return "index" }
 func (t *IndexTool) Description() string {
 	return "Build a code index of symbols (functions, types, variables) in a directory for fast lookup"
 }
 
 func (t *IndexTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"path":    map[string]any{"type": "string", "description": "Directory to index"},
-			"exclude": map[string]any{"type": "array", "description": "Patterns to exclude"},
+			"path":		map[string]any{"type": "string", "description": "Directory to index"},
+			"exclude":	map[string]any{"type": "array", "description": "Patterns to exclude"},
 		},
 	}
 }
@@ -798,9 +798,9 @@ func (t *IndexTool) Execute(ctx context.Context, input map[string]any) (any, err
 			}
 			if symbolPattern.MatchString(line) {
 				symbols = append(symbols, map[string]any{
-					"file": filePath,
-					"line": i + 1,
-					"text": strings.TrimSpace(line),
+					"file":	filePath,
+					"line":	i + 1,
+					"text":	strings.TrimSpace(line),
 				})
 			}
 		}
@@ -808,26 +808,26 @@ func (t *IndexTool) Execute(ctx context.Context, input map[string]any) (any, err
 	})
 
 	return map[string]any{
-		"path":    path,
-		"symbols": symbols,
-		"count":   len(symbols),
+		"path":		path,
+		"symbols":	symbols,
+		"count":	len(symbols),
 	}, nil
 }
 
-type CacheTool struct{}
+type CacheTool struct{ BaseTool }
 
-func (t *CacheTool) Name() string { return "cache" }
+func (t *CacheTool) Name() string	{ return "cache" }
 func (t *CacheTool) Description() string {
 	return "Manage tool result cache. Actions: get, set, clear, stats"
 }
 
 func (t *CacheTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"action": map[string]any{"type": "string", "enum": []string{"get", "set", "clear", "stats"}, "description": "Cache operation"},
-			"key":    map[string]any{"type": "string", "description": "Cache key"},
-			"value":  map[string]any{"type": "string", "description": "Value for set operation"},
+			"action":	map[string]any{"type": "string", "enum": []string{"get", "set", "clear", "stats"}, "description": "Cache operation"},
+			"key":		map[string]any{"type": "string", "description": "Cache key"},
+			"value":	map[string]any{"type": "string", "description": "Value for set operation"},
 		},
 	}
 }
@@ -901,9 +901,9 @@ func (t *CacheTool) Execute(ctx context.Context, input map[string]any) (any, err
 			}
 		}
 		stats := map[string]any{
-			"disk_items":     len(entries),
-			"disk_size":      totalSize,
-			"disk_cache_dir": cacheDir,
+			"disk_items":		len(entries),
+			"disk_size":		totalSize,
+			"disk_cache_dir":	cacheDir,
 		}
 		if rc != nil {
 			stats["memory_cache_size"] = rc.Size()
@@ -915,20 +915,20 @@ func (t *CacheTool) Execute(ctx context.Context, input map[string]any) (any, err
 	}
 }
 
-type ObserveTool struct{}
+type ObserveTool struct{ BaseTool }
 
-func (t *ObserveTool) Name() string { return "observe" }
+func (t *ObserveTool) Name() string	{ return "observe" }
 func (t *ObserveTool) Description() string {
 	return "Watch for file changes in a directory. Returns recent file modification events."
 }
 
 func (t *ObserveTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"path":        map[string]any{"type": "string", "description": "Directory or file to watch"},
-			"pattern":     map[string]any{"type": "string", "description": "Glob pattern filter (e.g. '*.go')"},
-			"debounce_ms": map[string]any{"type": "integer", "default": 500, "description": "Debounce interval in milliseconds"},
+			"path":		map[string]any{"type": "string", "description": "Directory or file to watch"},
+			"pattern":	map[string]any{"type": "string", "description": "Glob pattern filter (e.g. '*.go')"},
+			"debounce_ms":	map[string]any{"type": "integer", "default": 500, "description": "Debounce interval in milliseconds"},
 		},
 	}
 }
@@ -972,9 +972,9 @@ WatchLoop:
 				}
 			}
 			events = append(events, map[string]any{
-				"file": event.Name,
-				"op":   event.Op.String(),
-				"time": time.Now().Format(time.RFC3339),
+				"file":	event.Name,
+				"op":	event.Op.String(),
+				"time":	time.Now().Format(time.RFC3339),
 			})
 		case <-timeout:
 			break WatchLoop
@@ -984,23 +984,23 @@ WatchLoop:
 	}
 
 	return map[string]any{
-		"path":        path,
-		"pattern":     pattern,
-		"events":      events,
-		"event_count": len(events),
+		"path":		path,
+		"pattern":	pattern,
+		"events":	events,
+		"event_count":	len(events),
 	}, nil
 }
 
-type LazyTool struct{}
+type LazyTool struct{ BaseTool }
 
-func (t *LazyTool) Name() string { return "lazy" }
+func (t *LazyTool) Name() string	{ return "lazy" }
 func (t *LazyTool) Description() string {
 	return "Toggle lazy/batch execution mode. When enabled, tool calls are queued and executed in batch rather than immediately."
 }
 
 func (t *LazyTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"enable": map[string]any{"type": "boolean"},
 		},
@@ -1023,35 +1023,35 @@ func (t *LazyTool) Execute(ctx context.Context, input map[string]any) (any, erro
 		if be != nil && be.QueueSize() > 0 {
 			results := be.Flush(ctx, registry)
 			return map[string]any{
-				"lazy":       false,
-				"batch_mode": false,
-				"flushed":    len(results),
-				"results":    results,
+				"lazy":		false,
+				"batch_mode":	false,
+				"flushed":	len(results),
+				"results":	results,
 			}, nil
 		}
 	}
 
 	return map[string]any{
-		"lazy":       enable,
-		"batch_mode": enable,
+		"lazy":		enable,
+		"batch_mode":	enable,
 	}, nil
 }
 
-type ThinkTool struct{}
+type ThinkTool struct{ BaseTool }
 
-func (t *ThinkTool) Name() string { return "think" }
+func (t *ThinkTool) Name() string	{ return "think" }
 func (t *ThinkTool) Description() string {
 	return "Enable extended thinking mode for the current session. Sets a flag that the runtime uses to request thinking tokens from the LLM."
 }
 
 func (t *ThinkTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"prompt": map[string]any{"type": "string", "description": "Optional prompt to focus thinking on"},
-			"budget": map[string]any{"type": "integer", "default": 10000, "description": "Token budget for thinking"},
+			"prompt":	map[string]any{"type": "string", "description": "Optional prompt to focus thinking on"},
+			"budget":	map[string]any{"type": "integer", "default": 10000, "description": "Token budget for thinking"},
 		},
-		"required": []string{"prompt"},
+		"required":	[]string{"prompt"},
 	}
 }
 
@@ -1066,27 +1066,27 @@ func (t *ThinkTool) Execute(ctx context.Context, input map[string]any) (any, err
 	os.Setenv("SMARTCLAW_THINKING_BUDGET", fmt.Sprintf("%d", budget))
 
 	return map[string]any{
-		"thinking_enabled": true,
-		"budget":           budget,
-		"prompt":           prompt,
+		"thinking_enabled":	true,
+		"budget":		budget,
+		"prompt":		prompt,
 	}, nil
 }
 
-type DeepThinkTool struct{}
+type DeepThinkTool struct{ BaseTool }
 
-func (t *DeepThinkTool) Name() string { return "deepthink" }
+func (t *DeepThinkTool) Name() string	{ return "deepthink" }
 func (t *DeepThinkTool) Description() string {
 	return "Enable deep thinking with higher token budget for complex problems. Equivalent to think with budget=50000."
 }
 
 func (t *DeepThinkTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"prompt": map[string]any{"type": "string", "description": "Problem to think deeply about"},
-			"depth":  map[string]any{"type": "integer", "default": 5, "description": "Depth level 1-10"},
+			"prompt":	map[string]any{"type": "string", "description": "Problem to think deeply about"},
+			"depth":	map[string]any{"type": "integer", "default": 5, "description": "Depth level 1-10"},
 		},
-		"required": []string{"prompt"},
+		"required":	[]string{"prompt"},
 	}
 }
 
@@ -1103,23 +1103,23 @@ func (t *DeepThinkTool) Execute(ctx context.Context, input map[string]any) (any,
 	os.Setenv("SMARTCLAW_THINKING_BUDGET", fmt.Sprintf("%d", budget))
 
 	return map[string]any{
-		"thinking_enabled": true,
-		"budget":           budget,
-		"depth":            depth,
-		"prompt":           prompt,
+		"thinking_enabled":	true,
+		"budget":		budget,
+		"depth":		depth,
+		"prompt":		prompt,
 	}, nil
 }
 
-type ForkTool struct{}
+type ForkTool struct{ BaseTool }
 
-func (t *ForkTool) Name() string { return "fork" }
+func (t *ForkTool) Name() string	{ return "fork" }
 func (t *ForkTool) Description() string {
 	return "Fork current session into a new branch. Creates a copy of the session state with a new ID."
 }
 
 func (t *ForkTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"label": map[string]any{"type": "string", "description": "Label for the forked session"},
 		},
@@ -1137,10 +1137,10 @@ func (t *ForkTool) Execute(ctx context.Context, input map[string]any) (any, erro
 
 	// Clone current session if it exists
 	forkMeta := map[string]any{
-		"id":         sessionID,
-		"label":      label,
-		"forked_at":  time.Now().Format(time.RFC3339),
-		"parent_pid": os.Getpid(),
+		"id":		sessionID,
+		"label":	label,
+		"forked_at":	time.Now().Format(time.RFC3339),
+		"parent_pid":	os.Getpid(),
 	}
 
 	// Find the most recent session file to clone
@@ -1192,25 +1192,25 @@ func (t *ForkTool) Execute(ctx context.Context, input map[string]any) (any, erro
 	os.WriteFile(metaPath, data, 0644)
 
 	return map[string]any{
-		"session_id":      sessionID,
-		"label":           label,
-		"meta_path":       metaPath,
-		"cloned_session":  forkMeta["source_session"] != nil,
-		"cloned_messages": forkMeta["cloned_messages"],
+		"session_id":		sessionID,
+		"label":		label,
+		"meta_path":		metaPath,
+		"cloned_session":	forkMeta["source_session"] != nil,
+		"cloned_messages":	forkMeta["cloned_messages"],
 	}, nil
 }
 
-type EnvTool struct{}
+type EnvTool struct{ BaseTool }
 
-func (t *EnvTool) Name() string        { return "env" }
-func (t *EnvTool) Description() string { return "Environment variable access" }
+func (t *EnvTool) Name() string		{ return "env" }
+func (t *EnvTool) Description() string	{ return "Environment variable access" }
 
 func (t *EnvTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"key":   map[string]any{"type": "string"},
-			"value": map[string]any{"type": "string"},
+			"key":		map[string]any{"type": "string"},
+			"value":	map[string]any{"type": "string"},
 		},
 	}
 }

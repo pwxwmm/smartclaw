@@ -9,9 +9,9 @@ import (
 	"github.com/instructkr/smartclaw/internal/git"
 )
 
-type GitAITool struct{}
+type GitAITool struct{ BaseTool }
 
-func (g *GitAITool) Name() string { return "git_ai" }
+func (g *GitAITool) Name() string	{ return "git_ai" }
 
 func (g *GitAITool) Description() string {
 	return "AI-powered git operations: generate commit messages, review changes, create PR descriptions"
@@ -19,24 +19,24 @@ func (g *GitAITool) Description() string {
 
 func (g *GitAITool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"action": map[string]any{
-				"type":        "string",
-				"enum":        []string{"commit_message", "review", "pr_description"},
-				"description": "The git AI action to perform",
+				"type":		"string",
+				"enum":		[]string{"commit_message", "review", "pr_description"},
+				"description":	"The git AI action to perform",
 			},
 			"diff": map[string]any{
-				"type":        "string",
-				"description": "The git diff content (optional, will use working directory if not provided)",
+				"type":		"string",
+				"description":	"The git diff content (optional, will use working directory if not provided)",
 			},
 			"files": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "List of changed files for context",
+				"type":		"array",
+				"items":	map[string]any{"type": "string"},
+				"description":	"List of changed files for context",
 			},
 		},
-		"required": []string{"action"},
+		"required":	[]string{"action"},
 	}
 }
 
@@ -119,13 +119,13 @@ func (g *GitAITool) generateCommitMessage(diff string, files []string) (any, err
 	body := fmt.Sprintf("Changed %d file(s): +%d -%d lines", len(files), added, removed)
 
 	return map[string]any{
-		"commit_message": msg,
-		"body":           body,
-		"type":           commitType,
-		"scope":          scope,
-		"files_changed":  len(files),
-		"lines_added":    added,
-		"lines_removed":  removed,
+		"commit_message":	msg,
+		"body":			body,
+		"type":			commitType,
+		"scope":		scope,
+		"files_changed":	len(files),
+		"lines_added":		added,
+		"lines_removed":	removed,
 	}, nil
 }
 
@@ -140,63 +140,63 @@ func (g *GitAITool) reviewChanges(diff string, files []string) (any, error) {
 		switch {
 		case strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key"):
 			findings = append(findings, map[string]any{
-				"severity":    "critical",
-				"category":    "security",
-				"description": "Potential secret or credential exposed in code",
-				"line":        i + 1,
+				"severity":	"critical",
+				"category":	"security",
+				"description":	"Potential secret or credential exposed in code",
+				"line":		i + 1,
 			})
 		case strings.Contains(lower, "todo") || strings.Contains(lower, "fixme") || strings.Contains(lower, "hack"):
 			findings = append(findings, map[string]any{
-				"severity":    "warning",
-				"category":    "code_quality",
-				"description": "TODO/FIXME/HACK comment found",
-				"line":        i + 1,
+				"severity":	"warning",
+				"category":	"code_quality",
+				"description":	"TODO/FIXME/HACK comment found",
+				"line":		i + 1,
 			})
 		case strings.Contains(lower, "fmt.sprintf") && strings.Contains(lower, "%s") && (strings.Contains(lower, "sql") || strings.Contains(lower, "query")):
 			findings = append(findings, map[string]any{
-				"severity":    "critical",
-				"category":    "security",
-				"description": "Potential SQL injection via string formatting",
-				"line":        i + 1,
+				"severity":	"critical",
+				"category":	"security",
+				"description":	"Potential SQL injection via string formatting",
+				"line":		i + 1,
 			})
 		case strings.Contains(lower, "panic("):
 			findings = append(findings, map[string]any{
-				"severity":    "warning",
-				"category":    "error_handling",
-				"description": "Unhandled panic() call",
-				"line":        i + 1,
+				"severity":	"warning",
+				"category":	"error_handling",
+				"description":	"Unhandled panic() call",
+				"line":		i + 1,
 			})
 		case strings.Contains(lower, "catch(e) {}") || strings.Contains(lower, "catch (e) {}") || strings.Contains(lower, "catch(e){}"):
 			findings = append(findings, map[string]any{
-				"severity":    "warning",
-				"category":    "error_handling",
-				"description": "Empty catch block",
-				"line":        i + 1,
+				"severity":	"warning",
+				"category":	"error_handling",
+				"description":	"Empty catch block",
+				"line":		i + 1,
 			})
 		}
 	}
 
 	if len(findings) == 0 {
 		findings = append(findings, map[string]any{
-			"severity":    "info",
-			"category":    "general",
-			"description": "No obvious issues found in the diff. Consider reviewing manually for context-specific concerns.",
+			"severity":	"info",
+			"category":	"general",
+			"description":	"No obvious issues found in the diff. Consider reviewing manually for context-specific concerns.",
 		})
 	}
 
 	return map[string]any{
-		"review":       findings,
-		"files_review": len(files),
-		"total_lines":  len(lines),
-		"summary":      fmt.Sprintf("Reviewed %d files, found %d findings", len(files), len(findings)),
+		"review":	findings,
+		"files_review":	len(files),
+		"total_lines":	len(lines),
+		"summary":	fmt.Sprintf("Reviewed %d files, found %d findings", len(files), len(findings)),
 	}, nil
 }
 
 func (g *GitAITool) generatePRDescription(diff string, files []string) (any, error) {
 	sections := map[string][]string{
-		"added":    {},
-		"modified": {},
-		"removed":  {},
+		"added":	{},
+		"modified":	{},
+		"removed":	{},
 	}
 
 	lines := strings.Split(diff, "\n")
@@ -252,10 +252,10 @@ func (g *GitAITool) generatePRDescription(diff string, files []string) (any, err
 	desc.WriteString("## Testing\n\n- [ ] Manual testing completed\n- [ ] Automated tests pass\n")
 
 	return map[string]any{
-		"description":   desc.String(),
-		"files_changed": len(files),
-		"lines_added":   added,
-		"lines_removed": removed,
+		"description":		desc.String(),
+		"files_changed":	len(files),
+		"lines_added":		added,
+		"lines_removed":	removed,
 	}, nil
 }
 
@@ -273,20 +273,20 @@ func extractScope(filePath string) string {
 	return name
 }
 
-type GitStatusTool struct{}
+type GitStatusTool struct{ BaseTool }
 
-func (g *GitStatusTool) Name() string { return "git_status" }
+func (g *GitStatusTool) Name() string	{ return "git_status" }
 func (g *GitStatusTool) Description() string {
 	return "Get git status for the current working directory"
 }
 
 func (g *GitStatusTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"path": map[string]any{
-				"type":        "string",
-				"description": "Working directory path",
+				"type":		"string",
+				"description":	"Working directory path",
 			},
 		},
 	}
@@ -304,30 +304,30 @@ func (g *GitStatusTool) Execute(ctx context.Context, input map[string]any) (any,
 	}
 
 	return map[string]any{
-		"is_repo":       gitCtx.IsRepo,
-		"branch":        gitCtx.Branch,
-		"has_changes":   gitCtx.HasChanges,
-		"staged_files":  gitCtx.StagedFiles,
-		"changed_files": gitCtx.ChangedFiles,
+		"is_repo":		gitCtx.IsRepo,
+		"branch":		gitCtx.Branch,
+		"has_changes":		gitCtx.HasChanges,
+		"staged_files":		gitCtx.StagedFiles,
+		"changed_files":	gitCtx.ChangedFiles,
 	}, nil
 }
 
-type GitDiffTool struct{}
+type GitDiffTool struct{ BaseTool }
 
-func (g *GitDiffTool) Name() string        { return "git_diff" }
-func (g *GitDiffTool) Description() string { return "Get git diff for the current working directory" }
+func (g *GitDiffTool) Name() string		{ return "git_diff" }
+func (g *GitDiffTool) Description() string	{ return "Get git diff for the current working directory" }
 
 func (g *GitDiffTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"path": map[string]any{
-				"type":        "string",
-				"description": "Working directory path",
+				"type":		"string",
+				"description":	"Working directory path",
 			},
 			"staged": map[string]any{
-				"type":        "boolean",
-				"description": "Whether to get staged diff",
+				"type":		"boolean",
+				"description":	"Whether to get staged diff",
 			},
 		},
 	}
@@ -346,27 +346,27 @@ func (g *GitDiffTool) Execute(ctx context.Context, input map[string]any) (any, e
 	}
 
 	return map[string]any{
-		"diff":   diff,
-		"staged": staged,
+		"diff":		diff,
+		"staged":	staged,
 	}, nil
 }
 
-type GitLogTool struct{}
+type GitLogTool struct{ BaseTool }
 
-func (g *GitLogTool) Name() string        { return "git_log" }
-func (g *GitLogTool) Description() string { return "Get recent git commit log" }
+func (g *GitLogTool) Name() string		{ return "git_log" }
+func (g *GitLogTool) Description() string	{ return "Get recent git commit log" }
 
 func (g *GitLogTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"path": map[string]any{
-				"type":        "string",
-				"description": "Working directory path",
+				"type":		"string",
+				"description":	"Working directory path",
 			},
 			"count": map[string]any{
-				"type":        "number",
-				"description": "Number of commits to show",
+				"type":		"number",
+				"description":	"Number of commits to show",
 			},
 		},
 	}
@@ -388,17 +388,17 @@ func (g *GitLogTool) Execute(ctx context.Context, input map[string]any) (any, er
 	}
 
 	return map[string]any{
-		"log":   log,
-		"count": count,
+		"log":		log,
+		"count":	count,
 	}, nil
 }
 
 type GitContextResult struct {
-	IsRepo       bool
-	Branch       string
-	HasChanges   bool
-	StagedFiles  []string
-	ChangedFiles []string
+	IsRepo		bool
+	Branch		string
+	HasChanges	bool
+	StagedFiles	[]string
+	ChangedFiles	[]string
 }
 
 func getGitContext(dir string) (*GitContextResult, error) {
@@ -407,11 +407,11 @@ func getGitContext(dir string) (*GitContextResult, error) {
 		return nil, err
 	}
 	return &GitContextResult{
-		IsRepo:       ctx.IsRepo,
-		Branch:       ctx.Branch,
-		HasChanges:   ctx.HasChanges,
-		StagedFiles:  ctx.StagedFiles,
-		ChangedFiles: ctx.ChangedFiles,
+		IsRepo:		ctx.IsRepo,
+		Branch:		ctx.Branch,
+		HasChanges:	ctx.HasChanges,
+		StagedFiles:	ctx.StagedFiles,
+		ChangedFiles:	ctx.ChangedFiles,
 	}, nil
 }
 

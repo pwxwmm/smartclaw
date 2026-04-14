@@ -23,6 +23,10 @@ func (t *BaseTool) Name() string                { return t.name }
 func (t *BaseTool) Description() string         { return t.description }
 func (t *BaseTool) InputSchema() map[string]any { return t.inputSchema }
 
+func NewBaseTool(name, description string, inputSchema map[string]any) BaseTool {
+	return BaseTool{name: name, description: description, inputSchema: inputSchema}
+}
+
 type ToolRegistry struct {
 	tools          map[string]Tool
 	cache          *ResultCache
@@ -196,7 +200,7 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&BatchTool{})
 	defaultRegistry.Register(&ParallelTool{})
 	defaultRegistry.Register(&PipelineTool{})
-	defaultRegistry.Register(&PowerShellTool{})
+	defaultRegistry.Register(newPowerShellTool())
 	defaultRegistry.Register(&McpExecuteTool{})
 	defaultRegistry.Register(&ListMcpResourcesTool{})
 	defaultRegistry.Register(&ReadMcpResourceTool{})

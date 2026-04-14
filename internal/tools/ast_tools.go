@@ -8,34 +8,34 @@ import (
 	"strings"
 )
 
-type ASTGrepTool struct{}
+type ASTGrepTool struct{ BaseTool }
 
-func (t *ASTGrepTool) Name() string        { return "ast_grep" }
-func (t *ASTGrepTool) Description() string { return "Search code using AST patterns" }
+func (t *ASTGrepTool) Name() string		{ return "ast_grep" }
+func (t *ASTGrepTool) Description() string	{ return "Search code using AST patterns" }
 
 func (t *ASTGrepTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"pattern": map[string]any{
-				"type":        "string",
-				"description": "AST pattern to search for",
+				"type":		"string",
+				"description":	"AST pattern to search for",
 			},
 			"lang": map[string]any{
-				"type":        "string",
-				"description": "Language (go, typescript, python, etc)",
+				"type":		"string",
+				"description":	"Language (go, typescript, python, etc)",
 			},
 			"paths": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Paths to search",
+				"type":		"array",
+				"items":	map[string]any{"type": "string"},
+				"description":	"Paths to search",
 			},
 			"rewrite": map[string]any{
-				"type":        "string",
-				"description": "Replacement pattern",
+				"type":		"string",
+				"description":	"Replacement pattern",
 			},
 		},
-		"required": []string{"pattern", "lang"},
+		"required":	[]string{"pattern", "lang"},
 	}
 }
 
@@ -93,9 +93,9 @@ func (t *ASTGrepTool) searchAST(pattern, lang string, paths []string, rewrite st
 	}
 
 	return map[string]any{
-		"matches": matches,
-		"count":   len(matches),
-		"lang":    lang,
+		"matches":	matches,
+		"count":	len(matches),
+		"lang":		lang,
 	}, nil
 }
 
@@ -136,9 +136,9 @@ func (t *ASTGrepTool) searchFile(path, pattern, rewrite string) []map[string]any
 	for i, line := range lines {
 		if regexPattern.MatchString(line) {
 			match := map[string]any{
-				"file":    path,
-				"line":    i + 1,
-				"content": strings.TrimSpace(line),
+				"file":		path,
+				"line":		i + 1,
+				"content":	strings.TrimSpace(line),
 			}
 
 			if rewrite != "" {
@@ -167,29 +167,29 @@ func (t *ASTGrepTool) patternToRegex(pattern string) *regexp.Regexp {
 	return regex
 }
 
-type CodeSearchTool struct{}
+type CodeSearchTool struct{ BaseTool }
 
-func (t *CodeSearchTool) Name() string        { return "code_search" }
-func (t *CodeSearchTool) Description() string { return "Search code with semantic understanding" }
+func (t *CodeSearchTool) Name() string		{ return "code_search" }
+func (t *CodeSearchTool) Description() string	{ return "Search code with semantic understanding" }
 
 func (t *CodeSearchTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"query": map[string]any{
-				"type":        "string",
-				"description": "Search query",
+				"type":		"string",
+				"description":	"Search query",
 			},
 			"type": map[string]any{
-				"type":        "string",
-				"description": "Type of code to find (function, class, variable, etc)",
+				"type":		"string",
+				"description":	"Type of code to find (function, class, variable, etc)",
 			},
 			"path": map[string]any{
-				"type":        "string",
-				"description": "Base path to search",
+				"type":		"string",
+				"description":	"Base path to search",
 			},
 		},
-		"required": []string{"query"},
+		"required":	[]string{"query"},
 	}
 }
 
@@ -227,18 +227,18 @@ func (t *CodeSearchTool) Execute(ctx context.Context, input map[string]any) (any
 	}
 
 	return map[string]any{
-		"results": results,
-		"count":   len(results),
-		"query":   query,
+		"results":	results,
+		"count":	len(results),
+		"query":	query,
 	}, nil
 }
 
 func (t *CodeSearchTool) isCodeFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	codeExts := map[string]bool{
-		".go": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true,
-		".py": true, ".rs": true, ".java": true, ".c": true, ".cpp": true,
-		".h": true, ".hpp": true, ".cs": true, ".rb": true, ".php": true,
+		".go":	true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true,
+		".py":	true, ".rs": true, ".java": true, ".c": true, ".cpp": true,
+		".h":	true, ".hpp": true, ".cs": true, ".rb": true, ".php": true,
 	}
 	return codeExts[ext]
 }
@@ -256,10 +256,10 @@ func (t *CodeSearchTool) searchInFile(path, query, codeType string) []map[string
 		if strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
 			if codeType == "" || t.matchesType(line, codeType) {
 				results = append(results, map[string]any{
-					"file":    path,
-					"line":    i + 1,
-					"content": strings.TrimSpace(line),
-					"type":    t.detectType(line),
+					"file":		path,
+					"line":		i + 1,
+					"content":	strings.TrimSpace(line),
+					"type":		t.detectType(line),
 				})
 			}
 		}

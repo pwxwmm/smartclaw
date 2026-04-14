@@ -11,47 +11,47 @@ import (
 
 // MemoryRecallTool exposes the 4-layer memory framework as a queryable tool.
 // Actions: recall, search, store, layers, stats
-type MemoryRecallTool struct{}
+type MemoryRecallTool struct{ BaseTool }
 
-func (t *MemoryRecallTool) Name() string { return "memory" }
+func (t *MemoryRecallTool) Name() string	{ return "memory" }
 func (t *MemoryRecallTool) Description() string {
 	return "Query and manage the 4-layer memory system. Actions: recall (search across sessions), search (FTS5 query), store (save a fact), layers (show memory state), stats (usage stats)"
 }
 
 func (t *MemoryRecallTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"action": map[string]any{
-				"type":        "string",
-				"enum":        []string{"recall", "search", "store", "layers", "stats"},
-				"description": "Memory operation",
-				"default":     "recall",
+				"type":		"string",
+				"enum":		[]string{"recall", "search", "store", "layers", "stats"},
+				"description":	"Memory operation",
+				"default":	"recall",
 			},
 			"query": map[string]any{
-				"type":        "string",
-				"description": "Search query for recall/search actions",
+				"type":		"string",
+				"description":	"Search query for recall/search actions",
 			},
 			"key": map[string]any{
-				"type":        "string",
-				"description": "Key for store action",
+				"type":		"string",
+				"description":	"Key for store action",
 			},
 			"value": map[string]any{
-				"type":        "string",
-				"description": "Value for store action",
+				"type":		"string",
+				"description":	"Value for store action",
 			},
 			"layer": map[string]any{
-				"type":        "string",
-				"enum":        []string{"prompt", "session", "skill", "user"},
-				"description": "Specific memory layer to target",
+				"type":		"string",
+				"enum":		[]string{"prompt", "session", "skill", "user"},
+				"description":	"Specific memory layer to target",
 			},
 			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Max results for search",
-				"default":     5,
+				"type":		"integer",
+				"description":	"Max results for search",
+				"default":	5,
 			},
 		},
-		"required": []string{"action"},
+		"required":	[]string{"action"},
 	}
 }
 
@@ -94,10 +94,10 @@ func (t *MemoryRecallTool) recall(input map[string]any) (any, error) {
 		content := string(data)
 		if query == "" || strings.Contains(strings.ToLower(content), strings.ToLower(query)) {
 			results = append(results, map[string]any{
-				"layer":   "L1_prompt",
-				"source":  "MEMORY.md",
-				"content": truncate(content, 2000),
-				"matched": query == "" || strings.Contains(strings.ToLower(content), strings.ToLower(query)),
+				"layer":	"L1_prompt",
+				"source":	"MEMORY.md",
+				"content":	truncate(content, 2000),
+				"matched":	query == "" || strings.Contains(strings.ToLower(content), strings.ToLower(query)),
 			})
 		}
 	}
@@ -108,10 +108,10 @@ func (t *MemoryRecallTool) recall(input map[string]any) (any, error) {
 		content := string(data)
 		if query == "" || strings.Contains(strings.ToLower(content), strings.ToLower(query)) {
 			results = append(results, map[string]any{
-				"layer":   "L1_prompt",
-				"source":  "USER.md",
-				"content": truncate(content, 1000),
-				"matched": query == "" || strings.Contains(strings.ToLower(content), strings.ToLower(query)),
+				"layer":	"L1_prompt",
+				"source":	"USER.md",
+				"content":	truncate(content, 1000),
+				"matched":	query == "" || strings.Contains(strings.ToLower(content), strings.ToLower(query)),
 			})
 		}
 	}
@@ -120,10 +120,10 @@ func (t *MemoryRecallTool) recall(input map[string]any) (any, error) {
 	dbPath := filepath.Join(baseDir, "state.db")
 	if stat, err := os.Stat(dbPath); err == nil && stat.Size() > 0 {
 		results = append(results, map[string]any{
-			"layer":  "L2_session",
-			"source": "state.db",
-			"note":   "Session search requires active MemoryManager connection",
-			"query":  query,
+			"layer":	"L2_session",
+			"source":	"state.db",
+			"note":		"Session search requires active MemoryManager connection",
+			"query":	query,
 		})
 	}
 
@@ -145,27 +145,27 @@ func (t *MemoryRecallTool) recall(input map[string]any) (any, error) {
 			}
 			if len(matched) > 0 {
 				results = append(results, map[string]any{
-					"layer":   "L3_skill",
-					"source":  "skills/",
-					"matched": matched,
-					"count":   len(matched),
+					"layer":	"L3_skill",
+					"source":	"skills/",
+					"matched":	matched,
+					"count":	len(matched),
 				})
 			}
 		} else {
 			results = append(results, map[string]any{
-				"layer":  "L3_skill",
-				"source": "skills/",
-				"count":  len(skillNames),
-				"skills": skillNames,
+				"layer":	"L3_skill",
+				"source":	"skills/",
+				"count":	len(skillNames),
+				"skills":	skillNames,
 			})
 		}
 	}
 
 	// L4: User observations
 	results = append(results, map[string]any{
-		"layer":  "L4_user_model",
-		"source": "user_observations",
-		"note":   "User modeling data available through active MemoryManager",
+		"layer":	"L4_user_model",
+		"source":	"user_observations",
+		"note":		"User modeling data available through active MemoryManager",
 	})
 
 	if len(results) > limit {
@@ -173,9 +173,9 @@ func (t *MemoryRecallTool) recall(input map[string]any) (any, error) {
 	}
 
 	return map[string]any{
-		"query":   query,
-		"results": results,
-		"count":   len(results),
+		"query":	query,
+		"results":	results,
+		"count":	len(results),
 	}, nil
 }
 
@@ -216,9 +216,9 @@ func (t *MemoryRecallTool) search(input map[string]any) (any, error) {
 				}
 				snippet := content[start:end]
 				results = append(results, map[string]any{
-					"source":  name,
-					"snippet": snippet,
-					"offset":  start,
+					"source":	name,
+					"snippet":	snippet,
+					"offset":	start,
 				})
 			}
 		}
@@ -229,9 +229,9 @@ func (t *MemoryRecallTool) search(input map[string]any) (any, error) {
 	}
 
 	return map[string]any{
-		"query":   query,
-		"results": results,
-		"count":   len(results),
+		"query":	query,
+		"results":	results,
+		"count":	len(results),
 	}, nil
 }
 
@@ -267,18 +267,18 @@ func (t *MemoryRecallTool) store(input map[string]any) (any, error) {
 			return nil, fmt.Errorf("failed to write MEMORY.md: %w", err)
 		}
 		return map[string]any{
-			"layer":  "prompt",
-			"key":    key,
-			"stored": true,
-			"path":   memoryPath,
+			"layer":	"prompt",
+			"key":		key,
+			"stored":	true,
+			"path":		memoryPath,
 		}, nil
 
 	default:
 		return map[string]any{
-			"layer":   layer,
-			"key":     key,
-			"stored":  false,
-			"message": "only prompt layer storage is supported via this tool; use MemoryManager for other layers",
+			"layer":	layer,
+			"key":		key,
+			"stored":	false,
+			"message":	"only prompt layer storage is supported via this tool; use MemoryManager for other layers",
 		}, nil
 	}
 }
@@ -294,10 +294,10 @@ func (t *MemoryRecallTool) layers() (any, error) {
 		fullPath := filepath.Join(baseDir, name)
 		if data, err := os.ReadFile(fullPath); err == nil {
 			layers = append(layers, map[string]any{
-				"layer": "L1_prompt",
-				"file":  name,
-				"size":  len(data),
-				"chars": len(string(data)),
+				"layer":	"L1_prompt",
+				"file":		name,
+				"size":		len(data),
+				"chars":	len(string(data)),
 			})
 		}
 	}
@@ -306,9 +306,9 @@ func (t *MemoryRecallTool) layers() (any, error) {
 	dbPath := filepath.Join(baseDir, "state.db")
 	if stat, err := os.Stat(dbPath); err == nil {
 		layers = append(layers, map[string]any{
-			"layer": "L2_session",
-			"file":  "state.db",
-			"size":  stat.Size(),
+			"layer":	"L2_session",
+			"file":		"state.db",
+			"size":		stat.Size(),
 		})
 	}
 
@@ -316,21 +316,21 @@ func (t *MemoryRecallTool) layers() (any, error) {
 	skillsDir := filepath.Join(baseDir, "skills")
 	if entries, err := os.ReadDir(skillsDir); err == nil {
 		layers = append(layers, map[string]any{
-			"layer": "L3_skill",
-			"dir":   "skills/",
-			"count": len(entries),
+			"layer":	"L3_skill",
+			"dir":		"skills/",
+			"count":	len(entries),
 		})
 	}
 
 	// L4: User Modeling
 	layers = append(layers, map[string]any{
-		"layer": "L4_user_model",
-		"table": "user_observations",
+		"layer":	"L4_user_model",
+		"table":	"user_observations",
 	})
 
 	return map[string]any{
-		"layers": layers,
-		"count":  len(layers),
+		"layers":	layers,
+		"count":	len(layers),
 	}, nil
 }
 

@@ -10,20 +10,20 @@ import (
 	"strings"
 )
 
-type ReadFileTool struct{}
+type ReadFileTool struct{ BaseTool }
 
-func (t *ReadFileTool) Name() string        { return "read_file" }
-func (t *ReadFileTool) Description() string { return "Read a text file from the workspace" }
+func (t *ReadFileTool) Name() string		{ return "read_file" }
+func (t *ReadFileTool) Description() string	{ return "Read a text file from the workspace" }
 
 func (t *ReadFileTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"path":   map[string]any{"type": "string", "description": "The file path to read"},
-			"offset": map[string]any{"type": "integer", "description": "Line offset (1-indexed)"},
-			"limit":  map[string]any{"type": "integer", "description": "Maximum lines to read"},
+			"path":		map[string]any{"type": "string", "description": "The file path to read"},
+			"offset":	map[string]any{"type": "integer", "description": "Line offset (1-indexed)"},
+			"limit":	map[string]any{"type": "integer", "description": "Maximum lines to read"},
 		},
-		"required": []string{"path"},
+		"required":	[]string{"path"},
 	}
 }
 
@@ -70,25 +70,25 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	return map[string]any{
-		"content": strings.Join(result, "\n"),
-		"path":    absPath,
-		"lines":   len(lines),
+		"content":	strings.Join(result, "\n"),
+		"path":		absPath,
+		"lines":	len(lines),
 	}, nil
 }
 
-type WriteFileTool struct{}
+type WriteFileTool struct{ BaseTool }
 
-func (t *WriteFileTool) Name() string        { return "write_file" }
-func (t *WriteFileTool) Description() string { return "Write a text file in the workspace" }
+func (t *WriteFileTool) Name() string		{ return "write_file" }
+func (t *WriteFileTool) Description() string	{ return "Write a text file in the workspace" }
 
 func (t *WriteFileTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"path":    map[string]any{"type": "string", "description": "The file path to write"},
-			"content": map[string]any{"type": "string", "description": "The content to write"},
+			"path":		map[string]any{"type": "string", "description": "The file path to write"},
+			"content":	map[string]any{"type": "string", "description": "The content to write"},
 		},
-		"required": []string{"path", "content"},
+		"required":	[]string{"path", "content"},
 	}
 }
 
@@ -115,26 +115,26 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (any,
 	}
 
 	return map[string]any{
-		"path":    absPath,
-		"written": len(content),
+		"path":		absPath,
+		"written":	len(content),
 	}, nil
 }
 
-type EditFileTool struct{}
+type EditFileTool struct{ BaseTool }
 
-func (t *EditFileTool) Name() string        { return "edit_file" }
-func (t *EditFileTool) Description() string { return "Edit a file using string replacement" }
+func (t *EditFileTool) Name() string		{ return "edit_file" }
+func (t *EditFileTool) Description() string	{ return "Edit a file using string replacement" }
 
 func (t *EditFileTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"path":        map[string]any{"type": "string"},
-			"old_string":  map[string]any{"type": "string"},
-			"new_string":  map[string]any{"type": "string"},
-			"replace_all": map[string]any{"type": "boolean"},
+			"path":		map[string]any{"type": "string"},
+			"old_string":	map[string]any{"type": "string"},
+			"new_string":	map[string]any{"type": "string"},
+			"replace_all":	map[string]any{"type": "boolean"},
 		},
-		"required": []string{"path", "old_string", "new_string"},
+		"required":	[]string{"path", "old_string", "new_string"},
 	}
 }
 
@@ -182,24 +182,24 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	return map[string]any{
-		"path":     absPath,
-		"replaced": replaced,
+		"path":		absPath,
+		"replaced":	replaced,
 	}, nil
 }
 
-type GlobTool struct{}
+type GlobTool struct{ BaseTool }
 
-func (t *GlobTool) Name() string        { return "glob" }
-func (t *GlobTool) Description() string { return "Search for files by pattern" }
+func (t *GlobTool) Name() string	{ return "glob" }
+func (t *GlobTool) Description() string	{ return "Search for files by pattern" }
 
 func (t *GlobTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"pattern": map[string]any{"type": "string"},
-			"path":    map[string]any{"type": "string"},
+			"pattern":	map[string]any{"type": "string"},
+			"path":		map[string]any{"type": "string"},
 		},
-		"required": []string{"pattern"},
+		"required":	[]string{"pattern"},
 	}
 }
 
@@ -226,29 +226,29 @@ func (t *GlobTool) Execute(ctx context.Context, input map[string]any) (any, erro
 	}
 
 	return map[string]any{
-		"files": matches,
-		"count": len(matches),
+		"files":	matches,
+		"count":	len(matches),
 	}, nil
 }
 
-type GrepTool struct{}
+type GrepTool struct{ BaseTool }
 
-func (t *GrepTool) Name() string        { return "grep" }
-func (t *GrepTool) Description() string { return "Search for text in files using regex" }
+func (t *GrepTool) Name() string	{ return "grep" }
+func (t *GrepTool) Description() string	{ return "Search for text in files using regex" }
 
 func (t *GrepTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"pattern":     map[string]any{"type": "string", "description": "Regex pattern to search"},
-			"path":        map[string]any{"type": "string", "description": "Base path to search"},
-			"include":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File patterns to include"},
-			"exclude":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File patterns to exclude"},
-			"context":     map[string]any{"type": "integer", "description": "Number of context lines"},
-			"ignore_case": map[string]any{"type": "boolean", "description": "Case insensitive search"},
-			"output_mode": map[string]any{"type": "string", "enum": []string{"content", "files_with_matches", "count"}, "description": "Output format"},
+			"pattern":	map[string]any{"type": "string", "description": "Regex pattern to search"},
+			"path":		map[string]any{"type": "string", "description": "Base path to search"},
+			"include":	map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File patterns to include"},
+			"exclude":	map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File patterns to exclude"},
+			"context":	map[string]any{"type": "integer", "description": "Number of context lines"},
+			"ignore_case":	map[string]any{"type": "boolean", "description": "Case insensitive search"},
+			"output_mode":	map[string]any{"type": "string", "enum": []string{"content", "files_with_matches", "count"}, "description": "Output format"},
 		},
-		"required": []string{"pattern"},
+		"required":	[]string{"pattern"},
 	}
 }
 
@@ -350,9 +350,9 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]any) (any, erro
 
 			if regex.MatchString(line) {
 				match := GrepMatch{
-					File:    path,
-					Line:    lineNum,
-					Content: line,
+					File:		path,
+					Line:		lineNum,
+					Content:	line,
 				}
 
 				if outputMode == "content" {
@@ -382,8 +382,8 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]any) (any, erro
 			total += count
 		}
 		return map[string]any{
-			"count": total,
-			"files": fileCounts,
+			"count":	total,
+			"files":	fileCounts,
 		}, nil
 	case "files_with_matches":
 		var files []string
@@ -391,13 +391,13 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]any) (any, erro
 			files = append(files, f)
 		}
 		return map[string]any{
-			"files": files,
-			"count": len(files),
+			"files":	files,
+			"count":	len(files),
 		}, nil
 	default:
 		return map[string]any{
-			"matches": matches,
-			"count":   len(matches),
+			"matches":	matches,
+			"count":	len(matches),
 		}, nil
 	}
 }
