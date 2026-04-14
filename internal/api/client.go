@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/constants"
 )
 
 const (
@@ -49,11 +51,11 @@ func NewClientWithModel(apiKey string, baseURL string, model string) *Client {
 		BaseURL: baseURL,
 		Model:   model,
 		HTTPClient: &http.Client{
-			Timeout: 300 * time.Second,
+			Timeout: time.Duration(constants.APIClientTimeout) * time.Second,
 			Transport: &http.Transport{
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 60 * time.Second,
-				IdleConnTimeout:       30 * time.Second,
+				TLSHandshakeTimeout:   time.Duration(constants.APITLSHandshakeTimeout) * time.Second,
+				ResponseHeaderTimeout: time.Duration(constants.APIResponseHeaderTimeout) * time.Second,
+				IdleConnTimeout:       time.Duration(constants.APIIdleConnTimeout) * time.Second,
 			},
 		},
 	}
@@ -121,7 +123,7 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 
 	req := MessageRequest{
 		Model:     c.Model,
-		MaxTokens: 4096,
+		MaxTokens: constants.APIRequestMaxTokens,
 		Messages:  messages,
 		System:    system,
 		Stream:    false,

@@ -1,5 +1,7 @@
 package constants
 
+import "time"
+
 const (
 	Version = "1.0.0"
 	Name    = "SmartClaw"
@@ -13,9 +15,10 @@ const (
 	ModelClaudeHaiku3   = "claude-haiku-3-5"
 	ModelClaudeSonnet37 = "claude-sonnet-3-7"
 	ModelClaudeOpus37   = "claude-opus-3-7"
+	ModelSRE            = "sre-model"
 )
 
-const DefaultModel = ModelClaudeSonnet45
+const DefaultModel = ModelSRE
 
 const (
 	MaxTokensDefault  = 4096
@@ -67,8 +70,10 @@ const (
 	StatusStopped   = "stopped"
 )
 
-const TokenPricingInput = 0.000015
-const TokenPricingOutput = 0.000075
+const (
+	TokenPricingInput  = 0.000015
+	TokenPricingOutput = 0.000075
+)
 
 const (
 	EventMessageStart      = "message_start"
@@ -98,3 +103,27 @@ const (
 const EnvAPIKey = "ANTHROPIC_API_KEY"
 const EnvBaseURL = "ANTHROPIC_BASE_URL"
 const EnvDebug = "DEBUG"
+
+const (
+	BackgroundTaskTimeout = 30 * time.Second
+	ShutdownWaitTimeout   = 5 * time.Second
+)
+
+const (
+	SpeculativeSimilarityThreshold = 0.3
+	BudgetWarningThreshold         = 0.7
+	BudgetDowngradeThreshold       = 0.9
+)
+
+const (
+	APIClientTimeout         = 300
+	APITLSHandshakeTimeout   = 10
+	APIResponseHeaderTimeout = 60
+	APIIdleConnTimeout       = 30
+	APIRequestMaxTokens      = 4096
+)
+
+const (
+	DefaultNudgeInterval = 10
+	MemoryCharLimit      = 3575
+)
