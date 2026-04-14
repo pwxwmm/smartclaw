@@ -11,42 +11,42 @@ import (
 	"time"
 )
 
-type DockerSandboxTool struct{}
+type DockerSandboxTool struct{ BaseTool }
 
-func (t *DockerSandboxTool) Name() string { return "docker_exec" }
+func (t *DockerSandboxTool) Name() string	{ return "docker_exec" }
 func (t *DockerSandboxTool) Description() string {
 	return "Execute a command inside an isolated Docker container. The project directory is mounted at /workspace. Supports both one-shot and session-persistent containers."
 }
 
 func (t *DockerSandboxTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"command": map[string]any{
-				"type":        "string",
-				"description": "Shell command to execute inside the container",
+				"type":		"string",
+				"description":	"Shell command to execute inside the container",
 			},
 			"image": map[string]any{
-				"type":        "string",
-				"default":     "smartclaw/runtime:latest",
-				"description": "Docker image to use",
+				"type":		"string",
+				"default":	"smartclaw/runtime:latest",
+				"description":	"Docker image to use",
 			},
 			"timeout": map[string]any{
-				"type":        "integer",
-				"default":     120,
-				"description": "Timeout in seconds",
+				"type":		"integer",
+				"default":	120,
+				"description":	"Timeout in seconds",
 			},
 			"session": map[string]any{
-				"type":        "string",
-				"description": "Session ID for persistent container. If set, reuses an existing container for this session. Omit for one-shot execution.",
+				"type":		"string",
+				"description":	"Session ID for persistent container. If set, reuses an existing container for this session. Omit for one-shot execution.",
 			},
 			"action": map[string]any{
-				"type":        "string",
-				"default":     "exec",
-				"description": "Action: exec (run command), start (create session container), stop (destroy session container)",
+				"type":		"string",
+				"default":	"exec",
+				"description":	"Action: exec (run command), start (create session container), stop (destroy session container)",
 			},
 		},
-		"required": []string{"command"},
+		"required":	[]string{"command"},
 	}
 }
 
@@ -133,9 +133,9 @@ func (t *DockerSandboxTool) startSession(ctx context.Context, input map[string]a
 
 	if existing := getContainerState(containerName); existing == "running" {
 		return map[string]any{
-			"session_id":   sessionID,
-			"container_id": containerName,
-			"status":       "already_running",
+			"session_id":	sessionID,
+			"container_id":	containerName,
+			"status":	"already_running",
 		}, nil
 	}
 
@@ -158,10 +158,10 @@ func (t *DockerSandboxTool) startSession(ctx context.Context, input map[string]a
 	slog.Info("docker: session container started", "session", sessionID, "container", containerName)
 
 	return map[string]any{
-		"session_id":   sessionID,
-		"container_id": containerName,
-		"status":       "started",
-		"image":        image,
+		"session_id":	sessionID,
+		"container_id":	containerName,
+		"status":	"started",
+		"image":	image,
 	}, nil
 }
 
@@ -185,8 +185,8 @@ func (t *DockerSandboxTool) stopSession(ctx context.Context, sessionID string) (
 	slog.Info("docker: session container stopped", "session", sessionID)
 
 	return map[string]any{
-		"session_id": sessionID,
-		"status":     "stopped",
+		"session_id":	sessionID,
+		"status":	"stopped",
 	}, nil
 }
 
@@ -235,10 +235,10 @@ func execInContainer(ctx context.Context, containerName, command string) (any, e
 	timedOut := ctx.Err() == context.DeadlineExceeded
 
 	return map[string]any{
-		"stdout":    string(output),
-		"exit_code": exitCode,
-		"duration":  time.Since(startTime).String(),
-		"timed_out": timedOut,
+		"stdout":	string(output),
+		"exit_code":	exitCode,
+		"duration":	time.Since(startTime).String(),
+		"timed_out":	timedOut,
 	}, nil
 }
 

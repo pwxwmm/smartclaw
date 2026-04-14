@@ -11,8 +11,8 @@ import (
 )
 
 type MCPClientRegistry struct {
-	clients map[string]*mcp.McpClient
-	mu      sync.RWMutex
+	clients	map[string]*mcp.McpClient
+	mu	sync.RWMutex
 }
 
 var defaultMCPRegistry = &MCPClientRegistry{
@@ -91,22 +91,22 @@ func (r *MCPClientRegistry) ListConnected() []string {
 	return names
 }
 
-type McpExecuteTool struct{}
+type McpExecuteTool struct{ BaseTool }
 
-func (t *McpExecuteTool) Name() string { return "mcp" }
+func (t *McpExecuteTool) Name() string	{ return "mcp" }
 func (t *McpExecuteTool) Description() string {
 	return "Execute a tool on an MCP server. Connects to the server if not already connected."
 }
 
 func (t *McpExecuteTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"server":    map[string]any{"type": "string", "description": "MCP server name"},
-			"tool":      map[string]any{"type": "string", "description": "Tool name on the server"},
-			"arguments": map[string]any{"type": "object", "description": "Tool arguments"},
+			"server":	map[string]any{"type": "string", "description": "MCP server name"},
+			"tool":		map[string]any{"type": "string", "description": "Tool name on the server"},
+			"arguments":	map[string]any{"type": "object", "description": "Tool arguments"},
 		},
-		"required": []string{"server", "tool"},
+		"required":	[]string{"server", "tool"},
 	}
 }
 
@@ -134,26 +134,26 @@ func (t *McpExecuteTool) Execute(ctx context.Context, input map[string]any) (any
 	}
 
 	return map[string]any{
-		"server": server,
-		"tool":   tool,
-		"result": result,
+		"server":	server,
+		"tool":		tool,
+		"result":	result,
 	}, nil
 }
 
-type ListMcpResourcesTool struct{}
+type ListMcpResourcesTool struct{ BaseTool }
 
-func (t *ListMcpResourcesTool) Name() string { return "list_mcp_resources" }
+func (t *ListMcpResourcesTool) Name() string	{ return "list_mcp_resources" }
 func (t *ListMcpResourcesTool) Description() string {
 	return "List resources available on an MCP server"
 }
 
 func (t *ListMcpResourcesTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"server": map[string]any{"type": "string", "description": "MCP server name"},
 		},
-		"required": []string{"server"},
+		"required":	[]string{"server"},
 	}
 }
 
@@ -177,33 +177,33 @@ func (t *ListMcpResourcesTool) Execute(ctx context.Context, input map[string]any
 	result := make([]map[string]any, 0, len(resources))
 	for _, r := range resources {
 		result = append(result, map[string]any{
-			"uri":         r.URI,
-			"name":        r.Name,
-			"description": r.Description,
-			"mimeType":    r.MimeType,
+			"uri":		r.URI,
+			"name":		r.Name,
+			"description":	r.Description,
+			"mimeType":	r.MimeType,
 		})
 	}
 
 	return map[string]any{
-		"server":    server,
-		"resources": result,
-		"count":     len(result),
+		"server":	server,
+		"resources":	result,
+		"count":	len(result),
 	}, nil
 }
 
-type ReadMcpResourceTool struct{}
+type ReadMcpResourceTool struct{ BaseTool }
 
-func (t *ReadMcpResourceTool) Name() string        { return "read_mcp_resource" }
-func (t *ReadMcpResourceTool) Description() string { return "Read a resource from an MCP server" }
+func (t *ReadMcpResourceTool) Name() string		{ return "read_mcp_resource" }
+func (t *ReadMcpResourceTool) Description() string	{ return "Read a resource from an MCP server" }
 
 func (t *ReadMcpResourceTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"server": map[string]any{"type": "string", "description": "MCP server name"},
-			"uri":    map[string]any{"type": "string", "description": "Resource URI"},
+			"server":	map[string]any{"type": "string", "description": "MCP server name"},
+			"uri":		map[string]any{"type": "string", "description": "Resource URI"},
 		},
-		"required": []string{"server", "uri"},
+		"required":	[]string{"server", "uri"},
 	}
 }
 
@@ -229,27 +229,27 @@ func (t *ReadMcpResourceTool) Execute(ctx context.Context, input map[string]any)
 	}
 
 	return map[string]any{
-		"server":  server,
-		"uri":     uri,
-		"content": content,
+		"server":	server,
+		"uri":		uri,
+		"content":	content,
 	}, nil
 }
 
-type McpAuthTool struct{}
+type McpAuthTool struct{ BaseTool }
 
-func (t *McpAuthTool) Name() string        { return "mcp_auth" }
-func (t *McpAuthTool) Description() string { return "Authenticate with an MCP server using OAuth" }
+func (t *McpAuthTool) Name() string		{ return "mcp_auth" }
+func (t *McpAuthTool) Description() string	{ return "Authenticate with an MCP server using OAuth" }
 
 func (t *McpAuthTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"server":     map[string]any{"type": "string", "description": "MCP server name"},
-			"auth_url":   map[string]any{"type": "string", "description": "OAuth authorization URL"},
-			"token":      map[string]any{"type": "string", "description": "OAuth token (after user completes flow)"},
-			"expires_in": map[string]any{"type": "integer", "description": "Token expiry in seconds"},
+			"server":	map[string]any{"type": "string", "description": "MCP server name"},
+			"auth_url":	map[string]any{"type": "string", "description": "OAuth authorization URL"},
+			"token":	map[string]any{"type": "string", "description": "OAuth token (after user completes flow)"},
+			"expires_in":	map[string]any{"type": "integer", "description": "Token expiry in seconds"},
 		},
-		"required": []string{"server"},
+		"required":	[]string{"server"},
 	}
 }
 
@@ -272,9 +272,9 @@ func (t *McpAuthTool) Execute(ctx context.Context, input map[string]any) (any, e
 		}
 
 		return map[string]any{
-			"server":  server,
-			"status":  "authenticated",
-			"message": "OAuth authentication completed successfully",
+			"server":	server,
+			"status":	"authenticated",
+			"message":	"OAuth authentication completed successfully",
 		}, nil
 	}
 
@@ -286,9 +286,9 @@ func (t *McpAuthTool) Execute(ctx context.Context, input map[string]any) (any, e
 	flow := authManager.StartFlow(server, authURL)
 
 	return map[string]any{
-		"status":  "auth_required",
-		"server":  server,
-		"authUrl": flow.AuthURL,
-		"message": "Please complete authentication. Use mcp_auth with token parameter after completing the flow.",
+		"status":	"auth_required",
+		"server":	server,
+		"authUrl":	flow.AuthURL,
+		"message":	"Please complete authentication. Use mcp_auth with token parameter after completing the flow.",
 	}, nil
 }

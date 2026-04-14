@@ -23,20 +23,20 @@ func NewWebFetchTool() *WebFetchTool {
 	}
 }
 
-func (t *WebFetchTool) Name() string        { return "web_fetch" }
-func (t *WebFetchTool) Description() string { return "Fetch content from a URL" }
+func (t *WebFetchTool) Name() string		{ return "web_fetch" }
+func (t *WebFetchTool) Description() string	{ return "Fetch content from a URL" }
 
 func (t *WebFetchTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"url":     map[string]any{"type": "string"},
-			"method":  map[string]any{"type": "string", "default": "GET"},
-			"headers": map[string]any{"type": "object"},
-			"body":    map[string]any{"type": "string"},
-			"timeout": map[string]any{"type": "integer", "default": 30000},
+			"url":		map[string]any{"type": "string"},
+			"method":	map[string]any{"type": "string", "default": "GET"},
+			"headers":	map[string]any{"type": "object"},
+			"body":		map[string]any{"type": "string"},
+			"timeout":	map[string]any{"type": "integer", "default": 30000},
 		},
-		"required": []string{"url"},
+		"required":	[]string{"url"},
 	}
 }
 
@@ -84,36 +84,36 @@ func (t *WebFetchTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	return map[string]any{
-		"status_code": resp.StatusCode,
-		"headers":     resp.Header,
-		"body":        string(body),
+		"status_code":	resp.StatusCode,
+		"headers":	resp.Header,
+		"body":		string(body),
 	}, nil
 }
 
 type WebSearchTool struct {
-	apiKey string
-	engine string
+	apiKey	string
+	engine	string
 }
 
 func NewWebSearchTool(apiKey, engine string) *WebSearchTool {
 	return &WebSearchTool{
-		apiKey: apiKey,
-		engine: engine,
+		apiKey:	apiKey,
+		engine:	engine,
 	}
 }
 
-func (t *WebSearchTool) Name() string        { return "web_search" }
-func (t *WebSearchTool) Description() string { return "Search the web for information" }
+func (t *WebSearchTool) Name() string		{ return "web_search" }
+func (t *WebSearchTool) Description() string	{ return "Search the web for information" }
 
 func (t *WebSearchTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"query":  map[string]any{"type": "string"},
-			"limit":  map[string]any{"type": "integer", "default": 10},
-			"offset": map[string]any{"type": "integer", "default": 0},
+			"query":	map[string]any{"type": "string"},
+			"limit":	map[string]any{"type": "integer", "default": 10},
+			"offset":	map[string]any{"type": "integer", "default": 0},
 		},
-		"required": []string{"query"},
+		"required":	[]string{"query"},
 	}
 }
 
@@ -172,18 +172,18 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limi
 	}
 
 	var ddgResponse struct {
-		AbstractText   string `json:"AbstractText"`
-		AbstractURL    string `json:"AbstractURL"`
-		AbstractSource string `json:"AbstractSource"`
-		Heading        string `json:"Heading"`
-		Results        []struct {
-			Text string `json:"Text"`
-			URL  string `json:"FirstURL"`
-		} `json:"Results"`
-		RelatedTopics []struct {
-			Text string `json:"Text"`
-			URL  string `json:"FirstURL"`
-		} `json:"RelatedTopics"`
+		AbstractText	string	`json:"AbstractText"`
+		AbstractURL	string	`json:"AbstractURL"`
+		AbstractSource	string	`json:"AbstractSource"`
+		Heading		string	`json:"Heading"`
+		Results		[]struct {
+			Text	string	`json:"Text"`
+			URL	string	`json:"FirstURL"`
+		}	`json:"Results"`
+		RelatedTopics	[]struct {
+			Text	string	`json:"Text"`
+			URL	string	`json:"FirstURL"`
+		}	`json:"RelatedTopics"`
 	}
 
 	if err := json.Unmarshal(body, &ddgResponse); err != nil {
@@ -196,10 +196,10 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limi
 	// Add abstract if available
 	if ddgResponse.AbstractText != "" {
 		results = append(results, map[string]any{
-			"title":   ddgResponse.Heading,
-			"url":     ddgResponse.AbstractURL,
-			"snippet": ddgResponse.AbstractText,
-			"source":  ddgResponse.AbstractSource,
+			"title":	ddgResponse.Heading,
+			"url":		ddgResponse.AbstractURL,
+			"snippet":	ddgResponse.AbstractText,
+			"source":	ddgResponse.AbstractSource,
 		})
 	}
 
@@ -210,9 +210,9 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limi
 		}
 		if r.Text != "" && r.URL != "" {
 			results = append(results, map[string]any{
-				"title":   r.Text,
-				"url":     r.URL,
-				"snippet": r.Text,
+				"title":	r.Text,
+				"url":		r.URL,
+				"snippet":	r.Text,
 			})
 		}
 	}
@@ -224,19 +224,19 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limi
 		}
 		if r.Text != "" && r.URL != "" {
 			results = append(results, map[string]any{
-				"title":   r.Text,
-				"url":     r.URL,
-				"snippet": r.Text,
+				"title":	r.Text,
+				"url":		r.URL,
+				"snippet":	r.Text,
 			})
 		}
 	}
 
 	return map[string]any{
-		"query":   query,
-		"results": results,
-		"count":   len(results),
-		"engine":  "duckduckgo",
-		"message": "Search completed successfully",
+		"query":	query,
+		"results":	results,
+		"count":	len(results),
+		"engine":	"duckduckgo",
+		"message":	"Search completed successfully",
 	}, nil
 }
 
@@ -245,9 +245,9 @@ func (t *WebSearchTool) searchExa(ctx context.Context, query string, limit int) 
 	url := "https://api.exa.ai/search"
 
 	payload := map[string]any{
-		"query":         query,
-		"numResults":    limit,
-		"useAutoprompt": true,
+		"query":		query,
+		"numResults":		limit,
+		"useAutoprompt":	true,
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -277,9 +277,9 @@ func (t *WebSearchTool) searchExa(ctx context.Context, query string, limit int) 
 
 	var exaResponse struct {
 		Results []struct {
-			Title   string `json:"title"`
-			URL     string `json:"url"`
-			Snippet string `json:"text"`
+			Title	string	`json:"title"`
+			URL	string	`json:"url"`
+			Snippet	string	`json:"text"`
 		} `json:"results"`
 	}
 
@@ -290,18 +290,18 @@ func (t *WebSearchTool) searchExa(ctx context.Context, query string, limit int) 
 	results := make([]map[string]any, 0, len(exaResponse.Results))
 	for _, r := range exaResponse.Results {
 		results = append(results, map[string]any{
-			"title":   r.Title,
-			"url":     r.URL,
-			"snippet": r.Snippet,
+			"title":	r.Title,
+			"url":		r.URL,
+			"snippet":	r.Snippet,
 		})
 	}
 
 	return map[string]any{
-		"query":   query,
-		"results": results,
-		"count":   len(results),
-		"engine":  "exa",
-		"message": "Search completed successfully",
+		"query":	query,
+		"results":	results,
+		"count":	len(results),
+		"engine":	"exa",
+		"message":	"Search completed successfully",
 	}, nil
 }
 
@@ -310,8 +310,8 @@ func (t *WebSearchTool) searchSerper(ctx context.Context, query string, limit in
 	url := "https://google.serper.dev/search"
 
 	payload := map[string]any{
-		"q":   query,
-		"num": limit,
+		"q":	query,
+		"num":	limit,
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -341,9 +341,9 @@ func (t *WebSearchTool) searchSerper(ctx context.Context, query string, limit in
 
 	var serperResponse struct {
 		Organic []struct {
-			Title   string `json:"title"`
-			Link    string `json:"link"`
-			Snippet string `json:"snippet"`
+			Title	string	`json:"title"`
+			Link	string	`json:"link"`
+			Snippet	string	`json:"snippet"`
 		} `json:"organic"`
 	}
 
@@ -354,18 +354,18 @@ func (t *WebSearchTool) searchSerper(ctx context.Context, query string, limit in
 	results := make([]map[string]any, 0, len(serperResponse.Organic))
 	for _, r := range serperResponse.Organic {
 		results = append(results, map[string]any{
-			"title":   r.Title,
-			"url":     r.Link,
-			"snippet": r.Snippet,
+			"title":	r.Title,
+			"url":		r.Link,
+			"snippet":	r.Snippet,
 		})
 	}
 
 	return map[string]any{
-		"query":   query,
-		"results": results,
-		"count":   len(results),
-		"engine":  "serper",
-		"message": "Search completed successfully",
+		"query":	query,
+		"results":	results,
+		"count":	len(results),
+		"engine":	"serper",
+		"message":	"Search completed successfully",
 	}, nil
 }
 
@@ -373,11 +373,11 @@ func (t *WebSearchTool) searchTavily(ctx context.Context, query string, limit in
 	url := "https://api.tavily.com/search"
 
 	payload := map[string]any{
-		"query":               query,
-		"max_results":         limit,
-		"include_answer":      true,
-		"include_raw_content": false,
-		"search_depth":        "advanced",
+		"query":		query,
+		"max_results":		limit,
+		"include_answer":	true,
+		"include_raw_content":	false,
+		"search_depth":		"advanced",
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -406,13 +406,13 @@ func (t *WebSearchTool) searchTavily(ctx context.Context, query string, limit in
 	}
 
 	var tavilyResponse struct {
-		Answer  string `json:"answer"`
-		Results []struct {
-			Title   string  `json:"title"`
-			URL     string  `json:"url"`
-			Content string  `json:"content"`
-			Score   float64 `json:"score"`
-		} `json:"results"`
+		Answer	string	`json:"answer"`
+		Results	[]struct {
+			Title	string	`json:"title"`
+			URL	string	`json:"url"`
+			Content	string	`json:"content"`
+			Score	float64	`json:"score"`
+		}	`json:"results"`
 	}
 
 	if err := json.Unmarshal(body, &tavilyResponse); err != nil {
@@ -422,19 +422,19 @@ func (t *WebSearchTool) searchTavily(ctx context.Context, query string, limit in
 	results := make([]map[string]any, 0, len(tavilyResponse.Results))
 	for _, r := range tavilyResponse.Results {
 		results = append(results, map[string]any{
-			"title":   r.Title,
-			"url":     r.URL,
-			"snippet": r.Content,
-			"score":   r.Score,
+			"title":	r.Title,
+			"url":		r.URL,
+			"snippet":	r.Content,
+			"score":	r.Score,
 		})
 	}
 
 	response := map[string]any{
-		"query":   query,
-		"results": results,
-		"count":   len(results),
-		"engine":  "tavily",
-		"message": "Search completed successfully",
+		"query":	query,
+		"results":	results,
+		"count":	len(results),
+		"engine":	"tavily",
+		"message":	"Search completed successfully",
 	}
 
 	if tavilyResponse.Answer != "" {
@@ -456,20 +456,20 @@ func NewHTTPRequestTool() *HTTPRequestTool {
 	}
 }
 
-func (t *HTTPRequestTool) Name() string        { return "http_request" }
-func (t *HTTPRequestTool) Description() string { return "Make an HTTP request" }
+func (t *HTTPRequestTool) Name() string		{ return "http_request" }
+func (t *HTTPRequestTool) Description() string	{ return "Make an HTTP request" }
 
 func (t *HTTPRequestTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"url":     map[string]any{"type": "string"},
-			"method":  map[string]any{"type": "string", "default": "GET"},
-			"headers": map[string]any{"type": "object"},
-			"body":    map[string]any{"type": "string"},
-			"timeout": map[string]any{"type": "integer"},
+			"url":		map[string]any{"type": "string"},
+			"method":	map[string]any{"type": "string", "default": "GET"},
+			"headers":	map[string]any{"type": "object"},
+			"body":		map[string]any{"type": "string"},
+			"timeout":	map[string]any{"type": "integer"},
 		},
-		"required": []string{"url"},
+		"required":	[]string{"url"},
 	}
 }
 
@@ -505,29 +505,29 @@ func (t *HTTPRequestTool) Execute(ctx context.Context, input map[string]any) (an
 	}
 
 	return map[string]any{
-		"status":     resp.StatusCode,
-		"statusText": resp.Status,
-		"headers":    resp.Header,
-		"body":       string(body),
+		"status":	resp.StatusCode,
+		"statusText":	resp.Status,
+		"headers":	resp.Header,
+		"body":		string(body),
 	}, nil
 }
 
-type JSONParserTool struct{}
+type JSONParserTool struct{ BaseTool }
 
 func NewJSONParserTool() *JSONParserTool {
 	return &JSONParserTool{}
 }
 
-func (t *JSONParserTool) Name() string        { return "json_parse" }
-func (t *JSONParserTool) Description() string { return "Parse JSON string to object" }
+func (t *JSONParserTool) Name() string		{ return "json_parse" }
+func (t *JSONParserTool) Description() string	{ return "Parse JSON string to object" }
 
 func (t *JSONParserTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"json": map[string]any{"type": "string"},
 		},
-		"required": []string{"json"},
+		"required":	[]string{"json"},
 	}
 }
 
@@ -545,23 +545,23 @@ func (t *JSONParserTool) Execute(ctx context.Context, input map[string]any) (any
 	return result, nil
 }
 
-type JSONStringifyTool struct{}
+type JSONStringifyTool struct{ BaseTool }
 
 func NewJSONStringifyTool() *JSONStringifyTool {
 	return &JSONStringifyTool{}
 }
 
-func (t *JSONStringifyTool) Name() string        { return "json_stringify" }
-func (t *JSONStringifyTool) Description() string { return "Convert object to JSON string" }
+func (t *JSONStringifyTool) Name() string		{ return "json_stringify" }
+func (t *JSONStringifyTool) Description() string	{ return "Convert object to JSON string" }
 
 func (t *JSONStringifyTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"object":  map[string]any{"type": "object"},
-			"prettty": map[string]any{"type": "boolean", "default": false},
+			"object":	map[string]any{"type": "object"},
+			"prettty":	map[string]any{"type": "boolean", "default": false},
 		},
-		"required": []string{"object"},
+		"required":	[]string{"object"},
 	}
 }
 
@@ -584,22 +584,22 @@ func (t *JSONStringifyTool) Execute(ctx context.Context, input map[string]any) (
 	return string(data), nil
 }
 
-type URLParserTool struct{}
+type URLParserTool struct{ BaseTool }
 
 func NewURLParserTool() *URLParserTool {
 	return &URLParserTool{}
 }
 
-func (t *URLParserTool) Name() string        { return "url_parse" }
-func (t *URLParserTool) Description() string { return "Parse URL into components" }
+func (t *URLParserTool) Name() string		{ return "url_parse" }
+func (t *URLParserTool) Description() string	{ return "Parse URL into components" }
 
 func (t *URLParserTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"url": map[string]any{"type": "string"},
 		},
-		"required": []string{"url"},
+		"required":	[]string{"url"},
 	}
 }
 
@@ -627,31 +627,31 @@ func (t *URLParserTool) Execute(ctx context.Context, input map[string]any) (any,
 	}
 
 	return map[string]any{
-		"scheme": scheme,
-		"host":   host,
-		"path":   path,
+		"scheme":	scheme,
+		"host":		host,
+		"path":		path,
 	}, nil
 }
 
-type TextTransformTool struct{}
+type TextTransformTool struct{ BaseTool }
 
 func NewTextTransformTool() *TextTransformTool {
 	return &TextTransformTool{}
 }
 
-func (t *TextTransformTool) Name() string { return "text_transform" }
+func (t *TextTransformTool) Name() string	{ return "text_transform" }
 func (t *TextTransformTool) Description() string {
 	return "Transform text (uppercase, lowercase, etc.)"
 }
 
 func (t *TextTransformTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
-			"text":      map[string]any{"type": "string"},
-			"transform": map[string]any{"type": "string", "enum": []string{"upper", "lower", "title", "reverse"}},
+			"text":		map[string]any{"type": "string"},
+			"transform":	map[string]any{"type": "string", "enum": []string{"upper", "lower", "title", "reverse"}},
 		},
-		"required": []string{"text", "transform"},
+		"required":	[]string{"text", "transform"},
 	}
 }
 

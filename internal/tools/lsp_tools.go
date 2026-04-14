@@ -8,29 +8,29 @@ import (
 	"strings"
 )
 
-type LSPTool struct{}
+type LSPTool struct{ BaseTool }
 
 func NewLSPTool() *LSPTool {
 	return &LSPTool{}
 }
 
-func (t *LSPTool) Name() string        { return "lsp" }
-func (t *LSPTool) Description() string { return "LSP operations for code navigation and analysis" }
+func (t *LSPTool) Name() string		{ return "lsp" }
+func (t *LSPTool) Description() string	{ return "LSP operations for code navigation and analysis" }
 
 func (t *LSPTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"operation": map[string]any{
-				"type": "string",
-				"enum": []string{"goto_definition", "find_references", "symbols", "diagnostics", "rename", "hover"},
+				"type":	"string",
+				"enum":	[]string{"goto_definition", "find_references", "symbols", "diagnostics", "rename", "hover"},
 			},
-			"file_path": map[string]any{"type": "string"},
-			"line":      map[string]any{"type": "integer"},
-			"character": map[string]any{"type": "integer"},
-			"new_name":  map[string]any{"type": "string"},
+			"file_path":	map[string]any{"type": "string"},
+			"line":		map[string]any{"type": "integer"},
+			"character":	map[string]any{"type": "integer"},
+			"new_name":	map[string]any{"type": "string"},
 		},
-		"required": []string{"operation", "file_path"},
+		"required":	[]string{"operation", "file_path"},
 	}
 }
 
@@ -89,25 +89,25 @@ func (t *LSPTool) Execute(ctx context.Context, input map[string]any) (any, error
 
 func (t *LSPTool) getDiagnostics(ctx context.Context, client *LSPClient, filePath string) (any, error) {
 	return map[string]any{
-		"diagnostics": []any{},
-		"message":     "Diagnostics support requires LSP server with diagnostic support",
+		"diagnostics":	[]any{},
+		"message":	"Diagnostics support requires LSP server with diagnostic support",
 	}, nil
 }
 
 func (t *LSPTool) getLanguageID(ext string) string {
 	languageMap := map[string]string{
-		".go":   "go",
-		".ts":   "typescript",
-		".tsx":  "typescriptreact",
-		".js":   "javascript",
-		".jsx":  "javascriptreact",
-		".py":   "python",
-		".rs":   "rust",
-		".java": "java",
-		".c":    "c",
-		".cpp":  "cpp",
-		".h":    "c",
-		".hpp":  "cpp",
+		".go":		"go",
+		".ts":		"typescript",
+		".tsx":		"typescriptreact",
+		".js":		"javascript",
+		".jsx":		"javascriptreact",
+		".py":		"python",
+		".rs":		"rust",
+		".java":	"java",
+		".c":		"c",
+		".cpp":		"cpp",
+		".h":		"c",
+		".hpp":		"cpp",
 	}
 
 	if lang, ok := languageMap[ext]; ok {
@@ -116,24 +116,24 @@ func (t *LSPTool) getLanguageID(ext string) string {
 	return strings.TrimPrefix(ext, ".")
 }
 
-type SessionTool struct{}
+type SessionTool struct{ BaseTool }
 
-func (t *SessionTool) Name() string        { return "session" }
-func (t *SessionTool) Description() string { return "Session operations" }
+func (t *SessionTool) Name() string		{ return "session" }
+func (t *SessionTool) Description() string	{ return "Session operations" }
 
 func (t *SessionTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"operation": map[string]any{
-				"type": "string",
-				"enum": []string{"list", "read", "search", "info"},
+				"type":	"string",
+				"enum":	[]string{"list", "read", "search", "info"},
 			},
-			"session_id": map[string]any{"type": "string"},
-			"query":      map[string]any{"type": "string"},
-			"limit":      map[string]any{"type": "integer"},
+			"session_id":	map[string]any{"type": "string"},
+			"query":	map[string]any{"type": "string"},
+			"limit":	map[string]any{"type": "integer"},
 		},
-		"required": []string{"operation"},
+		"required":	[]string{"operation"},
 	}
 }
 

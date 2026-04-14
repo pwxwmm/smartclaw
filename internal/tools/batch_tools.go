@@ -5,28 +5,28 @@ import (
 	"sync"
 )
 
-type BatchTool struct{}
+type BatchTool struct{ BaseTool }
 
-func (t *BatchTool) Name() string        { return "batch" }
-func (t *BatchTool) Description() string { return "Execute multiple operations in batch" }
+func (t *BatchTool) Name() string		{ return "batch" }
+func (t *BatchTool) Description() string	{ return "Execute multiple operations in batch" }
 
 func (t *BatchTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"operations": map[string]any{
-				"type": "array",
+				"type":	"array",
 				"items": map[string]any{
-					"type": "object",
+					"type":	"object",
 					"properties": map[string]any{
-						"tool":  map[string]any{"type": "string"},
-						"input": map[string]any{"type": "object"},
+						"tool":		map[string]any{"type": "string"},
+						"input":	map[string]any{"type": "object"},
 					},
 				},
 			},
-			"parallel": map[string]any{"type": "boolean"},
+			"parallel":	map[string]any{"type": "boolean"},
 		},
-		"required": []string{"operations"},
+		"required":	[]string{"operations"},
 	}
 }
 
@@ -47,8 +47,8 @@ func (t *BatchTool) Execute(ctx context.Context, input map[string]any) (any, err
 	}
 
 	return map[string]any{
-		"results": results,
-		"count":   len(results),
+		"results":	results,
+		"count":	len(results),
 	}, nil
 }
 
@@ -59,9 +59,9 @@ func (t *BatchTool) executeSequential(ctx context.Context, operations []any) []m
 		opMap, ok := op.(map[string]any)
 		if !ok {
 			results = append(results, map[string]any{
-				"index":  i,
-				"error":  "invalid operation format",
-				"status": "failed",
+				"index":	i,
+				"error":	"invalid operation format",
+				"status":	"failed",
 			})
 			continue
 		}
@@ -72,19 +72,19 @@ func (t *BatchTool) executeSequential(ctx context.Context, operations []any) []m
 		result, err := defaultRegistry.Execute(ctx, toolName, toolInput)
 		if err != nil {
 			results = append(results, map[string]any{
-				"index":  i,
-				"tool":   toolName,
-				"error":  err.Error(),
-				"status": "failed",
+				"index":	i,
+				"tool":		toolName,
+				"error":	err.Error(),
+				"status":	"failed",
 			})
 			continue
 		}
 
 		results = append(results, map[string]any{
-			"index":  i,
-			"tool":   toolName,
-			"result": result,
-			"status": "success",
+			"index":	i,
+			"tool":		toolName,
+			"result":	result,
+			"status":	"success",
 		})
 	}
 
@@ -105,9 +105,9 @@ func (t *BatchTool) executeParallel(ctx context.Context, operations []any) []map
 			if !ok {
 				mu.Lock()
 				results[index] = map[string]any{
-					"index":  index,
-					"error":  "invalid operation format",
-					"status": "failed",
+					"index":	index,
+					"error":	"invalid operation format",
+					"status":	"failed",
 				}
 				mu.Unlock()
 				return
@@ -121,17 +121,17 @@ func (t *BatchTool) executeParallel(ctx context.Context, operations []any) []map
 			mu.Lock()
 			if err != nil {
 				results[index] = map[string]any{
-					"index":  index,
-					"tool":   toolName,
-					"error":  err.Error(),
-					"status": "failed",
+					"index":	index,
+					"tool":		toolName,
+					"error":	err.Error(),
+					"status":	"failed",
 				}
 			} else {
 				results[index] = map[string]any{
-					"index":  index,
-					"tool":   toolName,
-					"result": result,
-					"status": "success",
+					"index":	index,
+					"tool":		toolName,
+					"result":	result,
+					"status":	"success",
 				}
 			}
 			mu.Unlock()
@@ -142,28 +142,28 @@ func (t *BatchTool) executeParallel(ctx context.Context, operations []any) []map
 	return results
 }
 
-type ParallelTool struct{}
+type ParallelTool struct{ BaseTool }
 
-func (t *ParallelTool) Name() string        { return "parallel" }
-func (t *ParallelTool) Description() string { return "Execute multiple tools in parallel" }
+func (t *ParallelTool) Name() string		{ return "parallel" }
+func (t *ParallelTool) Description() string	{ return "Execute multiple tools in parallel" }
 
 func (t *ParallelTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array",
+				"type":	"array",
 				"items": map[string]any{
-					"type": "object",
+					"type":	"object",
 					"properties": map[string]any{
-						"id":    map[string]any{"type": "string"},
-						"tool":  map[string]any{"type": "string"},
-						"input": map[string]any{"type": "object"},
+						"id":		map[string]any{"type": "string"},
+						"tool":		map[string]any{"type": "string"},
+						"input":	map[string]any{"type": "object"},
 					},
 				},
 			},
 		},
-		"required": []string{"tasks"},
+		"required":	[]string{"tasks"},
 	}
 }
 
@@ -196,13 +196,13 @@ func (t *ParallelTool) Execute(ctx context.Context, input map[string]any) (any, 
 			mu.Lock()
 			if err != nil {
 				results[id] = map[string]any{
-					"error":  err.Error(),
-					"status": "failed",
+					"error":	err.Error(),
+					"status":	"failed",
 				}
 			} else {
 				results[id] = map[string]any{
-					"result": result,
-					"status": "success",
+					"result":	result,
+					"status":	"success",
 				}
 			}
 			mu.Unlock()
@@ -212,32 +212,32 @@ func (t *ParallelTool) Execute(ctx context.Context, input map[string]any) (any, 
 	wg.Wait()
 
 	return map[string]any{
-		"results": results,
-		"count":   len(results),
+		"results":	results,
+		"count":	len(results),
 	}, nil
 }
 
-type PipelineTool struct{}
+type PipelineTool struct{ BaseTool }
 
-func (t *PipelineTool) Name() string        { return "pipeline" }
-func (t *PipelineTool) Description() string { return "Execute tools in a pipeline (output -> input)" }
+func (t *PipelineTool) Name() string		{ return "pipeline" }
+func (t *PipelineTool) Description() string	{ return "Execute tools in a pipeline (output -> input)" }
 
 func (t *PipelineTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"steps": map[string]any{
-				"type": "array",
+				"type":	"array",
 				"items": map[string]any{
-					"type": "object",
+					"type":	"object",
 					"properties": map[string]any{
-						"tool":  map[string]any{"type": "string"},
-						"input": map[string]any{"type": "object"},
+						"tool":		map[string]any{"type": "string"},
+						"input":	map[string]any{"type": "object"},
 					},
 				},
 			},
 		},
-		"required": []string{"steps"},
+		"required":	[]string{"steps"},
 	}
 }
 
@@ -271,11 +271,11 @@ func (t *PipelineTool) Execute(ctx context.Context, input map[string]any) (any, 
 		result, err := defaultRegistry.Execute(ctx, toolName, toolInput)
 		if err != nil {
 			return map[string]any{
-				"step":    i,
-				"tool":    toolName,
-				"error":   err.Error(),
-				"status":  "failed",
-				"partial": lastResult,
+				"step":		i,
+				"tool":		toolName,
+				"error":	err.Error(),
+				"status":	"failed",
+				"partial":	lastResult,
 			}, nil
 		}
 
@@ -283,8 +283,8 @@ func (t *PipelineTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	return map[string]any{
-		"result": lastResult,
-		"steps":  len(steps),
-		"status": "completed",
+		"result":	lastResult,
+		"steps":	len(steps),
+		"status":	"completed",
 	}, nil
 }

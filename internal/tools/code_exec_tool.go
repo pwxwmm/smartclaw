@@ -13,9 +13,9 @@ import (
 // via Unix socket RPC. Only stdout is returned to the LLM — intermediate
 // tool results stay inside the sandbox, collapsing multi-turn workflows
 // into a single turn.
-type ExecuteCodeTool struct{}
+type ExecuteCodeTool struct{ BaseTool }
 
-func (t *ExecuteCodeTool) Name() string { return "execute_code" }
+func (t *ExecuteCodeTool) Name() string	{ return "execute_code" }
 func (t *ExecuteCodeTool) Description() string {
 	return "Execute code in a sandboxed environment with access to SmartClaw tools via RPC. " +
 		"The code can call tools like read_file, write_file, glob, grep, bash, web_search, web_fetch directly. " +
@@ -26,28 +26,28 @@ func (t *ExecuteCodeTool) Description() string {
 
 func (t *ExecuteCodeTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":	"object",
 		"properties": map[string]any{
 			"code": map[string]any{
-				"type":        "string",
-				"description": "The code to execute. For Python, you can import smartclaw_tools to access read_file, write_file, glob, grep, bash, web_search, web_fetch functions directly.",
+				"type":		"string",
+				"description":	"The code to execute. For Python, you can import smartclaw_tools to access read_file, write_file, glob, grep, bash, web_search, web_fetch functions directly.",
 			},
 			"language": map[string]any{
-				"type":        "string",
-				"default":     "python",
-				"description": "Programming language: python or go",
+				"type":		"string",
+				"default":	"python",
+				"description":	"Programming language: python or go",
 			},
 			"timeout": map[string]any{
-				"type":        "integer",
-				"default":     300,
-				"description": "Maximum execution time in seconds (max 300)",
+				"type":		"integer",
+				"default":	300,
+				"description":	"Maximum execution time in seconds (max 300)",
 			},
 			"workdir": map[string]any{
-				"type":        "string",
-				"description": "Working directory for code execution (defaults to temp dir)",
+				"type":		"string",
+				"description":	"Working directory for code execution (defaults to temp dir)",
 			},
 		},
-		"required": []string{"code"},
+		"required":	[]string{"code"},
 	}
 }
 
@@ -85,12 +85,12 @@ func (t *ExecuteCodeTool) Execute(ctx context.Context, input map[string]any) (an
 	}
 
 	return map[string]any{
-		"stdout":     result.Stdout,
-		"exit_code":  result.ExitCode,
-		"duration":   result.Duration.String(),
-		"tool_calls": result.ToolCalls,
-		"truncated":  result.Truncated,
-		"timed_out":  result.TimedOut,
-		"language":   language,
+		"stdout":	result.Stdout,
+		"exit_code":	result.ExitCode,
+		"duration":	result.Duration.String(),
+		"tool_calls":	result.ToolCalls,
+		"truncated":	result.Truncated,
+		"timed_out":	result.TimedOut,
+		"language":	language,
 	}, nil
 }
