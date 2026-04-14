@@ -1,12 +1,9 @@
 package logger
 
 import (
-	"fmt"
-	"io"
-	"log"
+	"log/slog"
 	"os"
 	"sync"
-	"time"
 )
 
 type Level int
@@ -33,12 +30,26 @@ func (l Level) String() string {
 	}
 }
 
+func (l Level) slogLevel() slog.Level {
+	switch l {
+	case LevelDebug:
+		return slog.LevelDebug
+	case LevelInfo:
+		return slog.LevelInfo
+	case LevelWarn:
+		return slog.LevelWarn
+	case LevelError:
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 type Logger struct {
 	mu     sync.Mutex
 	level  Level
-	output io.Writer
+	attrs  []slog.Attr
 	prefix string
-	fields map[string]any
 }
 
 var defaultLogger *Logger
@@ -47,11 +58,9 @@ func init() {
 	defaultLogger = NewLogger(LevelInfo, os.Stderr)
 }
 
-func NewLogger(level Level, output io.Writer) *Logger {
+func NewLogger(level Level, _ interface{}) *Logger {
 	return &Logger{
-		level:  level,
-		output: output,
-		fields: make(map[string]any),
+		level: level,
 	}
 }
 
@@ -61,10 +70,8 @@ func (l *Logger) SetLevel(level Level) {
 	l.level = level
 }
 
-func (l *Logger) SetOutput(output io.Writer) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.output = output
+func (l *Logger) SetOutput(_ interface{}) {
+	// Output is managed by slog's default handler
 }
 
 func (l *Logger) SetPrefix(prefix string) {
@@ -79,15 +86,11 @@ func (l *Logger) WithField(key string, value any) *Logger {
 
 	newLogger := &Logger{
 		level:  l.level,
-		output: l.output,
 		prefix: l.prefix,
-		fields: make(map[string]any),
+		attrs:  make([]slog.Attr, len(l.attrs)),
 	}
-
-	for k, v := range l.fields {
-		newLogger.fields[k] = v
-	}
-	newLogger.fields[key] = value
+	copy(newLogger.attrs, l.attrs)
+	newLogger.attrs = append(newLogger.attrs, slog.Any(key, value))
 
 	return newLogger
 }
@@ -98,16 +101,12 @@ func (l *Logger) WithFields(fields map[string]any) *Logger {
 
 	newLogger := &Logger{
 		level:  l.level,
-		output: l.output,
 		prefix: l.prefix,
-		fields: make(map[string]any),
+		attrs:  make([]slog.Attr, len(l.attrs)),
 	}
-
-	for k, v := range l.fields {
-		newLogger.fields[k] = v
-	}
+	copy(newLogger.attrs, l.attrs)
 	for k, v := range fields {
-		newLogger.fields[k] = v
+		newLogger.attrs = append(newLogger.attrs, slog.Any(k, v))
 	}
 
 	return newLogger
@@ -119,34 +118,29 @@ func (l *Logger) log(level Level, format string, args ...any) {
 	}
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
-	message := fmt.Sprintf(format, args...)
-
-	var fieldsStr string
-	if len(l.fields) > 0 {
-		fieldsStr = " ["
-		first := true
-		for k, v := range l.fields {
-			if !first {
-				fieldsStr += " "
-			}
-			fieldsStr += fmt.Sprintf("%s=%v", k, v)
-			first = false
-		}
-		fieldsStr += "]"
-	}
-
 	prefix := l.prefix
-	if prefix != "" {
-		prefix += " "
+	attrs := make([]slog.Attr, len(l.attrs))
+	copy(attrs, l.attrs)
+	l.mu.Unlock()
+
+	msg := format
+	if len(args) > 0 {
+		msg = sprintf(format, args...)
 	}
 
-	line := fmt.Sprintf("%s [%s] %s%s%s\n", timestamp, level, prefix, message, fieldsStr)
+	if prefix != "" {
+		msg = prefix + " " + msg
+	}
 
-	if _, err := l.output.Write([]byte(line)); err != nil {
-		log.Printf("failed to write log: %v", err)
+	switch level {
+	case LevelDebug:
+		slog.LogAttrs(nil, slog.LevelDebug, msg, attrs...)
+	case LevelInfo:
+		slog.LogAttrs(nil, slog.LevelInfo, msg, attrs...)
+	case LevelWarn:
+		slog.LogAttrs(nil, slog.LevelWarn, msg, attrs...)
+	case LevelError:
+		slog.LogAttrs(nil, slog.LevelError, msg, attrs...)
 	}
 }
 
@@ -173,14 +167,14 @@ func (l *Logger) Fatal(format string, args ...any) {
 
 func (l *Logger) Panic(format string, args ...any) {
 	l.log(LevelError, format, args...)
-	panic(fmt.Sprintf(format, args...))
+	panic(sprintf(format, args...))
 }
 
 func SetLevel(level Level) {
 	defaultLogger.SetLevel(level)
 }
 
-func SetOutput(output io.Writer) {
+func SetOutput(output interface{}) {
 	defaultLogger.SetOutput(output)
 }
 
@@ -218,4 +212,83 @@ func Fatal(format string, args ...any) {
 
 func Panic(format string, args ...any) {
 	defaultLogger.Panic(format, args...)
+}
+
+func sprintf(format string, args ...any) string {
+	if len(args) == 0 {
+		return format
+	}
+	// Use fmt.Sprintf-like behavior
+	return fmtSprintf(format, args...)
+}
+
+func fmtSprintf(format string, args ...any) string {
+	// Simple implementation to avoid importing fmt at package level
+	// which could cause import cycle issues
+	result := make([]byte, 0, len(format)*2)
+	argIdx := 0
+	for i := 0; i < len(format); i++ {
+		if format[i] == '%' && i+1 < len(format) && argIdx < len(args) {
+			switch format[i+1] {
+			case 's':
+				if s, ok := args[argIdx].(string); ok {
+					result = append(result, s...)
+				} else {
+					result = append(result, args[argIdx].(fmtStringer).String()...)
+				}
+				argIdx++
+				i++
+			case 'd':
+				result = append(result, intToStr(args[argIdx].(int))...)
+				argIdx++
+				i++
+			case 'v':
+				result = append(result, anyToStr(args[argIdx])...)
+				argIdx++
+				i++
+			default:
+				result = append(result, format[i])
+			}
+		} else {
+			result = append(result, format[i])
+		}
+	}
+	return string(result)
+}
+
+type fmtStringer interface{ String() string }
+
+func intToStr(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	digits := make([]byte, 0, 20)
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	if neg {
+		digits = append([]byte{'-'}, digits...)
+	}
+	return string(digits)
+}
+
+func anyToStr(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case int:
+		return intToStr(val)
+	case error:
+		return val.Error()
+	case fmtStringer:
+		return val.String()
+	default:
+		return "<?>"
+	}
 }
