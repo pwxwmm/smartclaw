@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartClaw</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Cellipse cx='16' cy='18' rx='11' ry='12' fill='%23d4844a' opacity='.15' stroke='%23d4844a' stroke-width='1.5'/%3E%3Cpath d='M5 5l5 8M27 5l-5 8' stroke='%23d4844a' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='16' r='3.5' stroke='%23d4844a' stroke-width='1.5'/%3E%3Ccircle cx='20' cy='16' r='3.5' stroke='%23d4844a' stroke-width='1.5'/%3E%3Ccircle cx='12' cy='16' r='1.5' fill='%23d4844a'/%3E%3Ccircle cx='20' cy='16' r='1.5' fill='%23d4844a'/%3E%3Cpath d='M15 20l1 3 1-3' fill='%23d4844a'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230f172a'/%3E%3Cellipse cx='16' cy='19' rx='9' ry='10' fill='%232d3748'/%3E%3Cpath d='M7 6l4 9M25 6l-4 9' stroke='%232d3748' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='16' r='3' fill='%23ed8936'/%3E%3Ccircle cx='20' cy='16' r='3' fill='%23ed8936'/%3E%3Ccircle cx='12' cy='16' r='1.5' fill='%230d0d1a'/%3E%3Ccircle cx='20' cy='16' r='1.5' fill='%230d0d1a'/%3E%3Ccircle cx='11.2' cy='15.2' r='.7' fill='%23fff' opacity='.8'/%3E%3Ccircle cx='19.2' cy='15.2' r='.7' fill='%23fff' opacity='.8'/%3E%3Cpath d='M15 20l1 3 1-3' fill='%23ed8936'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css?v=20260409">
@@ -15,14 +15,16 @@
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-head">
         <div class="brand">
-          <svg class="brand-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <ellipse cx="12" cy="14" rx="8" ry="9" stroke="currentColor" stroke-width="1.4"/>
-            <path d="M4 3l4.5 7M20 3l-4.5 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            <circle cx="9" cy="12.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
-            <circle cx="15" cy="12.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
-            <circle cx="9" cy="12.5" r="1.1" fill="currentColor"/>
-            <circle cx="15" cy="12.5" r="1.1" fill="currentColor"/>
-            <path d="M11.2 16l.8 2.5.8-2.5" fill="currentColor"/>
+          <svg class="brand-icon" width="22" height="22" viewBox="0 0 32 32" fill="none">
+            <ellipse cx="16" cy="19" rx="9" ry="10" fill="currentColor" opacity=".85"/>
+            <path d="M7 6l4 9M25 6l-4 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+            <circle cx="12" cy="16" r="3" fill="#ed8936"/>
+            <circle cx="20" cy="16" r="3" fill="#ed8936"/>
+            <circle cx="12" cy="16" r="1.5" fill="#0d0d1a"/>
+            <circle cx="20" cy="16" r="1.5" fill="#0d0d1a"/>
+            <circle cx="11.2" cy="15.2" r=".7" fill="#fff" opacity=".8"/>
+            <circle cx="19.2" cy="15.2" r=".7" fill="#fff" opacity=".8"/>
+            <path d="M15 20l1 3 1-3" fill="#ed8936"/>
           </svg>
           <span class="brand-name">SmartClaw</span>
         </div>
@@ -64,8 +66,16 @@
           <div class="section-head"><span>Settings</span></div>
           <div class="settings-list">
             <label class="setting-row"><span>Theme</span><select id="theme-select"><option value="dark">Dark</option><option value="light">Light</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunset">Sunset</option></select></label>
-            <label class="setting-row"><span>Model</span><select id="model-select"><option value="glm-5">GLM-5</option><option value="glm-4-plus">GLM-4 Plus</option><option value="glm-4-flash">GLM-4 Flash</option><option value="claude-sonnet-4-5">Sonnet 4.5</option><option value="claude-opus-4">Opus 4</option><option value="gpt-4o">GPT-4o</option></select></label>
+            <label class="setting-row"><span>Model</span><select id="model-select"><option value="sre-model">SRE Model</option><option value="glm-4-plus">GLM-4 Plus</option><option value="glm-4-flash">GLM-4 Flash</option><option value="glm-4-long">GLM-4 Long</option><option value="claude-sonnet-4-5">Sonnet 4.5</option><option value="claude-opus-4">Opus 4</option><option value="gpt-4o">GPT-4o</option></select></label>
             <label class="setting-row"><span>Font Size</span><input type="range" id="font-size" min="12" max="20" value="14"></label>
+            <div class="settings-divider"></div>
+            <div class="settings-group-title">Provider Configuration</div>
+            <label class="setting-row"><span>API Key</span><input type="password" id="cfg-api-key" class="cfg-input" placeholder="sk-..."></label>
+            <label class="setting-row"><span>Base URL</span><input type="text" id="cfg-base-url" class="cfg-input" placeholder="http://host:port/v1"></label>
+            <label class="setting-row"><span>Custom Model</span><input type="text" id="cfg-custom-model" class="cfg-input" placeholder="model-name"></label>
+            <label class="setting-row"><span>OpenAI Compatible</span><input type="checkbox" id="cfg-openai" checked></label>
+            <div class="setting-row"><button id="btn-save-provider" class="btn-primary sm">Save & Apply</button></div>
+            <div class="settings-divider"></div>
             <div class="setting-row"><button id="open-theme-editor" class="btn-ghost">Theme Editor</button></div>
             <div class="setting-row"><button id="open-dashboard" class="btn-ghost">Dashboard</button></div>
           </div>
@@ -78,7 +88,7 @@
         <div class="topbar-left">
           <button id="sidebar-open" class="icon-btn" aria-label="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button>
           <span id="connection-status" class="conn-dot" data-status="off"></span>
-          <span class="model-tag" id="current-model">glm-5</span>
+          <span class="model-tag" id="current-model">sre-model</span>
         </div>
         <div class="topbar-right">
           <button id="btn-voice" class="icon-btn" aria-label="Voice"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
