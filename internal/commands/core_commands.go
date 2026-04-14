@@ -12,6 +12,8 @@ import (
 	"time"
 
 	pkgconfig "github.com/instructkr/smartclaw/internal/config"
+	"github.com/instructkr/smartclaw/internal/mcp"
+	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/voice"
 )
 
@@ -558,89 +560,77 @@ func gitLogHandler(args []string) error {
 }
 
 func mcpHandler(args []string) error {
-	home, _ := os.UserHomeDir()
-	mcpPath := filepath.Join(home, ".sparkcode", "mcp.json")
-
 	fmt.Println("┌─────────────────────────────────────┐")
 	fmt.Println("│         MCP Servers                 │")
 	fmt.Println("└─────────────────────────────────────┘")
 
-	data, err := os.ReadFile(mcpPath)
-	if err != nil {
+	registry := mcp.NewMCPServerRegistry()
+	servers := registry.ListServers()
+	clientRegistry := tools.GetMCPRegistry()
+
+	if len(servers) == 0 {
 		fmt.Println("  No MCP servers configured")
-		fmt.Println("\n  Use /mcp-add to add a server")
+		fmt.Println("\n  Edit ~/.smartclaw/mcp/servers.json to add servers")
+		fmt.Println("  Then use /mcp-start <name> to connect")
 		return nil
 	}
 
-	var config map[string]any
-	if err := json.Unmarshal(data, &config); err != nil {
-		fmt.Printf("  Error reading MCP config: %v\n", err)
-		return nil
-	}
-
-	servers, ok := config["mcpServers"].(map[string]any)
-	if !ok || len(servers) == 0 {
-		fmt.Println("  No MCP servers configured")
-		return nil
-	}
-
-	for name, server := range servers {
-		fmt.Printf("\n  %s:\n", name)
-		if s, ok := server.(map[string]any); ok {
-			if cmd, ok := s["command"].(string); ok {
-				fmt.Printf("    Command: %s\n", cmd)
+	for _, s := range servers {
+		status := "stopped"
+		toolCount := 0
+		if client, ok := clientRegistry.Get(s.Name); ok && client.IsReady() {
+			status = "connected"
+			if tools, err := client.ListTools(context.Background()); err == nil {
+				toolCount = len(tools)
 			}
+		}
+
+		fmt.Printf("\n  %s:\n", s.Name)
+		fmt.Printf("    Type: %s\n", s.Type)
+		if s.Command != "" {
+			fmt.Printf("    Command: %s\n", s.Command)
+		}
+		if s.URL != "" {
+			fmt.Printf("    URL: %s\n", s.URL)
+		}
+		fmt.Printf("    Status: %s\n", status)
+		if toolCount > 0 {
+			fmt.Printf("    Tools: %d\n", toolCount)
 		}
 	}
 
+	fmt.Println()
 	return nil
 }
 
 func mcpAddHandler(args []string) error {
 	if len(args) < 2 {
-		fmt.Println("Usage: /mcp-add <name> <command>")
+		fmt.Println("Usage: /mcp-add <name> <command> [args...]")
 		fmt.Println("\nExample: /mcp-add filesystem npx -y @modelcontextprotocol/server-filesystem /path")
 		return nil
 	}
 
 	name := args[0]
-	command := strings.Join(args[1:], " ")
+	commandParts := args[1:]
 
-	home, _ := os.UserHomeDir()
-	mcpPath := filepath.Join(home, ".sparkcode", "mcp.json")
-
-	var config map[string]any
-	data, _ := os.ReadFile(mcpPath)
-	json.Unmarshal(data, &config)
-
-	if config == nil {
-		config = map[string]any{
-			"mcpServers": map[string]any{},
-		}
+	registry := mcp.NewMCPServerRegistry()
+	config := &mcp.ServerConfig{
+		Name:    name,
+		Type:    "local",
+		Command: commandParts[0],
 	}
 
-	servers, _ := config["mcpServers"].(map[string]any)
-	if servers == nil {
-		servers = make(map[string]any)
+	if len(commandParts) > 1 {
+		config.Args = commandParts[1:]
 	}
 
-	servers[name] = map[string]any{
-		"command": strings.Fields(command)[0],
+	if err := registry.AddServer(config); err != nil {
+		fmt.Printf("✗ Failed to add server: %v\n", err)
+		return nil
 	}
-
-	if parts := strings.Fields(command); len(parts) > 1 {
-		servers[name] = map[string]any{
-			"command": parts[0],
-			"args":    parts[1:],
-		}
-	}
-
-	config["mcpServers"] = servers
-	data, _ = json.MarshalIndent(config, "", "  ")
-	os.MkdirAll(filepath.Dir(mcpPath), 0755)
-	os.WriteFile(mcpPath, data, 0644)
 
 	fmt.Printf("✓ MCP server added: %s\n", name)
+	fmt.Println("  Use /mcp-start " + name + " to connect")
 	return nil
 }
 
@@ -651,30 +641,14 @@ func mcpRemoveHandler(args []string) error {
 	}
 
 	name := args[0]
-	home, _ := os.UserHomeDir()
-	mcpPath := filepath.Join(home, ".sparkcode", "mcp.json")
 
-	data, err := os.ReadFile(mcpPath)
-	if err != nil {
-		fmt.Println("✗ No MCP servers configured")
+	registry := mcp.NewMCPServerRegistry()
+	if err := registry.RemoveServer(name); err != nil {
+		fmt.Printf("✗ %v\n", err)
 		return nil
 	}
 
-	var config map[string]any
-	json.Unmarshal(data, &config)
-
-	servers, ok := config["mcpServers"].(map[string]any)
-	if !ok {
-		fmt.Println("✗ No MCP servers configured")
-		return nil
-	}
-
-	delete(servers, name)
-	config["mcpServers"] = servers
-
-	data, _ = json.MarshalIndent(config, "", "  ")
-	os.WriteFile(mcpPath, data, 0644)
-
+	tools.GetMCPRegistry().Disconnect(name)
 	fmt.Printf("✓ MCP server removed: %s\n", name)
 	return nil
 }
@@ -1149,9 +1123,56 @@ func lspHandler(args []string) error {
 func mcpStartHandler(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("Usage: /mcp-start <server-name>")
+		fmt.Println("\nAvailable servers:")
+		registry := mcp.NewMCPServerRegistry()
+		for _, s := range registry.ListServers() {
+			status := "stopped"
+			if client, ok := tools.GetMCPRegistry().Get(s.Name); ok && client.IsReady() {
+				status = "running"
+			}
+			fmt.Printf("  %s (%s) - %s\n", s.Name, s.Type, status)
+		}
 		return nil
 	}
-	fmt.Printf("Starting MCP server: %s\n", args[0])
+
+	name := args[0]
+	registry := mcp.NewMCPServerRegistry()
+	serverConfig, ok := registry.GetServer(name)
+	if !ok {
+		fmt.Printf("✗ MCP server '%s' not found in config\n", name)
+		fmt.Println("  Use /mcp-add to add a server, or edit ~/.smartclaw/mcp/servers.json")
+		return nil
+	}
+
+	if _, ok := tools.GetMCPRegistry().Get(name); ok {
+		fmt.Printf("✓ MCP server '%s' is already connected\n", name)
+		return nil
+	}
+
+	mcpConfig := &mcp.McpServerConfig{
+		Name:      serverConfig.Name,
+		Transport: "stdio",
+		Command:   serverConfig.Command,
+		Args:      serverConfig.Args,
+		Env:       serverConfig.Env,
+	}
+
+	if serverConfig.Type == "sse" || serverConfig.Type == "http" {
+		mcpConfig.Transport = "sse"
+		mcpConfig.URL = serverConfig.URL
+	}
+
+	fmt.Printf("Connecting to MCP server '%s'...\n", name)
+
+	client, err := tools.GetMCPRegistry().Connect(context.Background(), name, mcpConfig)
+	if err != nil {
+		fmt.Printf("✗ Failed to connect: %v\n", err)
+		return nil
+	}
+
+	mcpTools, _ := client.ListTools(context.Background())
+	mcpResources, _ := client.ListResources(context.Background())
+	fmt.Printf("✓ Connected to '%s' (%d tools, %d resources)\n", name, len(mcpTools), len(mcpResources))
 	return nil
 }
 
@@ -1160,7 +1181,20 @@ func mcpStopHandler(args []string) error {
 		fmt.Println("Usage: /mcp-stop <server-name>")
 		return nil
 	}
-	fmt.Printf("Stopping MCP server: %s\n", args[0])
+
+	name := args[0]
+	registry := tools.GetMCPRegistry()
+	if _, ok := registry.Get(name); !ok {
+		fmt.Printf("✗ MCP server '%s' is not connected\n", name)
+		return nil
+	}
+
+	if err := registry.Disconnect(name); err != nil {
+		fmt.Printf("✗ Failed to disconnect: %v\n", err)
+		return nil
+	}
+
+	fmt.Printf("✓ Disconnected from MCP server '%s'\n", name)
 	return nil
 }
 
