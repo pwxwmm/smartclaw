@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,7 +71,6 @@ func StartTUIWithClient(client *api.Client) error {
 	p := tea.NewProgram(
 		InitialModelWithClient(client),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	m, err := p.Run()
@@ -720,6 +720,9 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 
 	case "/team":
 		ProcessTeamCommand(m, args)
+
+	case "/provider":
+		ProcessProviderCommand(m, args)
 
 	default:
 		AddOutput(m, m.formatError(fmt.Sprintf("Unknown command: %s. Type /help for available commands.", command)))
@@ -2440,4 +2443,100 @@ func executeTeamTool(toolName string, input map[string]any) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return tool.Execute(ctx, input)
+}
+
+func ProcessProviderCommand(m *Model, args []string) {
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".smartclaw", "config.json")
+
+	if len(args) == 0 {
+		showProviderConfig(m, configPath)
+		return
+	}
+
+	switch args[0] {
+	case "set":
+		if len(args) < 3 {
+			AddOutput(m, m.formatError("Usage: /provider set <key> <value>\nKeys: api_key, base_url, model, openai"))
+			return
+		}
+		key, value := args[1], args[2]
+		updateProviderConfig(m, configPath, key, value)
+	case "show":
+		showProviderConfig(m, configPath)
+	default:
+		AddOutput(m, m.formatError("Usage: /provider [show] | /provider set <key> <value>\nKeys: api_key, base_url, model, openai"))
+	}
+}
+
+func showProviderConfig(m *Model, configPath string) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		AddOutput(m, m.formatAssistantOutput("No provider config found. Use /provider set to configure."))
+		return
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		AddOutput(m, m.formatError("Failed to parse config"))
+		return
+	}
+
+	apiKey, _ := cfg["api_key"].(string)
+	if len(apiKey) > 8 {
+		apiKey = apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
+	}
+	baseURL, _ := cfg["base_url"].(string)
+	model, _ := cfg["model"].(string)
+	openai, _ := cfg["openai"].(bool)
+
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+		"Provider Configuration:\n  model:    %s\n  base_url: %s\n  api_key:  %s\n  openai:   %v",
+		model, baseURL, apiKey, openai)))
+}
+
+func updateProviderConfig(m *Model, configPath, key, value string) {
+	var cfg map[string]any
+	data, err := os.ReadFile(configPath)
+	if err == nil {
+		json.Unmarshal(data, &cfg)
+	}
+	if cfg == nil {
+		cfg = make(map[string]any)
+	}
+
+	switch key {
+	case "api_key":
+		cfg["api_key"] = value
+	case "base_url":
+		cfg["base_url"] = value
+	case "model":
+		cfg["model"] = value
+	case "openai":
+		cfg["openai"] = value == "true" || value == "1"
+	default:
+		AddOutput(m, m.formatError(fmt.Sprintf("Unknown key: %s. Valid keys: api_key, base_url, model, openai", key)))
+		return
+	}
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		AddOutput(m, m.formatError("Failed to marshal config"))
+		return
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		AddOutput(m, m.formatError(fmt.Sprintf("Failed to write config: %v", err)))
+		return
+	}
+
+	if m.apiClient != nil {
+		if key == "model" {
+			m.apiClient.SetModel(value)
+			m.model = value
+		}
+		if key == "openai" {
+			m.apiClient.SetOpenAI(value == "true" || value == "1")
+		}
+	}
+
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Updated %s. Restart for full effect.", key)))
 }

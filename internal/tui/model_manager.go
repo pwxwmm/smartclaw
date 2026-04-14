@@ -115,6 +115,18 @@ var AvailableModels = []ModelInfo{
 		Features:     []string{"code", "chinese", "extended_thinking"},
 		Description:  "ZhipuAI flagship model",
 	},
+	{
+		ID:           "sre-model",
+		Name:         "SRE Model",
+		Provider:     "Internal",
+		ContextSize:  128000,
+		InputCost:    0.0,
+		OutputCost:   0.0,
+		Speed:        "fast",
+		Intelligence: "high",
+		Features:     []string{"code", "chinese", "ops"},
+		Description:  "Internal SRE operations model",
+	},
 }
 
 type ModelManager struct {
