@@ -5,14 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -91,7 +88,7 @@ func RunCommand(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s: %s", err, output)
+		return "", fmt.Errorf("%w: %s", err, output)
 	}
 	return string(output), nil
 }
@@ -106,7 +103,7 @@ func RunCommandTimeout(name string, args []string, timeout time.Duration) (strin
 		return "", fmt.Errorf("command timed out")
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %s", err, output)
+		return "", fmt.Errorf("%w: %s", err, output)
 	}
 	return string(output), nil
 }
@@ -126,26 +123,6 @@ func Truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-func JSONMarshal(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-func JSONUnmarshal(data []byte, v any) error {
-	return json.Unmarshal(data, v)
-}
-
-func JSONMarshalIndent(v any) ([]byte, error) {
-	return json.MarshalIndent(v, "", "  ")
-}
-
-func Base64Encode(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
-}
-
-func Base64Decode(encoded string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(encoded)
 }
 
 func RandomString(length int) string {
@@ -181,22 +158,6 @@ func MustGetenv(key string) (string, error) {
 	return value, nil
 }
 
-func OS() string {
-	return runtime.GOOS
-}
-
-func Arch() string {
-	return runtime.GOARCH
-}
-
-func NumCPU() int {
-	return runtime.NumCPU()
-}
-
-func Version() string {
-	return runtime.Version()
-}
-
 func FormatDuration(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())
@@ -218,46 +179,6 @@ func FormatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-func ParseDuration(s string) (time.Duration, error) {
-	return time.ParseDuration(s)
-}
-
-func Since(t time.Time) time.Duration {
-	return time.Since(t)
-}
-
-func ParseTime(s string) (time.Time, error) {
-	return time.Parse(time.RFC3339, s)
-}
-
-func Now() time.Time {
-	return time.Now()
-}
-
-func Sleep(d time.Duration) {
-	time.Sleep(d)
-}
-
-func Getwd() (string, error) {
-	return os.Getwd()
-}
-
-func Chdir(dir string) error {
-	return os.Chdir(dir)
-}
-
-func Hostname() (string, error) {
-	return os.Hostname()
-}
-
-func Getpid() int {
-	return os.Getpid()
-}
-
-func IsTerminal(fd int) bool {
-	return term.IsTerminal(fd)
 }
 
 func GetTerminalWidth() int {

@@ -1,6 +1,9 @@
 package topology
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type Config struct {
 	SnapshotInterval time.Duration
@@ -15,11 +18,16 @@ func DefaultConfig() Config {
 }
 
 var config = DefaultConfig()
+var configMu sync.RWMutex
 
 func SetConfig(c Config) {
+	configMu.Lock()
+	defer configMu.Unlock()
 	config = c
 }
 
 func GetConfig() Config {
+	configMu.RLock()
+	defer configMu.RUnlock()
 	return config
 }
