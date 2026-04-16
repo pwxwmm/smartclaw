@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/config"
+	"github.com/instructkr/smartclaw/internal/httpclient"
 )
 
 type Plugin struct {
@@ -99,14 +101,9 @@ func (pm *PluginManager) loadAll() {
 
 func (pm *PluginManager) Load(path string) (*Plugin, error) {
 	manifestPath := filepath.Join(path, "plugin.json")
-	data, err := os.ReadFile(manifestPath)
+	plugin, err := config.LoadJSON[Plugin](manifestPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read plugin manifest: %w", err)
-	}
-
-	var plugin Plugin
-	if err := json.Unmarshal(data, &plugin); err != nil {
-		return nil, fmt.Errorf("failed to parse plugin manifest: %w", err)
+		return nil, fmt.Errorf("failed to load plugin manifest: %w", err)
 	}
 
 	plugin.Path = path
@@ -115,10 +112,10 @@ func (pm *PluginManager) Load(path string) (*Plugin, error) {
 	}
 
 	pm.mu.Lock()
-	pm.plugins[plugin.Name] = &plugin
+	pm.plugins[plugin.Name] = plugin
 	pm.mu.Unlock()
 
-	return &plugin, nil
+	return plugin, nil
 }
 
 func (pm *PluginManager) LoadAll(dir string) error {
@@ -171,7 +168,7 @@ func (pm *PluginManager) Install(source string) (*Plugin, error) {
 }
 
 func (pm *PluginManager) installFromURL(url string) (*Plugin, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := httpclient.DefaultClient()
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch plugin: %w", err)

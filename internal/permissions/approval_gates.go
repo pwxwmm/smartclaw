@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/instructkr/smartclaw/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -284,25 +285,30 @@ func (g *ApprovalGate) GetConfig() ApprovalConfig {
 
 // LoadConfig loads approval gate configuration from a YAML or JSON file.
 func (g *ApprovalGate) LoadConfig(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("reading approval gates config: %w", err)
-	}
-
-	var config ApprovalConfig
+	var cfg ApprovalConfig
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".yaml", ".yml":
-		if err := yaml.Unmarshal(data, &config); err != nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading approval gates config: %w", err)
+		}
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return fmt.Errorf("parsing approval gates YAML: %w", err)
 		}
 	case ".json":
-		if err := json.Unmarshal(data, &config); err != nil {
+		loaded, err := config.LoadJSON[ApprovalConfig](path)
+		if err != nil {
 			return fmt.Errorf("parsing approval gates JSON: %w", err)
 		}
+		cfg = *loaded
 	default:
-		if yamlErr := yaml.Unmarshal(data, &config); yamlErr != nil {
-			if jsonErr := json.Unmarshal(data, &config); jsonErr != nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading approval gates config: %w", err)
+		}
+		if yamlErr := yaml.Unmarshal(data, &cfg); yamlErr != nil {
+			if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
 				return fmt.Errorf("parsing approval gates config: yaml error: %v, json error: %v", yamlErr, jsonErr)
 			}
 		}
@@ -311,15 +317,15 @@ func (g *ApprovalGate) LoadConfig(path string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if config.DefaultPolicy != "" {
-		g.config.DefaultPolicy = config.DefaultPolicy
+	if cfg.DefaultPolicy != "" {
+		g.config.DefaultPolicy = cfg.DefaultPolicy
 	}
-	if config.ToolPolicies != nil {
-		for name, policy := range config.ToolPolicies {
+	if cfg.ToolPolicies != nil {
+		for name, policy := range cfg.ToolPolicies {
 			g.config.ToolPolicies[name] = policy
 		}
 	}
-	g.config.SREMode = config.SREMode
+	g.config.SREMode = cfg.SREMode
 
 	return nil
 }

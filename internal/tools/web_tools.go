@@ -9,9 +9,56 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/httpclient"
 )
 
 const maxResponseSize = 10 * 1024 * 1024 // 10MB
+
+// doSearchRequest performs a search API request and unmarshals the response.
+func doSearchRequest(ctx context.Context, method, url string, payload any, headers map[string]string, result any) error {
+	client := httpclient.DefaultClient()
+
+	var bodyReader io.Reader
+	if payload != nil {
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		bodyReader = bytes.NewReader(payloadBytes)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("search API returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	if err := json.Unmarshal(body, result); err != nil {
+		return fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	return nil
+}
 
 type WebFetchTool struct {
 	client *http.Client
@@ -19,9 +66,7 @@ type WebFetchTool struct {
 
 func NewWebFetchTool() *WebFetchTool {
 	return &WebFetchTool{
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		client: httpclient.NewClient(30 * time.Second),
 	}
 }
 
@@ -150,28 +195,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, input map[string]any) (any,
 	return t.searchDuckDuckGo(ctx, query, limit)
 }
 
-// searchDuckDuckGo uses DuckDuckGo's instant answer API
 func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limit int) (any, error) {
-	// DuckDuckGo Instant Answer API
 	url := fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1",
 		strings.ReplaceAll(query, " ", "+"))
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
-		return nil, err
-	}
 
 	var ddgResponse struct {
 		AbstractText   string `json:"AbstractText"`
@@ -188,7 +214,7 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limi
 		} `json:"RelatedTopics"`
 	}
 
-	if err := json.Unmarshal(body, &ddgResponse); err != nil {
+	if err := doSearchRequest(ctx, "GET", url, nil, nil, &ddgResponse); err != nil {
 		return nil, err
 	}
 
@@ -242,40 +268,13 @@ func (t *WebSearchTool) searchDuckDuckGo(ctx context.Context, query string, limi
 	}, nil
 }
 
-// searchExa uses Exa AI search API
 func (t *WebSearchTool) searchExa(ctx context.Context, query string, limit int) (any, error) {
-	url := "https://api.exa.ai/search"
-
 	payload := map[string]any{
 		"query":         query,
 		"numResults":    limit,
 		"useAutoprompt": true,
 	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", t.apiKey)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
-		return nil, err
-	}
+	headers := map[string]string{"x-api-key": t.apiKey}
 
 	var exaResponse struct {
 		Results []struct {
@@ -285,7 +284,7 @@ func (t *WebSearchTool) searchExa(ctx context.Context, query string, limit int) 
 		} `json:"results"`
 	}
 
-	if err := json.Unmarshal(body, &exaResponse); err != nil {
+	if err := doSearchRequest(ctx, "POST", "https://api.exa.ai/search", payload, headers, &exaResponse); err != nil {
 		return nil, err
 	}
 
@@ -307,39 +306,12 @@ func (t *WebSearchTool) searchExa(ctx context.Context, query string, limit int) 
 	}, nil
 }
 
-// searchSerper uses Serper.dev Google search API
 func (t *WebSearchTool) searchSerper(ctx context.Context, query string, limit int) (any, error) {
-	url := "https://google.serper.dev/search"
-
 	payload := map[string]any{
 		"q":   query,
 		"num": limit,
 	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-KEY", t.apiKey)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
-		return nil, err
-	}
+	headers := map[string]string{"X-API-KEY": t.apiKey}
 
 	var serperResponse struct {
 		Organic []struct {
@@ -349,7 +321,7 @@ func (t *WebSearchTool) searchSerper(ctx context.Context, query string, limit in
 		} `json:"organic"`
 	}
 
-	if err := json.Unmarshal(body, &serperResponse); err != nil {
+	if err := doSearchRequest(ctx, "POST", "https://google.serper.dev/search", payload, headers, &serperResponse); err != nil {
 		return nil, err
 	}
 
@@ -372,8 +344,6 @@ func (t *WebSearchTool) searchSerper(ctx context.Context, query string, limit in
 }
 
 func (t *WebSearchTool) searchTavily(ctx context.Context, query string, limit int) (any, error) {
-	url := "https://api.tavily.com/search"
-
 	payload := map[string]any{
 		"query":               query,
 		"max_results":         limit,
@@ -381,31 +351,7 @@ func (t *WebSearchTool) searchTavily(ctx context.Context, query string, limit in
 		"include_raw_content": false,
 		"search_depth":        "advanced",
 	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+t.apiKey)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
-		return nil, err
-	}
+	headers := map[string]string{"Authorization": "Bearer " + t.apiKey}
 
 	var tavilyResponse struct {
 		Answer  string `json:"answer"`
@@ -417,7 +363,7 @@ func (t *WebSearchTool) searchTavily(ctx context.Context, query string, limit in
 		} `json:"results"`
 	}
 
-	if err := json.Unmarshal(body, &tavilyResponse); err != nil {
+	if err := doSearchRequest(ctx, "POST", "https://api.tavily.com/search", payload, headers, &tavilyResponse); err != nil {
 		return nil, err
 	}
 
@@ -452,9 +398,7 @@ type HTTPRequestTool struct {
 
 func NewHTTPRequestTool() *HTTPRequestTool {
 	return &HTTPRequestTool{
-		client: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		client: httpclient.NewClient(60 * time.Second),
 	}
 }
 
