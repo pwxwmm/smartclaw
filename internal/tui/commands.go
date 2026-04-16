@@ -14,6 +14,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/services"
 	"github.com/instructkr/smartclaw/internal/tools"
 )
@@ -441,7 +442,7 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 
 		if m.currentSession == nil {
 			AddOutput(m, m.formatError("No active session. Creating new session..."))
-			m.currentSession = m.sessionManager.NewSession(m.model)
+			m.currentSession = m.sessionManager.NewSession(m.model, "default")
 			return nil
 		}
 
@@ -466,7 +467,7 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 
 		switch args[0] {
 		case "new":
-			m.currentSession = m.sessionManager.NewSession(m.model)
+			m.currentSession = m.sessionManager.NewSession(m.model, "default")
 			ClearOutput(m)
 			m.tokens = 0
 			m.cost = 0
@@ -723,6 +724,15 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 
 	case "/provider":
 		ProcessProviderCommand(m, args)
+
+	case "/mcp":
+		return ProcessMCPCommand(m, args)
+
+	case "/mcp-start":
+		return ProcessMCPStartCommand(m, args)
+
+	case "/mcp-stop":
+		ProcessMCPStopCommand(m, args)
 
 	default:
 		AddOutput(m, m.formatError(fmt.Sprintf("Unknown command: %s. Type /help for available commands.", command)))
@@ -2539,4 +2549,124 @@ func updateProviderConfig(m *Model, configPath, key, value string) {
 	}
 
 	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Updated %s. Restart for full effect.", key)))
+}
+
+func ProcessMCPCommand(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		registry := mcp.NewMCPServerRegistry()
+		servers := registry.ListServers()
+		clientRegistry := tools.GetMCPRegistry()
+
+		if len(servers) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No MCP servers configured.\nEdit ~/.smartclaw/mcp/servers.json to add servers.\nUse /mcp-start <name> to connect."))
+			return nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString("MCP Servers:\n")
+		for _, s := range servers {
+			status := "stopped"
+			toolCount := 0
+			if client, ok := clientRegistry.Get(s.Name); ok && client.IsReady() {
+				status = "connected"
+				if t, err := client.ListTools(context.Background()); err == nil {
+					toolCount = len(t)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("\n  %s:\n", s.Name))
+			sb.WriteString(fmt.Sprintf("    Type: %s\n", s.Type))
+			if s.Command != "" {
+				sb.WriteString(fmt.Sprintf("    Command: %s\n", s.Command))
+			}
+			if s.URL != "" {
+				sb.WriteString(fmt.Sprintf("    URL: %s\n", s.URL))
+			}
+			sb.WriteString(fmt.Sprintf("    Status: %s\n", status))
+			if toolCount > 0 {
+				sb.WriteString(fmt.Sprintf("    Tools: %d\n", toolCount))
+			}
+		}
+		AddOutput(m, m.formatAssistantOutput(sb.String()))
+		return nil
+	}
+
+	switch args[0] {
+	case "list", "ls":
+		return ProcessMCPCommand(m, nil)
+	case "start":
+		return ProcessMCPStartCommand(m, args[1:])
+	case "stop":
+		ProcessMCPStopCommand(m, args[1:])
+	default:
+		AddOutput(m, m.formatAssistantOutput("MCP Commands:\n  /mcp           - List servers\n  /mcp list      - List servers\n  /mcp start <n> - Connect server\n  /mcp stop <n>  - Disconnect server"))
+	}
+	return nil
+}
+
+func ProcessMCPStartCommand(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput("Usage: /mcp-start <server-name>\n\nExample: /mcp-start sopa"))
+		return nil
+	}
+
+	name := args[0]
+	registry := mcp.NewMCPServerRegistry()
+	serverConfig, ok := registry.GetServer(name)
+	if !ok {
+		AddOutput(m, m.formatError(fmt.Sprintf("MCP server '%s' not found. Edit ~/.smartclaw/mcp/servers.json", name)))
+		return nil
+	}
+
+	if _, ok := tools.GetMCPRegistry().Get(name); ok {
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("MCP server '%s' is already connected", name)))
+		return nil
+	}
+
+	mcpConfig := &mcp.McpServerConfig{
+		Name:      serverConfig.Name,
+		Transport: "stdio",
+		Command:   serverConfig.Command,
+		Args:      serverConfig.Args,
+		Env:       serverConfig.Env,
+	}
+
+	if serverConfig.Type == "sse" || serverConfig.Type == "http" || serverConfig.Type == "remote" {
+		mcpConfig.Transport = "sse"
+		mcpConfig.URL = serverConfig.URL
+		mcpConfig.Headers = serverConfig.Headers
+	}
+
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Connecting to '%s'...", name)))
+
+	return func() tea.Msg {
+		client, err := tools.GetMCPRegistry().Connect(context.Background(), name, mcpConfig)
+		if err != nil {
+			return ErrorMsg{err: fmt.Sprintf("Failed to connect to '%s': %v", name, err)}
+		}
+
+		mcpTools, _ := client.ListTools(context.Background())
+		mcpResources, _ := client.ListResources(context.Background())
+		return OutputMsg{text: fmt.Sprintf("✓ Connected to '%s' (%d tools, %d resources)", name, len(mcpTools), len(mcpResources))}
+	}
+}
+
+func ProcessMCPStopCommand(m *Model, args []string) {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput("Usage: /mcp-stop <server-name>"))
+		return
+	}
+
+	name := args[0]
+	registry := tools.GetMCPRegistry()
+	if _, ok := registry.Get(name); !ok {
+		AddOutput(m, m.formatError(fmt.Sprintf("MCP server '%s' is not connected", name)))
+		return
+	}
+
+	if err := registry.Disconnect(name); err != nil {
+		AddOutput(m, m.formatError(fmt.Sprintf("Failed to disconnect: %v", err)))
+		return
+	}
+
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Disconnected from MCP server '%s'", name)))
 }

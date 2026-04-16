@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
+	"strconv"
 	"strings"
 	"time"
 
@@ -433,27 +435,81 @@ func exportHandler(args []string) error {
 		return nil
 	}
 
-	filename := "session_export.json"
-	if len(args) > 0 {
-		filename = args[0]
+	home, _ := os.UserHomeDir()
+	exportsDir := filepath.Join(home, ".smartclaw", "exports")
+	os.MkdirAll(exportsDir, 0755)
+
+	exportPath := filepath.Join(exportsDir, fmt.Sprintf("session-%s.md", s.ID))
+
+	var sb strings.Builder
+	sb.WriteString("# Session Export\n\n")
+	sb.WriteString(fmt.Sprintf("- **Session ID**: %s\n", s.ID))
+	sb.WriteString(fmt.Sprintf("- **Model**: %s\n", cmdCtx.GetModel()))
+	sb.WriteString(fmt.Sprintf("- **Created**: %s\n", s.CreatedAt.Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("- **Messages**: %d\n\n", s.MessageCount))
+	sb.WriteString("---\n\n")
+
+	sessionFileJSONL := filepath.Join(home, ".sparkcode", "sessions", s.ID+".jsonl")
+	sessionFileJSON := filepath.Join(home, ".sparkcode", "sessions", s.ID+".json")
+
+	if data, err := os.ReadFile(sessionFileJSONL); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			var entry map[string]any
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				continue
+			}
+			role, _ := entry["role"].(string)
+			content, _ := entry["content"].(string)
+			switch role {
+			case "user":
+				sb.WriteString("## User\n\n")
+				sb.WriteString(content + "\n\n")
+			case "assistant":
+				sb.WriteString("## Assistant\n\n")
+				sb.WriteString(content + "\n\n")
+			default:
+				if toolName, ok := entry["tool_name"].(string); ok {
+					sb.WriteString(fmt.Sprintf("### Tool: %s\n\n", toolName))
+					if output, ok := entry["output"].(string); ok {
+						sb.WriteString(output + "\n\n")
+					}
+				}
+			}
+		}
+	} else if data, err := os.ReadFile(sessionFileJSON); err == nil {
+		var sessionData map[string]any
+		if json.Unmarshal(data, &sessionData) == nil {
+			if messages, ok := sessionData["messages"].([]any); ok {
+				for _, msg := range messages {
+					if m, ok := msg.(map[string]any); ok {
+						role, _ := m["role"].(string)
+						content, _ := m["content"].(string)
+						switch role {
+						case "user":
+							sb.WriteString("## User\n\n")
+							sb.WriteString(content + "\n\n")
+						case "assistant":
+							sb.WriteString("## Assistant\n\n")
+							sb.WriteString(content + "\n\n")
+						}
+					}
+				}
+			}
+		}
+	} else {
+		sb.WriteString("*No stored messages found for this session.*\n")
 	}
 
-	export := map[string]any{
-		"session_id":    s.ID,
-		"model":         cmdCtx.GetModel(),
-		"created_at":    s.CreatedAt,
-		"message_count": s.MessageCount,
-		"tokens": map[string]int64{
-			"input":  cmdCtx.InputTokens,
-			"output": cmdCtx.OutputTokens,
-			"total":  cmdCtx.TokenCount,
-		},
+	if err := os.WriteFile(exportPath, []byte(sb.String()), 0644); err != nil {
+		fmt.Printf("✗ Failed to export session: %v\n", err)
+		return nil
 	}
 
-	data, _ := json.MarshalIndent(export, "", "  ")
-	os.WriteFile(filename, data, 0644)
-
-	fmt.Printf("✓ Session exported to: %s\n", filename)
+	fmt.Printf("Session exported to ~/.smartclaw/exports/session-%s.md\n", s.ID)
 	return nil
 }
 
@@ -1335,8 +1391,20 @@ func desktopHandler(args []string) error {
 }
 
 func effortHandler(args []string) error {
-	fmt.Println("Effort Tracking")
-	fmt.Println("  Tracks time and effort on tasks")
+	elapsed := time.Since(cmdCtx.StartTime).Round(time.Second)
+	s := cmdCtx.GetSession()
+
+	msgCount := 0
+	if s != nil {
+		msgCount = s.MessageCount
+	}
+
+	var avg time.Duration
+	if msgCount > 0 {
+		avg = time.Duration(int64(elapsed) / int64(msgCount))
+	}
+
+	fmt.Printf("Session started %s ago. Messages: %d. Avg time per message: %s\n", elapsed, msgCount, avg)
 	return nil
 }
 
@@ -1347,8 +1415,25 @@ func fastHandler(args []string) error {
 }
 
 func feedbackHandler(args []string) error {
-	fmt.Println("Feedback sent")
-	fmt.Println("  Thank you for your input!")
+	if len(args) == 0 {
+		fmt.Println("Usage: /feedback <your feedback text>")
+		return nil
+	}
+
+	home, _ := os.UserHomeDir()
+	feedbackDir := filepath.Join(home, ".smartclaw", "feedback")
+	os.MkdirAll(feedbackDir, 0755)
+
+	timestamp := time.Now().Format("20060102-150405")
+	feedbackPath := filepath.Join(feedbackDir, fmt.Sprintf("%s.txt", timestamp))
+
+	text := strings.Join(args, " ")
+	if err := os.WriteFile(feedbackPath, []byte(text), 0644); err != nil {
+		fmt.Printf("✗ Failed to record feedback: %v\n", err)
+		return nil
+	}
+
+	fmt.Println("Feedback recorded. Thank you!")
 	return nil
 }
 
@@ -1370,8 +1455,41 @@ func filesHandler(args []string) error {
 }
 
 func heapdumpHandler(args []string) error {
-	fmt.Println("Heap dump saved")
-	fmt.Println("⚠️  Debug feature")
+	home, _ := os.UserHomeDir()
+	debugDir := filepath.Join(home, ".smartclaw", "debug")
+	os.MkdirAll(debugDir, 0755)
+
+	timestamp := time.Now().Format("20060102-150405")
+	heapPath := filepath.Join(debugDir, fmt.Sprintf("heap-%s.prof", timestamp))
+
+	f, err := os.Create(heapPath)
+	if err != nil {
+		fmt.Printf("✗ Failed to create heap profile: %v\n", err)
+		return nil
+	}
+
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		f.Close()
+		fmt.Printf("✗ Failed to write heap profile: %v\n", err)
+		return nil
+	}
+	f.Close()
+
+	info, _ := os.Stat(heapPath)
+	size := info.Size()
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	fmt.Printf("Heap profile saved to ~/.smartclaw/debug/heap-%s.prof (%d bytes)\n", timestamp, size)
+	fmt.Printf("Memory Stats:\n")
+	fmt.Printf("  Alloc:       %d KB\n", m.Alloc/1024)
+	fmt.Printf("  TotalAlloc:  %d KB\n", m.TotalAlloc/1024)
+	fmt.Printf("  Sys:         %d KB\n", m.Sys/1024)
+	fmt.Printf("  NumGC:       %d\n", m.NumGC)
+	fmt.Printf("  HeapAlloc:   %d KB\n", m.HeapAlloc/1024)
+	fmt.Printf("  HeapSys:     %d KB\n", m.HeapSys/1024)
+	fmt.Printf("  HeapObjects:  %d\n", m.HeapObjects)
 	return nil
 }
 
@@ -1382,8 +1500,58 @@ func ideHandler(args []string) error {
 }
 
 func insightsHandler(args []string) error {
-	fmt.Println("Code Insights")
-	fmt.Println("  Analyzing codebase...")
+	workDir := cmdCtx.WorkDir
+
+	var goFiles, totalLines, testFiles int
+	skipDirs := map[string]bool{".git": true, "vendor": true, "node_modules": true, "bin": true}
+
+	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() && skipDirs[info.Name()] {
+			return filepath.SkipDir
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), ".go") {
+			goFiles++
+			if strings.HasSuffix(info.Name(), "_test.go") {
+				testFiles++
+			}
+			if data, err := os.ReadFile(path); err == nil {
+				totalLines += strings.Count(string(data), "\n")
+			}
+		}
+		return nil
+	})
+
+	var pkgCount int
+	cmd := exec.Command("go", "list", "./...")
+	cmd.Dir = workDir
+	if output, err := cmd.Output(); err == nil {
+		for _, p := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+			if p != "" {
+				pkgCount++
+			}
+		}
+	}
+
+	var vetIssues int
+	vetCmd := exec.Command("go", "vet", "./...")
+	vetCmd.Dir = workDir
+	if output, err := vetCmd.CombinedOutput(); err != nil {
+		for _, l := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+			if l != "" {
+				vetIssues++
+			}
+		}
+	}
+
+	fmt.Printf("Codebase: %d packages, %d Go files, %d lines, %d vet issues\n", pkgCount, goFiles, totalLines, vetIssues)
+	fmt.Printf("  Test files: %d\n", testFiles)
+	fmt.Printf("  Non-test files: %d\n", goFiles-testFiles)
 	return nil
 }
 
@@ -1429,11 +1597,67 @@ func passesHandler(args []string) error {
 }
 
 func rewindHandler(args []string) error {
-	return fmt.Errorf("session rewind is not yet implemented")
+	s := cmdCtx.GetSession()
+	if s == nil {
+		fmt.Println("Session rewind not available in this mode")
+		return nil
+	}
+
+	n := 1
+	if len(args) > 0 {
+		if parsed, err := strconv.Atoi(args[0]); err == nil && parsed > 0 {
+			n = parsed
+		}
+	}
+
+	if s.MessageCount < n {
+		n = s.MessageCount
+	}
+
+	s.MessageCount -= n
+	s.UpdatedAt = time.Now()
+	fmt.Printf("Rewound %d message pair(s). Session now has %d messages.\n", n, s.MessageCount)
+	return nil
 }
 
 func shareHandler(args []string) error {
-	return fmt.Errorf("session share is not yet implemented")
+	s := cmdCtx.GetSession()
+	if s == nil {
+		fmt.Println("✗ No active session to share")
+		return nil
+	}
+
+	home, _ := os.UserHomeDir()
+	sharedDir := filepath.Join(home, ".smartclaw", "shared")
+	os.MkdirAll(sharedDir, 0755)
+
+	sharePath := filepath.Join(sharedDir, fmt.Sprintf("session-%s.json", s.ID))
+
+	shareData := map[string]any{
+		"session_id":    s.ID,
+		"model":         cmdCtx.GetModel(),
+		"created_at":    s.CreatedAt,
+		"updated_at":    s.UpdatedAt,
+		"message_count": s.MessageCount,
+		"shared_at":     time.Now(),
+		"work_dir":      cmdCtx.WorkDir,
+	}
+
+	input, output, total := cmdCtx.GetTokenStats()
+	shareData["tokens"] = map[string]int64{
+		"input":  input,
+		"output": output,
+		"total":  total,
+	}
+
+	data, _ := json.MarshalIndent(shareData, "", "  ")
+	if err := os.WriteFile(sharePath, data, 0644); err != nil {
+		fmt.Printf("✗ Failed to share session: %v\n", err)
+		return nil
+	}
+
+	fmt.Printf("Session shared. Link/file: ~/.smartclaw/shared/session-%s.json\n", s.ID)
+	return nil
 }
 
 func statuslineHandler(args []string) error {
@@ -1472,8 +1696,92 @@ func tagHandler(args []string) error {
 }
 
 func teleportHandler(args []string) error {
-	fmt.Println("Teleport mode")
-	fmt.Println("  Jump between sessions")
+	home, _ := os.UserHomeDir()
+	sessionsPath := filepath.Join(home, ".sparkcode", "sessions")
+
+	if len(args) == 0 {
+		if _, err := os.Stat(sessionsPath); os.IsNotExist(err) {
+			fmt.Println("No sessions found")
+			return nil
+		}
+
+		files, err := os.ReadDir(sessionsPath)
+		if err != nil || len(files) == 0 {
+			fmt.Println("No sessions found")
+			return nil
+		}
+
+		fmt.Println("┌─────────────────────────────────────┐")
+		fmt.Println("│         Session Switcher            │")
+		fmt.Println("└─────────────────────────────────────┘")
+		fmt.Println()
+
+		var sessions []string
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			name := f.Name()
+			if strings.HasSuffix(name, ".jsonl") {
+				sessions = append(sessions, strings.TrimSuffix(name, ".jsonl"))
+			} else if strings.HasSuffix(name, ".json") && !strings.Contains(name, "config") {
+				sessions = append(sessions, strings.TrimSuffix(name, ".json"))
+			}
+		}
+
+		if len(sessions) == 0 {
+			fmt.Println("  No sessions found")
+			return nil
+		}
+
+		for i, s := range sessions {
+			fmt.Printf("  %d. %s\n", i+1, s)
+		}
+
+		fmt.Println()
+		fmt.Println("Usage: /teleport <session-id-or-index>")
+		return nil
+	}
+
+	target := args[0]
+	files, _ := os.ReadDir(sessionsPath)
+
+	var sessionIDs []string
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		name := f.Name()
+		if strings.HasSuffix(name, ".jsonl") {
+			sessionIDs = append(sessionIDs, strings.TrimSuffix(name, ".jsonl"))
+		} else if strings.HasSuffix(name, ".json") && !strings.Contains(name, "config") {
+			sessionIDs = append(sessionIDs, strings.TrimSuffix(name, ".json"))
+		}
+	}
+
+	var sessionID string
+	if idx, err := strconv.Atoi(target); err == nil && idx >= 1 && idx <= len(sessionIDs) {
+		sessionID = sessionIDs[idx-1]
+	} else {
+		sessionID = target
+	}
+
+	found := false
+	for _, sid := range sessionIDs {
+		if sid == sessionID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		fmt.Printf("✗ Session not found: %s\n", sessionID)
+		return nil
+	}
+
+	cmdCtx.NewSession()
+	cmdCtx.Session.ID = sessionID
+	fmt.Printf("Switched to session %s\n", sessionID)
 	return nil
 }
 

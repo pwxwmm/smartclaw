@@ -270,68 +270,68 @@ func ListThemes() []string {
 	return names
 }
 
-func (t Theme) TitleStyle() lipgloss.Style {
+func (t *Theme) TitleStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Bold(true).
 		Foreground(t.Title).
 		Padding(0, 1)
 }
 
-func (t Theme) BoxStyle() lipgloss.Style {
+func (t *Theme) BoxStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Border).
 		Padding(0, 1)
 }
 
-func (t Theme) InputStyle() lipgloss.Style {
+func (t *Theme) InputStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.InputPrompt).
 		Bold(true)
 }
 
-func (t Theme) OutputStyle() lipgloss.Style {
+func (t *Theme) OutputStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.Text)
 }
 
-func (t Theme) StatusStyle() lipgloss.Style {
+func (t *Theme) StatusStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.TextMuted).
 		Padding(0, 1)
 }
 
-func (t Theme) HelpStyle() lipgloss.Style {
+func (t *Theme) HelpStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.TextMuted).
 		Italic(true)
 }
 
-func (t Theme) ErrorStyle() lipgloss.Style {
+func (t *Theme) ErrorStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.Error).
 		Bold(true)
 }
 
-func (t Theme) SuccessStyle() lipgloss.Style {
+func (t *Theme) SuccessStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.Success).
 		Bold(true)
 }
 
-func (t Theme) WarningStyle() lipgloss.Style {
+func (t *Theme) WarningStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.Warning).
 		Bold(true)
 }
 
-func (t Theme) InfoStyle() lipgloss.Style {
+func (t *Theme) InfoStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.Info).
 		Bold(true)
 }
 
-func (t Theme) MessageStyle(role string) lipgloss.Style {
+func (t *Theme) MessageStyle(role string) lipgloss.Style {
 	base := lipgloss.NewStyle().Padding(0, 1)
 
 	switch role {
@@ -344,27 +344,27 @@ func (t Theme) MessageStyle(role string) lipgloss.Style {
 	}
 }
 
-func (t Theme) BorderStyle() lipgloss.Style {
+func (t *Theme) BorderStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Border).
 		Padding(0, 1)
 }
 
-func (t Theme) ActiveBorderStyle() lipgloss.Style {
+func (t *Theme) ActiveBorderStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.BorderActive).
 		Padding(0, 1)
 }
 
-func (t Theme) GradientStyle() lipgloss.Style {
+func (t *Theme) GradientStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(t.Primary).
 		Background(t.Background)
 }
 
-func (t Theme) TabStyle(active bool) lipgloss.Style {
+func (t *Theme) TabStyle(active bool) lipgloss.Style {
 	if active {
 		return lipgloss.NewStyle().
 			Foreground(t.Background).
