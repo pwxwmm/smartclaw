@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/httpclient"
 	"github.com/instructkr/smartclaw/internal/tools"
 )
 
@@ -94,11 +95,11 @@ func (h *HealthChecker) executeHTTPCheck(ctx context.Context, check HealthCheckD
 
 	do := h.httpDo
 	if do == nil {
-		client := &http.Client{}
+		timeout := 10 * time.Second
 		if check.Timeout > 0 {
-			client.Timeout = check.Timeout
+			timeout = check.Timeout
 		}
-		do = client.Do
+		do = httpclient.NewClient(timeout).Do
 	}
 
 	resp, err := do(req)

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/httpclient"
 	"github.com/instructkr/smartclaw/internal/utils"
 )
 
@@ -245,7 +246,7 @@ func (s *SettingsSync) fetchRemote(ctx context.Context) (*Settings, error) {
 		req.Header.Set("Authorization", "Bearer "+s.authToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.NewClient(30 * time.Second).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +276,7 @@ func (s *SettingsSync) pushRemote(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.NewClient(30 * time.Second).Do(req)
 	if err != nil {
 		return err
 	}

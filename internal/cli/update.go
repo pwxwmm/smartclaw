@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/httpclient"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +34,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/instructkr/smartclaw/releases/latest", nil)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.NewClient(15 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("check for updates: %w", err)
 	}
