@@ -16,6 +16,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/memory/layers"
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/pool"
 	"github.com/instructkr/smartclaw/internal/routing"
 	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -320,12 +321,13 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 		if lastUserMsg != "" {
 			prefetchResult := e.prefetcher.Prefetch(lastUserMsg, 3)
 			if len(prefetchResult.Files) > 0 {
-				var prefetchCtx strings.Builder
-				prefetchCtx.WriteString("\n\n## Prefetched Context\n")
+				prefetchBuf := pool.GetBuffer()
+				defer pool.PutBuffer(prefetchBuf)
+				prefetchBuf.WriteString("\n\n## Prefetched Context\n")
 				for f, content := range prefetchResult.Files {
-					prefetchCtx.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", f, content))
+					prefetchBuf.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", f, content))
 				}
-				systemPrompt += prefetchCtx.String()
+				systemPrompt += prefetchBuf.String()
 			}
 		}
 	}
