@@ -11,16 +11,18 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type Settings struct {
-	Model        string                 `json:"model"`
-	MaxTokens    int                    `json:"max_tokens"`
-	Permission   string                 `json:"permission"`
+	Model        string         `json:"model"`
+	MaxTokens    int            `json:"max_tokens"`
+	Permission   string         `json:"permission"`
 	CustomConfig map[string]any `json:"custom,omitempty"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	Version      int                    `json:"version"`
-	Checksum     string                 `json:"checksum"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	Version      int            `json:"version"`
+	Checksum     string         `json:"checksum"`
 }
 
 type SettingsVersion struct {
@@ -192,7 +194,7 @@ func (s *SettingsSync) UpdateSettings(ctx context.Context, updates map[string]an
 	}
 
 	if s.syncEnabled && s.remoteURL != "" {
-		go s.Sync(context.Background())
+		utils.Go(func() { s.Sync(context.Background()) })
 	}
 
 	return nil

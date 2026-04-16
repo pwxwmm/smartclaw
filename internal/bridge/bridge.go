@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type BridgeConfig struct {
@@ -99,18 +101,20 @@ func (bs *BridgeServer) Start() error {
 		Handler: mux,
 	}
 
-	go func() {
+	utils.Go(func() {
 		if err := bs.Server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Bridge server error: %v\n", err)
 		}
-	}()
+	})
 
 	return nil
 }
 
 func (bs *BridgeServer) Stop() error {
 	if bs.Server != nil {
-		return bs.Server.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return bs.Server.Shutdown(ctx)
 	}
 	return nil
 }

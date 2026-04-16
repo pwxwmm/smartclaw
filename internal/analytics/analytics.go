@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type Event struct {
@@ -57,7 +59,7 @@ func NewAnalytics(config AnalyticsConfig) *Analytics {
 	}
 
 	if config.Enabled {
-		go a.flushLoop()
+		utils.Go(a.flushLoop)
 	}
 
 	return a
@@ -84,10 +86,10 @@ func (a *Analytics) Track(name string, properties map[string]any) {
 	if shouldFlush {
 		select {
 		case a.flushSem <- struct{}{}:
-			go func() {
+			utils.Go(func() {
 				defer func() { <-a.flushSem }()
 				a.Flush()
-			}()
+			})
 		default:
 		}
 	}

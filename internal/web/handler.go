@@ -23,6 +23,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/session"
 	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type Handler struct {
@@ -480,7 +481,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 					if approvalErr != nil {
 						reason = approvalErr.Error()
 					}
-					go observability.AuditDenial(block.Name, block.ID, client.ID, reason)
+					utils.Go(func() { observability.AuditDenial(block.Name, block.ID, client.ID, reason) })
 					toolResults = append(toolResults, api.ContentBlock{
 						Type:      "tool_result",
 						ToolUseID: block.ID,
@@ -580,19 +581,19 @@ func (h *Handler) autoSaveSession(sess *session.Session) {
 			UpdatedAt: sess.UpdatedAt,
 		}
 		h.wg.Add(1)
-		go func() {
+		utils.Go(func() {
 			defer h.wg.Done()
-			if err := h.dataStore.UpsertSession(storeSess); err != nil {
+			if err := h.dataStore.UpsertSession(context.Background(), storeSess); err != nil {
 				slog.Warn("failed to upsert session", "error", err, "session_id", storeSess.ID)
 			}
-		}()
+		})
 	}
 	if h.sessMgr != nil {
 		h.wg.Add(1)
-		go func() {
+		utils.Go(func() {
 			defer h.wg.Done()
 			h.sessMgr.Save(sess)
-		}()
+		})
 	}
 }
 
@@ -601,12 +602,12 @@ func (h *Handler) syncMessageToStore(sess *session.Session, role, content string
 		return
 	}
 	h.wg.Add(1)
-	go func() {
+	utils.Go(func() {
 		defer h.wg.Done()
 		if err := h.dataStore.InsertSessionMessage(sess.ID, role, content, tokens); err != nil {
 			slog.Warn("failed to insert session message", "error", err, "session_id", sess.ID)
 		}
-	}()
+	})
 }
 
 func (h *Handler) Wait() {
@@ -736,17 +737,17 @@ func (h *Handler) handleToolApproval(client *Client, msg WSMessage) {
 
 	switch msg.Content {
 	case "approve":
-		go observability.AuditApproval(msg.Name, msg.ID, true, client.ID)
+		utils.Go(func() { observability.AuditApproval(msg.Name, msg.ID, true, client.ID) })
 		ch <- true
 	case "always_approve":
 		if h.autoApproved[client.ID] == nil {
 			h.autoApproved[client.ID] = make(map[string]bool)
 		}
 		h.autoApproved[client.ID][msg.Name] = true
-		go observability.AuditApproval(msg.Name, msg.ID, true, client.ID)
+		utils.Go(func() { observability.AuditApproval(msg.Name, msg.ID, true, client.ID) })
 		ch <- true
 	default:
-		go observability.AuditDenial(msg.Name, msg.ID, client.ID, "user denied")
+		utils.Go(func() { observability.AuditDenial(msg.Name, msg.ID, client.ID, "user denied") })
 		ch <- false
 	}
 	h.mu.Unlock()
@@ -980,7 +981,7 @@ func (h *Handler) handleSessionNew(client *Client, msg WSMessage) {
 			CreatedAt: sess.CreatedAt,
 			UpdatedAt: sess.UpdatedAt,
 		}
-		if err := h.dataStore.UpsertSession(storeSess); err != nil {
+		if err := h.dataStore.UpsertSession(context.Background(), storeSess); err != nil {
 			h.sendError(client, fmt.Sprintf("Failed to save session: %v", err))
 			return
 		}
@@ -1129,7 +1130,7 @@ func (h *Handler) handleSessionDelete(client *Client, msg WSMessage) {
 			h.sendError(client, "Access denied: session belongs to another user")
 			return
 		}
-		if err := h.dataStore.DeleteSession(msg.ID); err != nil {
+		if err := h.dataStore.DeleteSession(context.Background(), msg.ID); err != nil {
 			h.sendError(client, fmt.Sprintf("Failed to delete session: %v", err))
 			return
 		}
@@ -1175,7 +1176,7 @@ func (h *Handler) handleSessionRename(client *Client, msg WSMessage) {
 	}
 
 	if h.dataStore != nil {
-		if err := h.dataStore.UpdateSessionTitle(msg.ID, msg.Title); err != nil {
+		if err := h.dataStore.UpdateSessionTitle(context.Background(), msg.ID, msg.Title); err != nil {
 			h.sendError(client, fmt.Sprintf("Failed to rename session: %v", err))
 			return
 		}

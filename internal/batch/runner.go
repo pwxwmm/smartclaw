@@ -14,6 +14,7 @@ import (
 
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/runtime"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type BatchConfig struct {
@@ -96,10 +97,10 @@ func (r *Runner) Run(ctx context.Context) (*BatchStats, error) {
 	resultsCh := make(chan *BatchResult, r.config.Parallelism)
 
 	writerDone := make(chan struct{})
-	go func() {
+	utils.Go(func() {
 		defer close(writerDone)
 		r.writeResults(resultsCh)
-	}()
+	})
 
 	for i, prompt := range prompts {
 		select {
@@ -112,7 +113,8 @@ func (r *Runner) Run(ctx context.Context) (*BatchStats, error) {
 		sem <- struct{}{}
 		wg.Add(1)
 
-		go func(p PromptItem) {
+		p := prompt
+		utils.Go(func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
@@ -123,7 +125,7 @@ func (r *Runner) Run(ctx context.Context) (*BatchStats, error) {
 			if completed%10 == 0 || completed == int64(r.total) {
 				slog.Info("batch: progress", "completed", completed, "total", r.total, "failed", r.failed.Load())
 			}
-		}(prompt)
+		})
 	}
 
 	wg.Wait()
