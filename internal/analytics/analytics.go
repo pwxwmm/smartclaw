@@ -10,11 +10,11 @@ import (
 )
 
 type Event struct {
-	Name       string                 `json:"name"`
-	Timestamp  time.Time              `json:"timestamp"`
+	Name       string         `json:"name"`
+	Timestamp  time.Time      `json:"timestamp"`
 	Properties map[string]any `json:"properties,omitempty"`
-	UserID     string                 `json:"user_id,omitempty"`
-	SessionID  string                 `json:"session_id,omitempty"`
+	UserID     string         `json:"user_id,omitempty"`
+	SessionID  string         `json:"session_id,omitempty"`
 }
 
 type AnalyticsConfig struct {
@@ -34,6 +34,7 @@ type Analytics struct {
 	events    []Event
 	sinks     []AnalyticsSink
 	mu        sync.Mutex
+	flushMu   sync.Mutex
 	flushTick *time.Ticker
 	stopChan  chan struct{}
 }
@@ -90,6 +91,9 @@ func (a *Analytics) AddSink(sink AnalyticsSink) {
 }
 
 func (a *Analytics) Flush() error {
+	a.flushMu.Lock()
+	defer a.flushMu.Unlock()
+
 	a.mu.Lock()
 	if len(a.events) == 0 {
 		a.mu.Unlock()

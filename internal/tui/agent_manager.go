@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type AgentSource string
@@ -83,6 +84,7 @@ type AgentDefinition struct {
 }
 
 type AgentManager struct {
+	mu           sync.RWMutex
 	agents       map[string]*AgentDefinition
 	currentAgent *AgentDefinition
 	configPath   string
@@ -369,10 +371,14 @@ func parseFrontmatter(content string) (map[string]any, string) {
 }
 
 func (am *AgentManager) GetCurrentAgent() *AgentDefinition {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
 	return am.currentAgent
 }
 
 func (am *AgentManager) SetCurrentAgent(agentType string) error {
+	am.mu.Lock()
+	defer am.mu.Unlock()
 	agent, exists := am.agents[agentType]
 	if !exists {
 		return fmt.Errorf("agent not found: %s", agentType)
@@ -382,6 +388,8 @@ func (am *AgentManager) SetCurrentAgent(agentType string) error {
 }
 
 func (am *AgentManager) GetAgent(agentType string) (*AgentDefinition, error) {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
 	agent, exists := am.agents[agentType]
 	if !exists {
 		return nil, fmt.Errorf("agent not found: %s", agentType)
@@ -390,6 +398,8 @@ func (am *AgentManager) GetAgent(agentType string) (*AgentDefinition, error) {
 }
 
 func (am *AgentManager) ListAgents() []*AgentDefinition {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
 	var agents []*AgentDefinition
 	for _, agent := range am.agents {
 		agents = append(agents, agent)
@@ -404,6 +414,8 @@ func (am *AgentManager) ListAgents() []*AgentDefinition {
 }
 
 func (am *AgentManager) ListAgentsBySource() map[AgentSource][]*AgentDefinition {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
 	result := make(map[AgentSource][]*AgentDefinition)
 	for _, agent := range am.agents {
 		result[agent.Source] = append(result[agent.Source], agent)
@@ -416,6 +428,9 @@ func (am *AgentManager) CreateCustomAgent(agent *AgentDefinition) error {
 		return fmt.Errorf("agent type cannot be empty")
 	}
 
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
 	if _, exists := am.agents[agent.AgentType]; exists {
 		return fmt.Errorf("agent already exists: %s", agent.AgentType)
 	}
@@ -427,6 +442,8 @@ func (am *AgentManager) CreateCustomAgent(agent *AgentDefinition) error {
 }
 
 func (am *AgentManager) UpdateCustomAgent(agentType string, updates *AgentDefinition) error {
+	am.mu.Lock()
+	defer am.mu.Unlock()
 	agent, exists := am.agents[agentType]
 	if !exists {
 		return fmt.Errorf("agent not found: %s", agentType)
@@ -462,6 +479,8 @@ func (am *AgentManager) UpdateCustomAgent(agentType string, updates *AgentDefini
 }
 
 func (am *AgentManager) DeleteCustomAgent(agentType string) error {
+	am.mu.Lock()
+	defer am.mu.Unlock()
 	agent, exists := am.agents[agentType]
 	if !exists {
 		return fmt.Errorf("agent not found: %s", agentType)
@@ -531,6 +550,8 @@ func (am *AgentManager) saveCustomAgent(agent *AgentDefinition) error {
 }
 
 func (am *AgentManager) GetSystemPrompt() string {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
 	if am.currentAgent == nil {
 		return ""
 	}
@@ -589,7 +610,14 @@ func (am *AgentManager) FormatAgentList() string {
 	sb.WriteString("│                    🤖 Agent 列表                          │\n")
 	sb.WriteString("╰──────────────────────────────────────────────────────────╯\n\n")
 
-	agentsBySource := am.ListAgentsBySource()
+	am.mu.RLock()
+	agentsBySource := make(map[AgentSource][]*AgentDefinition)
+	for _, agent := range am.agents {
+		agentsBySource[agent.Source] = append(agentsBySource[agent.Source], agent)
+	}
+	currentAgent := am.currentAgent
+	am.mu.RUnlock()
+
 	sourceOrder := []AgentSource{AgentSourceBuiltIn, AgentSourceUserSettings, AgentSourceProjectSettings, AgentSourcePlugin}
 	sourceNames := map[AgentSource]string{
 		AgentSourceBuiltIn:         "内置 Agents",
@@ -607,7 +635,7 @@ func (am *AgentManager) FormatAgentList() string {
 		sb.WriteString(fmt.Sprintf("◆ %s\n", sourceNames[source]))
 		for _, agent := range agents {
 			current := ""
-			if am.currentAgent != nil && am.currentAgent.AgentType == agent.AgentType {
+			if currentAgent != nil && currentAgent.AgentType == agent.AgentType {
 				current = " ✓"
 			}
 			sb.WriteString(fmt.Sprintf("  %-20s %s%s\n",
@@ -628,7 +656,9 @@ func (am *AgentManager) FormatAgentList() string {
 }
 
 func (am *AgentManager) ExportAgent(agentType string, format string) (string, error) {
+	am.mu.RLock()
 	agent, exists := am.agents[agentType]
+	am.mu.RUnlock()
 	if !exists {
 		return "", fmt.Errorf("agent not found: %s", agentType)
 	}
