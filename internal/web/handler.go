@@ -27,20 +27,22 @@ import (
 )
 
 type Handler struct {
-	hub          *Hub
-	workDir      string
-	apiClient    *api.Client
-	router       *provider.Router
-	sessMgr      *session.Manager
-	dataStore    *store.Store
-	memMgr       *memory.MemoryManager
-	showThinking bool
-	clientSess   map[string]*session.Session
-	clientSessMu sync.RWMutex
-	prompt       *runtime.PromptBuilder
-	approvalGate *permissions.ApprovalGate
-	costGuard    *costguard.CostGuard
-	clientModels map[string]string
+	hub           *Hub
+	workDir       string
+	apiClient     *api.Client
+	router        *provider.Router
+	sessMgr       *session.Manager
+	dataStore     *store.Store
+	memMgr        *memory.MemoryManager
+	showThinking  bool
+	clientSess    map[string]*session.Session
+	clientSessMu  sync.RWMutex
+	prompt        *runtime.PromptBuilder
+	approvalGate  *permissions.ApprovalGate
+	costGuard     *costguard.CostGuard
+	clientModels  map[string]string
+	clientCache   map[string]*api.Client // model -> client
+	clientCacheMu sync.RWMutex
 
 	mu               sync.Mutex
 	pendingApprovals map[string]chan bool
@@ -111,6 +113,7 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 		approvalGate:     permissions.NewApprovalGate(),
 		costGuard:        costguard.NewCostGuard(costguard.DefaultBudgetConfig()),
 		clientModels:     make(map[string]string),
+		clientCache:      make(map[string]*api.Client),
 		pendingApprovals: make(map[string]chan bool),
 		autoApproved:     make(map[string]map[string]bool),
 		cancelFuncs:      make(map[string]context.CancelFunc),
@@ -291,8 +294,24 @@ func (h *Handler) clientForRequest(clientID string) *api.Client {
 	if model == h.apiClient.Model {
 		return h.apiClient
 	}
+
+	h.clientCacheMu.RLock()
+	if c, ok := h.clientCache[model]; ok {
+		h.clientCacheMu.RUnlock()
+		return c
+	}
+	h.clientCacheMu.RUnlock()
+
+	h.clientCacheMu.Lock()
+	defer h.clientCacheMu.Unlock()
+
+	if c, ok := h.clientCache[model]; ok {
+		return c
+	}
+
 	c := api.NewClientWithModel(h.apiClient.APIKey, h.apiClient.BaseURL, model)
 	c.IsOpenAI = h.apiClient.IsOpenAI
+	h.clientCache[model] = c
 	return c
 }
 
@@ -354,7 +373,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		systemPrompt = h.prompt.Build()
 	}
 
-	var fullContent string
+	var fullContentBuilder strings.Builder
 	var openaiOutputChars int
 
 	if reqClient.IsOpenAI {
@@ -377,7 +396,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 				}
 				if json.Unmarshal(data, &payload) == nil {
 					if payload.Delta.Type == "text_delta" && payload.Delta.Text != "" {
-						fullContent += payload.Delta.Text
+						fullContentBuilder.WriteString(payload.Delta.Text)
 						openaiOutputChars += len(payload.Delta.Text)
 						h.sendToClient(client, WSResponse{Type: "token", Content: payload.Delta.Text})
 					} else if payload.Delta.Type == "thinking_delta" && payload.Delta.Thinking != "" {
@@ -385,6 +404,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 					}
 				}
 			case "message_stop":
+				fullContent := fullContentBuilder.String()
 				sess.AddMessage("assistant", fullContent)
 				h.syncMessageToStore(sess, "assistant", fullContent, 0)
 				h.autoSaveSession(sess)
@@ -405,7 +425,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 
 	// Anthropic SSE streaming with agentic tool loop
 	const maxIterations = 10
-	var allTextContent string
+	var allTextBuilder strings.Builder
 	var totalInputTokens, totalOutputTokens int
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
@@ -419,7 +439,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		}
 
 		parser := api.NewStreamMessageParser()
-		var iterText string
+		var iterTextBuilder strings.Builder
 
 		err := reqClient.StreamMessageSSE(ctx, req, func(event string, data []byte) error {
 			result, err := parser.HandleEvent(event, data)
@@ -432,7 +452,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 			}
 
 			if result.TextDelta != "" {
-				iterText += result.TextDelta
+				iterTextBuilder.WriteString(result.TextDelta)
 				h.sendToClient(client, WSResponse{Type: "token", Content: result.TextDelta})
 			}
 
@@ -451,7 +471,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		resp := parser.GetMessage()
 		totalInputTokens += resp.Usage.InputTokens
 		totalOutputTokens += resp.Usage.OutputTokens
-		allTextContent += iterText
+		allTextBuilder.WriteString(iterTextBuilder.String())
 
 		blocks := parser.GetContentBlocks()
 		var toolUseBlocks []api.ContentBlock
@@ -551,6 +571,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		})
 	}
 
+	allTextContent := allTextBuilder.String()
 	sess.AddMessage("assistant", allTextContent)
 	h.syncMessageToStore(sess, "assistant", allTextContent, 0)
 	h.autoSaveSession(sess)
@@ -1204,7 +1225,8 @@ func (h *Handler) sendToClient(client *Client, resp WSResponse) {
 	}
 	select {
 	case client.send <- data:
-	default:
+	case <-time.After(5 * time.Second):
+		slog.Warn("websocket send timeout, client may be slow", "client_id", client.ID)
 	}
 }
 
