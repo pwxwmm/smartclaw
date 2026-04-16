@@ -396,3 +396,14 @@ func ShutdownInnovationPackages() {
 	timetravel.Shutdown()
 	fingerprint.Shutdown()
 }
+
+type innovationShutdown struct{}
+
+func (i *innovationShutdown) Close() error {
+	ShutdownInnovationPackages()
+	return nil
+}
+
+func NewInnovationShutdown() *innovationShutdown {
+	return &innovationShutdown{}
+}

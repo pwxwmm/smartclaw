@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/lifecycle"
 )
 
 // AuditEntry represents a single auditable event.
@@ -307,6 +309,7 @@ func InitAudit(dataDir string) error {
 	auditMu.Lock()
 	defer auditMu.Unlock()
 	DefaultAuditLogger = logger
+	lifecycle.Register(logger)
 	return nil
 }
 
