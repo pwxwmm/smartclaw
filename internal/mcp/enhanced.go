@@ -3,9 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +17,7 @@ type ServerConfig struct {
 	Env         map[string]string `json:"env,omitempty"`
 	Type        string            `json:"type"`
 	URL         string            `json:"url,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
 	AutoStart   bool              `json:"auto_start"`
 	Description string            `json:"description,omitempty"`
 }
@@ -336,67 +335,4 @@ func parseMCPToolName(fullName string) (serverName, toolName string, ok bool) {
 		return "", "", false
 	}
 	return parts[1], parts[2], true
-}
-
-type InProcessTransport struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	mu     sync.Mutex
-}
-
-func NewInProcessTransport(command string, args []string, env map[string]string) (*InProcessTransport, error) {
-	cmd := exec.Command(command, args...)
-
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	return &InProcessTransport{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-	}, nil
-}
-
-func (t *InProcessTransport) Send(data []byte) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	_, err := t.stdin.Write(data)
-	_, err2 := t.stdin.Write([]byte("\n"))
-	if err != nil {
-		return err
-	}
-	return err2
-}
-
-func (t *InProcessTransport) Receive() ([]byte, error) {
-	buf := make([]byte, 4096)
-	n, err := t.stdout.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-	return buf[:n], nil
-}
-
-func (t *InProcessTransport) Close() error {
-	if t.cmd.Process != nil {
-		t.cmd.Process.Kill()
-	}
-	return nil
 }

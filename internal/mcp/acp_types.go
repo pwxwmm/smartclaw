@@ -5,26 +5,31 @@ import (
 	"fmt"
 )
 
+// ACP types: These types are used by the ACP server (internal/acp/server.go)
+// and the MCP server (internal/mcp/server.go) for JSON-RPC communication.
+// The official Go MCP SDK has its own versions for client-side use.
+// These are kept for backward compatibility with the ACP protocol.
+
 const jsonRPCVersion = "2.0"
 
 type JSONRPCRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any `json:"id,omitempty"`
-	Method  string      `json:"method"`
-	Params  any `json:"params,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	ID      any    `json:"id,omitempty"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any `json:"id"`
-	Result  any `json:"result,omitempty"`
-	Error   *RPCError   `json:"error,omitempty"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      any       `json:"id"`
+	Result  any       `json:"result,omitempty"`
+	Error   *RPCError `json:"error,omitempty"`
 }
 
 type RPCError struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    any `json:"data,omitempty"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 func (e *RPCError) Error() string {
@@ -92,7 +97,7 @@ type ListResourcesResult struct {
 }
 
 type CallToolParams struct {
-	Name      string                 `json:"name"`
+	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
 }
 
@@ -143,10 +148,6 @@ func (r *JSONRPCRequest) Marshal() ([]byte, error) {
 	return json.Marshal(r)
 }
 
-func (r *JSONRPCRequest) MustMarshal() []byte {
-	data, err := r.Marshal()
-	if err != nil {
-		panic(err)
-	}
-	return data
+func (r *JSONRPCRequest) MustMarshal() ([]byte, error) {
+	return json.Marshal(r)
 }
