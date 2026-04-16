@@ -9,6 +9,9 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css?v=20260409">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -56,6 +59,7 @@
         </div>
         <div id="section-sessions" class="section">
           <div class="section-head"><span>Sessions</span><button class="icon-btn sm" id="new-session" aria-label="New session"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>
+          <input type="text" id="session-search" class="session-search" placeholder="Search sessions..." autocomplete="off">
           <div id="session-list" class="session-list"></div>
         </div>
         <div id="section-agents" class="section">
@@ -91,6 +95,9 @@
           <span class="model-tag" id="current-model">sre-model</span>
         </div>
         <div class="topbar-right">
+          <button id="btn-stop" class="btn-stop-top hidden" aria-label="Stop">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          </button>
           <button id="btn-voice" class="icon-btn" aria-label="Voice"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
           <button id="btn-dashboard" class="icon-btn" aria-label="Dashboard"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></button>
           <button id="btn-editor" class="icon-btn" aria-label="Editor"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
@@ -211,10 +218,51 @@
       <div id="theme-colors" class="theme-colors"></div>
     </div>
 
+    <div id="help-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-head">
+          <span class="modal-title">Keyboard Shortcuts & Commands</span>
+          <button class="icon-btn" id="help-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div class="help-section">
+            <h4>Keyboard Shortcuts</h4>
+            <div class="help-grid">
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>K</kbd></span><span class="help-desc">Focus input / command mode</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>S</kbd></span><span class="help-desc">Save file (in editor)</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>N</kbd></span><span class="help-desc">New session</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>/</kbd></span><span class="help-desc">Toggle sidebar</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>P</kbd></span><span class="help-desc">Model switcher</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>O</kbd></span><span class="help-desc">Sessions panel</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>L</kbd></span><span class="help-desc">Clear chat</span>
+              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>H</kbd></span><span class="help-desc">Help (this dialog)</span>
+              <span class="help-key"><kbd>Esc</kbd></span><span class="help-desc">Close panels/modals</span>
+              <span class="help-key"><kbd>↑</kbd> / <kbd>↓</kbd></span><span class="help-desc">Navigate command history</span>
+            </div>
+          </div>
+          <div class="help-section">
+            <h4>Slash Commands</h4>
+            <div class="help-grid">
+              <span class="help-key">/help</span><span class="help-desc">Show available commands</span>
+              <span class="help-key">/clear</span><span class="help-desc">Clear chat</span>
+              <span class="help-key">/model</span><span class="help-desc">Switch model</span>
+              <span class="help-key">/theme</span><span class="help-desc">Manage themes</span>
+              <span class="help-key">/memory</span><span class="help-desc">Memory management</span>
+              <span class="help-key">/skills</span><span class="help-desc">List available skills</span>
+              <span class="help-key">/agents</span><span class="help-desc">List available agents</span>
+              <span class="help-key">/export</span><span class="help-desc">Export session</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="toast-container" class="toast-container"></div>
   </div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/16.3.0/lib/marked.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <script src="/static/app.js?v=20260409"></script>
 </body>
 </html>

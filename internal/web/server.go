@@ -1,40 +1,115 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
+	"github.com/instructkr/smartclaw/internal/adapters"
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/costguard"
+	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/tools"
 )
+
+type rateLimiter struct {
+	visitors map[string]*visitorInfo
+	mu       sync.Mutex
+}
+
+type visitorInfo struct {
+	count    int
+	lastSeen time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	rl := &rateLimiter{
+		visitors: make(map[string]*visitorInfo),
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *rateLimiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := strings.Split(r.RemoteAddr, ":")[0]
+		rl.mu.Lock()
+		v, ok := rl.visitors[ip]
+		if !ok {
+			v = &visitorInfo{}
+			rl.visitors[ip] = v
+		}
+		v.count++
+		v.lastSeen = time.Now()
+		if v.count > 100 {
+			rl.mu.Unlock()
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		rl.mu.Unlock()
+		next(w, r)
+	}
+}
+
+func (rl *rateLimiter) cleanup() {
+	for {
+		time.Sleep(time.Minute)
+		rl.mu.Lock()
+		for ip, v := range rl.visitors {
+			if time.Since(v.lastSeen) > time.Minute {
+				delete(rl.visitors, ip)
+			} else {
+				v.count = 0
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
 
 //go:embed static/*
 var staticFS embed.FS
 
+const maxFileServeSize = 50 * 1024 * 1024 // 50MB
+
 type WebServer struct {
-	port      int
-	hub       *Hub
-	handler   *Handler
-	workDir   string
-	apiClient *api.Client
-	server    *http.Server
+	port         int
+	hub          *Hub
+	handler      *Handler
+	workDir      string
+	apiClient    *api.Client
+	server       *http.Server
+	otlpShutdown func(context.Context) error
+	authToken    string
 }
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == r.Host
 	},
 }
 
@@ -48,10 +123,47 @@ func NewWebServer(port int, workDir string, apiClient *api.Client) *WebServer {
 		handler:   handler,
 		workDir:   workDir,
 		apiClient: apiClient,
+		authToken: os.Getenv("SMARTCLAW_AUTH_TOKEN"),
+	}
+}
+
+func (s *WebServer) initSubsystems() {
+	if s.handler.dataStore != nil {
+		home, _ := os.UserHomeDir()
+		sessionsDir := filepath.Join(home, ".smartclaw", "sessions")
+		if count, err := s.handler.dataStore.MigrateJSONSessions(sessionsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: session migration failed: %v\n", err)
+		} else if count > 0 {
+			fmt.Fprintf(os.Stderr, "Migrated %d sessions from JSON to SQLite\n", count)
+		}
+	}
+
+	mm, err := memory.NewMemoryManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: memory manager init failed: %v\n", err)
+	} else {
+		tools.SetMemoryManagerForTools(mm)
+		tools.SetIncidentMemory(mm.GetIncidentMemory())
+		s.handler.memMgr = mm
+	}
+
+	tools.SetAllowedDirs([]string{s.workDir})
+
+	adapters.InitInnovationPackages(mm, s.apiClient)
+
+	otlpShutdown, err := observability.InitOTLP()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: OTLP init failed: %v\n", err)
+	} else {
+		s.otlpShutdown = otlpShutdown
 	}
 }
 
 func (s *WebServer) Start() error {
+	s.initSubsystems()
+
+	s.handler.StartSessionCleanup(0)
+
 	mux := http.NewServeMux()
 
 	staticContent, err := fs.Sub(staticFS, "static")
@@ -62,33 +174,51 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/", s.serveIndex)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
 	mux.HandleFunc("/ws", s.handleWebSocket)
-	mux.HandleFunc("/api/files", s.handleFileTree)
-	mux.HandleFunc("/api/file", s.handleFileContent)
-	mux.HandleFunc("/api/sessions", s.handleSessions)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/stats", s.handleStats)
-	mux.HandleFunc("/api/telemetry", s.handleTelemetry)
+	rl := newRateLimiter()
+	mux.HandleFunc("/api/files", rl.Middleware(s.authMiddleware(s.handleFileTree)))
+	mux.HandleFunc("/api/file", rl.Middleware(s.authMiddleware(s.handleFileContent)))
+	mux.HandleFunc("/api/sessions", rl.Middleware(s.authMiddleware(s.handleSessions)))
+	mux.HandleFunc("/api/config", rl.Middleware(s.authMiddleware(s.handleConfig)))
+	mux.HandleFunc("/api/stats", rl.Middleware(s.authMiddleware(s.handleStats)))
+	mux.HandleFunc("/api/telemetry", rl.Middleware(s.authMiddleware(s.handleTelemetry)))
+	mux.Handle("/metrics", observability.PrometheusHandler())
 
 	s.server = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.port),
 		Handler:      mux,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
+	addr := fmt.Sprintf(":%d", s.port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+
+	s.port = ln.Addr().(*net.TCPAddr).Port
+
 	go s.hub.Run()
 
 	fmt.Printf("SmartClaw WebUI running at http://localhost:%d\nAuthor: weimengmeng 天气晴 <1300042631@qq.com>\n", s.port)
 
-	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 
 	return nil
 }
 
+func (s *WebServer) Port() int {
+	return s.port
+}
+
 func (s *WebServer) Stop() error {
+	adapters.ShutdownInnovationPackages()
+
+	if s.otlpShutdown != nil {
+		s.otlpShutdown(context.Background())
+	}
 	if s.server != nil {
 		return s.server.Close()
 	}
@@ -112,17 +242,52 @@ func (s *WebServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if s.authToken != "" && token != s.authToken {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
 
-	client := NewClient(s.hub)
+	userID := r.URL.Query().Get("user")
+	if userID == "" {
+		userID = "default"
+	}
+
+	client := NewClient(s.hub, userID)
 	s.hub.Register(client)
 
 	go s.writePump(client, conn)
 	go s.readPump(client, conn)
+}
+
+func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") == "websocket" {
+			next(w, r)
+			return
+		}
+
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			token = r.Header.Get("Authorization")
+			if strings.HasPrefix(token, "Bearer ") {
+				token = strings.TrimPrefix(token, "Bearer ")
+			}
+		}
+
+		if s.authToken != "" && token != s.authToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
 }
 
 func (s *WebServer) readPump(client *Client, conn *websocket.Conn) {
@@ -199,6 +364,13 @@ func (s *WebServer) handleFileTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fullPath := filepath.Join(s.workDir, path)
+	fullPath = filepath.Clean(fullPath)
+
+	if !strings.HasPrefix(fullPath, filepath.Clean(s.workDir)) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return
+	}
+
 	tree, err := s.handler.buildFileTree(fullPath, 3)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -223,7 +395,24 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(fullPath)
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if info.Size() > maxFileServeSize {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("file too large: %d bytes (max %d)", info.Size(), maxFileServeSize)})
+		return
+	}
+
+	f, err := os.Open(fullPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, maxFileServeSize))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -236,6 +425,16 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleSessions(w http.ResponseWriter, r *http.Request) {
+	if s.handler.dataStore != nil {
+		sessions, err := s.handler.dataStore.ListAllSessions(50)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, sessions)
+		return
+	}
+
 	if s.handler.sessMgr == nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
@@ -259,8 +458,27 @@ func (s *WebServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{})
 			return
 		}
+		var config map[string]any
+		if err := json.Unmarshal(data, &config); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(data)
+			return
+		}
+		if key, ok := config["api_key"].(string); ok && key != "" {
+			if len(key) > 7 {
+				config["api_key"] = key[:3] + "***" + key[len(key)-4:]
+			} else {
+				config["api_key"] = "***"
+			}
+		}
+		masked, err := json.Marshal(config)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(data)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
+		w.Write(masked)
 		return
 	}
 
@@ -329,9 +547,16 @@ func cacheHitRate(hits, misses int64) float64 {
 }
 
 func estimateCost(snapshot observability.MetricsSnapshot) float64 {
-	inputPrice := 0.000003
-	outputPrice := 0.000015
-	return float64(snapshot.TotalInputTokens)*inputPrice + float64(snapshot.TotalOutputTokens)*outputPrice
+	model := ""
+	if len(snapshot.ModelQueryCounts) > 0 {
+		for m := range snapshot.ModelQueryCounts {
+			model = m
+			break
+		}
+	}
+	cg := costguard.NewCostGuard(costguard.DefaultBudgetConfig())
+	cost, _ := cg.CalculateCost(model, int(snapshot.TotalInputTokens), int(snapshot.TotalOutputTokens))
+	return cost
 }
 
 func (s *WebServer) reloadAPIClient(config map[string]any) {

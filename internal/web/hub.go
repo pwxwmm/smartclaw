@@ -15,9 +15,10 @@ type Hub struct {
 }
 
 type Client struct {
-	ID   string
-	hub  *Hub
-	send chan []byte
+	ID     string
+	UserID string // user identity, from ?user=xxx URL param
+	hub    *Hub
+	send   chan []byte
 }
 
 func NewHub() *Hub {
@@ -82,10 +83,14 @@ func (h *Hub) ClientCount() int {
 	return len(h.clients)
 }
 
-func NewClient(hub *Hub) *Client {
+func NewClient(hub *Hub, userID string) *Client {
+	if userID == "" {
+		userID = "default"
+	}
 	return &Client{
-		ID:   uuid.New().String()[:8],
-		hub:  hub,
-		send: make(chan []byte, 256),
+		ID:     uuid.New().String()[:8],
+		UserID: userID,
+		hub:    hub,
+		send:   make(chan []byte, 256),
 	}
 }
