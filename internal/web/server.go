@@ -21,6 +21,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/adapters"
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/costguard"
+	"github.com/instructkr/smartclaw/internal/lifecycle"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -133,6 +134,7 @@ func (s *WebServer) initSubsystems() {
 	tools.SetAllowedDirs([]string{s.workDir})
 
 	adapters.InitInnovationPackages(mm, s.apiClient)
+	lifecycle.Register(adapters.NewInnovationShutdown())
 
 	otlpShutdown, err := observability.InitOTLP()
 	if err != nil {
@@ -206,6 +208,10 @@ func (s *WebServer) Stop() error {
 		return s.server.Close()
 	}
 	return nil
+}
+
+func (s *WebServer) Close() error {
+	return s.Stop()
 }
 
 func (s *WebServer) serveIndex(w http.ResponseWriter, r *http.Request) {

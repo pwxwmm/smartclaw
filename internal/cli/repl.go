@@ -15,6 +15,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/auth"
 	"github.com/instructkr/smartclaw/internal/commands"
+	"github.com/instructkr/smartclaw/internal/lifecycle"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/runtime"
@@ -118,6 +119,7 @@ func runREPL(cmd *cobra.Command, args []string) {
 	}
 
 	adapters.InitInnovationPackages(mm, session.apiClient)
+	lifecycle.Register(adapters.NewInnovationShutdown())
 
 	if shutdown, err := observability.InitOTLP(); err == nil {
 		defer shutdown(context.Background())
@@ -468,6 +470,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 	tools.SetAllowedDirs([]string{workDir})
 
 	adapters.InitInnovationPackages(mm, apiClient)
+	lifecycle.Register(adapters.NewInnovationShutdown())
 
 	if shutdown, err := observability.InitOTLP(); err == nil {
 		defer shutdown(context.Background())

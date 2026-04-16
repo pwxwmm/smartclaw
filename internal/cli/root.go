@@ -19,6 +19,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/gateway"
 	"github.com/instructkr/smartclaw/internal/gateway/platform"
 	"github.com/instructkr/smartclaw/internal/hooks"
+	"github.com/instructkr/smartclaw/internal/lifecycle"
 	"github.com/instructkr/smartclaw/internal/logger"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
@@ -171,6 +172,7 @@ func init() {
 
 			workDir, _ := os.Getwd()
 			server := web.NewWebServer(webPort, workDir, apiClient)
+			lifecycle.Register(server)
 			if err := server.Start(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -196,6 +198,7 @@ over stdin/stdout using JSON-RPC with Content-Length framing.`,
 			}
 
 			adapters.InitInnovationPackages(mm, nil)
+			lifecycle.Register(adapters.NewInnovationShutdown())
 
 			registry := tools.GetRegistry()
 			server := acp.NewACPServer(registry)
@@ -354,6 +357,7 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 			}
 
 			adapters.InitInnovationPackages(mm, client)
+			lifecycle.Register(adapters.NewInnovationShutdown())
 
 			if shutdown, err := observability.InitOTLP(); err == nil {
 				defer shutdown(context.Background())
@@ -366,6 +370,7 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 				nil,
 				nil,
 			)
+			lifecycle.Register(gw)
 
 			for _, adapterName := range gatewayAdapters {
 				switch adapterName {
@@ -410,7 +415,7 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 			}
 
 			fmt.Fprintf(os.Stderr, "Gateway running with adapters: %v\n", gatewayAdapters)
-			select {}
+			lifecycle.WaitForSignal()
 		},
 	}
 	gatewayCmd.Flags().StringSliceVar(&gatewayAdapters, "adapters", []string{}, "Platform adapters (telegram, slack, web, terminal)")
