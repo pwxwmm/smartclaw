@@ -525,6 +525,294 @@ func cmdMCPStop(m *Model, args []string) tea.Cmd {
 	return nil
 }
 
+func cmdTest(m *Model, args []string) tea.Cmd {
+	AddOutput(m, m.formatAssistantOutput("✓ Command processing is working! Session ID: "+m.currentSession.ID))
+	return nil
+}
+
+func cmdEdit(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput("Opening editor for new content..."))
+
+		content, err := m.editorManager.EditMultiline()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to open editor: %v", err)))
+			return nil
+		}
+
+		if content == "" {
+			AddOutput(m, m.formatAssistantOutput("No content provided"))
+			return nil
+		}
+
+		m.textArea.SetValue(content)
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Loaded %d bytes from editor", len(content))))
+	} else {
+		filePath := args[0]
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Opening %s in editor...", filePath)))
+
+		content, err := m.editorManager.EditFile(filePath)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to edit file: %v", err)))
+			return nil
+		}
+
+		m.textArea.SetValue(content)
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Loaded %s (%d bytes)", filePath, len(content))))
+	}
+
+	return nil
+}
+
+func cmdEditor(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput(m.editorManager.FormatEditorInfo(m.editorManager.GetEditor())))
+		return nil
+	}
+
+	switch args[0] {
+	case "list", "ls":
+		AddOutput(m, m.formatAssistantOutput(m.editorManager.ListAvailableEditors()))
+
+	case "vim":
+		m.editorManager.SetEditor(EditorVim)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: vim"))
+
+	case "nvim", "neovim":
+		m.editorManager.SetEditor(EditorNeovim)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: neovim"))
+
+	case "nano":
+		m.editorManager.SetEditor(EditorNano)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: nano"))
+
+	case "code", "vscode":
+		m.editorManager.SetEditor(EditorCode)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: VS Code"))
+
+	case "emacs":
+		m.editorManager.SetEditor(EditorEmacs)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: emacs"))
+
+	case "subl", "sublime":
+		m.editorManager.SetEditor(EditorSublime)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: Sublime Text"))
+
+	case "atom":
+		m.editorManager.SetEditor(EditorAtom)
+		AddOutput(m, m.formatAssistantOutput("✓ Editor set to: Atom"))
+
+	default:
+		AddOutput(m, m.formatError(fmt.Sprintf("Unknown editor: %s", args[0])))
+	}
+
+	return nil
+}
+
+func cmdMultilines(m *Model, args []string) tea.Cmd {
+	AddOutput(m, m.formatAssistantOutput("Opening editor for multiline input..."))
+
+	currentContent := m.textArea.Value()
+	content, err := m.editorManager.EditContent(currentContent, ".txt")
+	if err != nil {
+		AddOutput(m, m.formatError(fmt.Sprintf("Failed to open editor: %v", err)))
+		return nil
+	}
+
+	m.textArea.SetValue(content)
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Updated input (%d bytes)", len(content))))
+
+	return nil
+}
+
+func cmdRetry(m *Model, args []string) tea.Cmd {
+	if m.lastError == nil {
+		AddOutput(m, m.formatError("No previous error to retry"))
+		return nil
+	}
+
+	if !m.lastError.Retryable {
+		AddOutput(m, m.formatError("This error is not retryable: "+m.lastError.Message))
+		return nil
+	}
+
+	if m.lastInput == "" {
+		AddOutput(m, m.formatError("No previous input to retry"))
+		return nil
+	}
+
+	AddOutput(m, m.formatAssistantOutput("Retrying last request..."))
+	return m.processInput(m.lastInput)
+}
+
+func cmdTheme(m *Model, args []string) tea.Cmd {
+	if len(args) > 0 {
+		themeName := args[0]
+		if SetTheme(themeName) {
+			m.theme = GetTheme()
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Theme changed to: %s", themeName)))
+		} else {
+			AddOutput(m, m.formatError(fmt.Sprintf("Unknown theme: %s. Available: %s", themeName, strings.Join(ListThemes(), ", "))))
+		}
+	} else {
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current theme: %s\nAvailable themes: %s", m.theme.Name, strings.Join(ListThemes(), ", "))))
+	}
+	return nil
+}
+
+func cmdMode(m *Model, args []string) tea.Cmd {
+	if len(args) > 0 {
+		m.mode = args[0]
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Permission mode changed to: %s", args[0])))
+	} else {
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current mode: %s\nAvailable modes: ask, read-only, workspace-write, danger-full-access", m.mode)))
+	}
+	return nil
+}
+
+func cmdContext(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput(m.contextManager.RenderStats()))
+		return nil
+	}
+
+	switch args[0] {
+	case "list", "ls":
+		AddOutput(m, m.formatAssistantOutput(m.contextManager.RenderMessageList()))
+
+	case "remove", "rm":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /context remove <message-id>"))
+			return nil
+		}
+		msgID := args[1]
+		if m.contextManager.RemoveMessage(msgID) {
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Message %s removed from context", msgID)))
+		} else {
+			AddOutput(m, m.formatError(fmt.Sprintf("Message %s not found", msgID)))
+		}
+
+	case "keep":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /context keep <message-id>"))
+			return nil
+		}
+		msgID := args[1]
+		if m.contextManager.KeepMessage(msgID) {
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Message %s marked as important ★", msgID)))
+		} else {
+			AddOutput(m, m.formatError(fmt.Sprintf("Message %s not found", msgID)))
+		}
+
+	case "unkeep":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /context unkeep <message-id>"))
+			return nil
+		}
+		msgID := args[1]
+		if m.contextManager.UnkeepMessage(msgID) {
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Message %s unmarked", msgID)))
+		} else {
+			AddOutput(m, m.formatError(fmt.Sprintf("Message %s not found", msgID)))
+		}
+
+	case "compress":
+		keepCount := 5
+		if len(args) >= 2 {
+			fmt.Sscanf(args[1], "%d", &keepCount)
+		}
+		removed := m.contextManager.CompressOldMessages(keepCount)
+		if removed > 0 {
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Compressed %d old messages (kept %d recent messages)", removed, keepCount)))
+		} else {
+			AddOutput(m, m.formatAssistantOutput("No messages to compress"))
+		}
+
+	case "clear":
+		if len(args) >= 2 && args[1] == "--all" {
+			m.contextManager.Clear()
+			AddOutput(m, m.formatAssistantOutput("All messages cleared from context"))
+		} else {
+			m.contextManager.ClearNonKept()
+			AddOutput(m, m.formatAssistantOutput("Non-kept messages cleared from context"))
+		}
+
+	case "stats":
+		AddOutput(m, m.formatAssistantOutput(m.contextManager.RenderStats()))
+
+	default:
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+			"Context Management Commands:\n"+
+				"  /context          - Show context statistics\n"+
+				"  /context list     - List all messages\n"+
+				"  /context remove <id>  - Remove message\n"+
+				"  /context keep <id>    - Mark as important\n"+
+				"  /context unkeep <id>  - Unmark message\n"+
+				"  /context compress [n] - Compress old messages (keep n recent)\n"+
+				"  /context clear [--all] - Clear context (all or non-kept)",
+		)))
+	}
+	return nil
+}
+
+func cmdTabs(m *Model, args []string) tea.Cmd {
+	if len(args) > 0 {
+		switch args[0] {
+		case "next":
+			m.tabs.Next()
+		case "prev":
+			m.tabs.Prev()
+		default:
+			AddOutput(m, m.formatAssistantOutput("Usage: /tabs [next|prev]"))
+		}
+	} else {
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current tab: %s", m.tabs.GetLabel())))
+	}
+	return nil
+}
+
+func cmdLoading(m *Model, args []string) tea.Cmd {
+	m.loading = !m.loading
+	if m.loading {
+		m.spinner.Start()
+		AddOutput(m, m.formatAssistantOutput("Loading indicator started"))
+	} else {
+		m.spinner.Stop()
+		AddOutput(m, m.formatAssistantOutput("Loading indicator stopped"))
+	}
+	return nil
+}
+
+func cmdDialog(m *Model, args []string) tea.Cmd {
+	if len(args) > 0 {
+		switch args[0] {
+		case "info":
+			m.dialog = NewDialog("Info", "This is an info dialog", DialogInfo)
+			m.showDialog = true
+		case "confirm":
+			m.dialog = NewConfirmDialog("Confirm", "Are you sure?", func(b bool) {
+				if b {
+					AddOutput(m, m.formatAssistantOutput("Confirmed!"))
+				} else {
+					AddOutput(m, m.formatAssistantOutput("Cancelled."))
+				}
+			})
+			m.showDialog = true
+		case "select":
+			items := []string{"Option 1", "Option 2", "Option 3"}
+			m.dialog = NewSelectDialog("Select", "Choose an option:", items, func(i int) {
+				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Selected: %s", items[i])))
+			})
+			m.showDialog = true
+		default:
+			AddOutput(m, m.formatAssistantOutput("Usage: /dialog [info|confirm|select]"))
+		}
+	} else {
+		AddOutput(m, m.formatAssistantOutput("Usage: /dialog [info|confirm|select]"))
+	}
+	return nil
+}
+
 func init() {
 	registerSlashCommand("help", cmdHelp, "h")
 	registerSlashCommand("status", cmdStatus)
@@ -546,6 +834,17 @@ func init() {
 	registerSlashCommand("mcp", cmdMCP)
 	registerSlashCommand("mcp-start", cmdMCPStart)
 	registerSlashCommand("mcp-stop", cmdMCPStop)
+	registerSlashCommand("test", cmdTest)
+	registerSlashCommand("edit", cmdEdit)
+	registerSlashCommand("editor", cmdEditor)
+	registerSlashCommand("multilines", cmdMultilines, "multiline")
+	registerSlashCommand("retry", cmdRetry)
+	registerSlashCommand("theme", cmdTheme)
+	registerSlashCommand("mode", cmdMode)
+	registerSlashCommand("context", cmdContext)
+	registerSlashCommand("tabs", cmdTabs)
+	registerSlashCommand("loading", cmdLoading)
+	registerSlashCommand("dialog", cmdDialog)
 }
 
 func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
@@ -566,267 +865,7 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 		return handler(m, args)
 	}
 
-	switch command {
-	case "/test":
-		AddOutput(m, m.formatAssistantOutput("✓ Command processing is working! Session ID: "+m.currentSession.ID))
-	case "/edit":
-		if len(args) == 0 {
-			AddOutput(m, m.formatAssistantOutput("Opening editor for new content..."))
-
-			content, err := m.editorManager.EditMultiline()
-			if err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to open editor: %v", err)))
-				return nil
-			}
-
-			if content == "" {
-				AddOutput(m, m.formatAssistantOutput("No content provided"))
-				return nil
-			}
-
-			m.textArea.SetValue(content)
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Loaded %d bytes from editor", len(content))))
-		} else {
-			filePath := args[0]
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Opening %s in editor...", filePath)))
-
-			content, err := m.editorManager.EditFile(filePath)
-			if err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to edit file: %v", err)))
-				return nil
-			}
-
-			m.textArea.SetValue(content)
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Loaded %s (%d bytes)", filePath, len(content))))
-		}
-
-	case "/editor":
-		if len(args) == 0 {
-			AddOutput(m, m.formatAssistantOutput(m.editorManager.FormatEditorInfo(m.editorManager.GetEditor())))
-			return nil
-		}
-
-		switch args[0] {
-		case "list", "ls":
-			AddOutput(m, m.formatAssistantOutput(m.editorManager.ListAvailableEditors()))
-
-		case "vim":
-			m.editorManager.SetEditor(EditorVim)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: vim"))
-
-		case "nvim", "neovim":
-			m.editorManager.SetEditor(EditorNeovim)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: neovim"))
-
-		case "nano":
-			m.editorManager.SetEditor(EditorNano)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: nano"))
-
-		case "code", "vscode":
-			m.editorManager.SetEditor(EditorCode)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: VS Code"))
-
-		case "emacs":
-			m.editorManager.SetEditor(EditorEmacs)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: emacs"))
-
-		case "subl", "sublime":
-			m.editorManager.SetEditor(EditorSublime)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: Sublime Text"))
-
-		case "atom":
-			m.editorManager.SetEditor(EditorAtom)
-			AddOutput(m, m.formatAssistantOutput("✓ Editor set to: Atom"))
-
-		default:
-			AddOutput(m, m.formatError(fmt.Sprintf("Unknown editor: %s", args[0])))
-		}
-
-	case "/multilines", "/multiline":
-		AddOutput(m, m.formatAssistantOutput("Opening editor for multiline input..."))
-
-		currentContent := m.textArea.Value()
-		content, err := m.editorManager.EditContent(currentContent, ".txt")
-		if err != nil {
-			AddOutput(m, m.formatError(fmt.Sprintf("Failed to open editor: %v", err)))
-			return nil
-		}
-
-		m.textArea.SetValue(content)
-		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Updated input (%d bytes)", len(content))))
-
-	case "/retry":
-		if m.lastError == nil {
-			AddOutput(m, m.formatError("No previous error to retry"))
-			return nil
-		}
-
-		if !m.lastError.Retryable {
-			AddOutput(m, m.formatError("This error is not retryable: "+m.lastError.Message))
-			return nil
-		}
-
-		if m.lastInput == "" {
-			AddOutput(m, m.formatError("No previous input to retry"))
-			return nil
-		}
-
-		AddOutput(m, m.formatAssistantOutput("Retrying last request..."))
-		return m.processInput(m.lastInput)
-	case "/theme":
-		if len(args) > 0 {
-			themeName := args[0]
-			if SetTheme(themeName) {
-				m.theme = GetTheme()
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Theme changed to: %s", themeName)))
-			} else {
-				AddOutput(m, m.formatError(fmt.Sprintf("Unknown theme: %s. Available: %s", themeName, strings.Join(ListThemes(), ", "))))
-			}
-		} else {
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current theme: %s\nAvailable themes: %s", m.theme.Name, strings.Join(ListThemes(), ", "))))
-		}
-	case "/mode":
-		if len(args) > 0 {
-			m.mode = args[0]
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Permission mode changed to: %s", args[0])))
-		} else {
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current mode: %s\nAvailable modes: ask, read-only, workspace-write, danger-full-access", m.mode)))
-		}
-	case "/context":
-		if len(args) == 0 {
-			AddOutput(m, m.formatAssistantOutput(m.contextManager.RenderStats()))
-			return nil
-		}
-
-		switch args[0] {
-		case "list", "ls":
-			AddOutput(m, m.formatAssistantOutput(m.contextManager.RenderMessageList()))
-
-		case "remove", "rm":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /context remove <message-id>"))
-				return nil
-			}
-			msgID := args[1]
-			if m.contextManager.RemoveMessage(msgID) {
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Message %s removed from context", msgID)))
-			} else {
-				AddOutput(m, m.formatError(fmt.Sprintf("Message %s not found", msgID)))
-			}
-
-		case "keep":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /context keep <message-id>"))
-				return nil
-			}
-			msgID := args[1]
-			if m.contextManager.KeepMessage(msgID) {
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Message %s marked as important ★", msgID)))
-			} else {
-				AddOutput(m, m.formatError(fmt.Sprintf("Message %s not found", msgID)))
-			}
-
-		case "unkeep":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /context unkeep <message-id>"))
-				return nil
-			}
-			msgID := args[1]
-			if m.contextManager.UnkeepMessage(msgID) {
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Message %s unmarked", msgID)))
-			} else {
-				AddOutput(m, m.formatError(fmt.Sprintf("Message %s not found", msgID)))
-			}
-
-		case "compress":
-			keepCount := 5
-			if len(args) >= 2 {
-				fmt.Sscanf(args[1], "%d", &keepCount)
-			}
-			removed := m.contextManager.CompressOldMessages(keepCount)
-			if removed > 0 {
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Compressed %d old messages (kept %d recent messages)", removed, keepCount)))
-			} else {
-				AddOutput(m, m.formatAssistantOutput("No messages to compress"))
-			}
-
-		case "clear":
-			if len(args) >= 2 && args[1] == "--all" {
-				m.contextManager.Clear()
-				AddOutput(m, m.formatAssistantOutput("All messages cleared from context"))
-			} else {
-				m.contextManager.ClearNonKept()
-				AddOutput(m, m.formatAssistantOutput("Non-kept messages cleared from context"))
-			}
-
-		case "stats":
-			AddOutput(m, m.formatAssistantOutput(m.contextManager.RenderStats()))
-
-		default:
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-				"Context Management Commands:\n"+
-					"  /context          - Show context statistics\n"+
-					"  /context list     - List all messages\n"+
-					"  /context remove <id>  - Remove message\n"+
-					"  /context keep <id>    - Mark as important\n"+
-					"  /context unkeep <id>  - Unmark message\n"+
-					"  /context compress [n] - Compress old messages (keep n recent)\n"+
-					"  /context clear [--all] - Clear context (all or non-kept)",
-			)))
-		}
-	case "/tabs":
-		if len(args) > 0 {
-			switch args[0] {
-			case "next":
-				m.tabs.Next()
-			case "prev":
-				m.tabs.Prev()
-			default:
-				AddOutput(m, m.formatAssistantOutput("Usage: /tabs [next|prev]"))
-			}
-		} else {
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current tab: %s", m.tabs.GetLabel())))
-		}
-	case "/loading":
-		m.loading = !m.loading
-		if m.loading {
-			m.spinner.Start()
-			AddOutput(m, m.formatAssistantOutput("Loading indicator started"))
-		} else {
-			m.spinner.Stop()
-			AddOutput(m, m.formatAssistantOutput("Loading indicator stopped"))
-		}
-	case "/dialog":
-		if len(args) > 0 {
-			switch args[0] {
-			case "info":
-				m.dialog = NewDialog("Info", "This is an info dialog", DialogInfo)
-				m.showDialog = true
-			case "confirm":
-				m.dialog = NewConfirmDialog("Confirm", "Are you sure?", func(b bool) {
-					if b {
-						AddOutput(m, m.formatAssistantOutput("Confirmed!"))
-					} else {
-						AddOutput(m, m.formatAssistantOutput("Cancelled."))
-					}
-				})
-				m.showDialog = true
-			case "select":
-				items := []string{"Option 1", "Option 2", "Option 3"}
-				m.dialog = NewSelectDialog("Select", "Choose an option:", items, func(i int) {
-					AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Selected: %s", items[i])))
-				})
-				m.showDialog = true
-			default:
-				AddOutput(m, m.formatAssistantOutput("Usage: /dialog [info|confirm|select]"))
-			}
-		} else {
-			AddOutput(m, m.formatAssistantOutput("Usage: /dialog [info|confirm|select]"))
-		}
-	default:
-		AddOutput(m, m.formatError(fmt.Sprintf("Unknown command: %s. Type /help for available commands.", command)))
-	}
-
+	AddOutput(m, m.formatError(fmt.Sprintf("Unknown command: %s. Type /help for available commands.", command)))
 	return nil
 }
 
