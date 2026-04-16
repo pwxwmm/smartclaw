@@ -62,7 +62,7 @@ func (c *Client) SetOpenAI(isOpenAI bool) {
 
 type Message = MessageParam
 
-func (c *Client) CreateMessage(messages []Message, system string) (*MessageResponse, error) {
+func (c *Client) CreateMessage(ctx context.Context, messages []Message, system string) (*MessageResponse, error) {
 	var systemParam any
 	if system != "" {
 		systemParam = []SystemBlock{
@@ -73,7 +73,7 @@ func (c *Client) CreateMessage(messages []Message, system string) (*MessageRespo
 			},
 		}
 	}
-	return c.CreateMessageWithSystem(context.Background(), messages, systemParam)
+	return c.CreateMessageWithSystem(ctx, messages, systemParam)
 }
 
 func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message, system any) (*MessageResponse, error) {
@@ -131,7 +131,7 @@ func (c *Client) ensureOpenAISDKClient() {
 	}
 }
 
-func (c *Client) StreamMessage(messages []Message, system string, onEvent func(event string, data []byte)) error {
+func (c *Client) StreamMessage(ctx context.Context, messages []Message, system string, onEvent func(event string, data []byte)) error {
 	req := &MessageRequest{
 		Model:     c.Model,
 		MaxTokens: 4096,
@@ -154,7 +154,7 @@ func (c *Client) StreamMessage(messages []Message, system string, onEvent func(e
 		}
 	}
 
-	return c.StreamMessageSSE(context.Background(), req, func(event string, data []byte) error {
+	return c.StreamMessageSSE(ctx, req, func(event string, data []byte) error {
 		if onEvent != nil {
 			onEvent(event, data)
 		}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,7 @@ func TestClientCreateMessage(t *testing.T) {
 		{Role: "user", Content: "Hello"},
 	}
 
-	resp, err := client.CreateMessage(messages, "")
+	resp, err := client.CreateMessage(context.Background(), messages, "")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -99,7 +100,7 @@ func TestClientCreateMessageError(t *testing.T) {
 		{Role: "user", Content: "Hello"},
 	}
 
-	_, err := client.CreateMessage(messages, "")
+	_, err := client.CreateMessage(context.Background(), messages, "")
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
 	}

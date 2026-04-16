@@ -62,7 +62,7 @@ func (r *Router) CreateMessage(messages []api.Message, system string) (*api.Mess
 	}
 
 	client := providerToClient(primary)
-	resp, err := client.CreateMessage(messages, system)
+	resp, err := client.CreateMessage(context.Background(), messages, system)
 	if err == nil {
 		return resp, nil
 	}
@@ -79,7 +79,7 @@ func (r *Router) CreateMessageWithProvider(providerKey string, messages []api.Me
 	}
 
 	client := providerToClient(p)
-	resp, err := client.CreateMessage(messages, system)
+	resp, err := client.CreateMessage(context.Background(), messages, system)
 	if err == nil {
 		return resp, nil
 	}
@@ -96,7 +96,7 @@ func (r *Router) StreamMessage(messages []api.Message, system string, onEvent fu
 	}
 
 	client := providerToClient(primary)
-	err = client.StreamMessage(messages, system, onEvent)
+	err = client.StreamMessage(context.Background(), messages, system, onEvent)
 	if err == nil {
 		return nil
 	}
@@ -108,7 +108,7 @@ func (r *Router) StreamMessage(messages []api.Message, system string, onEvent fu
 	for _, fb := range fallbacks {
 		fbClient := providerToClient(fb)
 		slog.Info("trying fallback provider", "provider", fb.Name)
-		if fbErr := fbClient.StreamMessage(messages, system, onEvent); fbErr == nil {
+		if fbErr := fbClient.StreamMessage(context.Background(), messages, system, onEvent); fbErr == nil {
 			return nil
 		} else {
 			slog.Warn("fallback provider failed", "provider", fb.Name, "error", fbErr)
@@ -159,7 +159,7 @@ func (r *Router) fallbackCreateMessage(messages []api.Message, system string) (*
 	for _, fb := range fallbacks {
 		fbClient := providerToClient(fb)
 		slog.Info("trying fallback provider", "provider", fb.Name)
-		resp, err := fbClient.CreateMessage(messages, system)
+		resp, err := fbClient.CreateMessage(context.Background(), messages, system)
 		if err == nil {
 			return resp, nil
 		}

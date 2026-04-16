@@ -1,6 +1,7 @@
 package layers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -161,7 +162,7 @@ func (im *IncidentMemory) CreateIncident(incident *Incident) error {
 		incident.StartedAt = time.Now().UTC()
 	}
 
-	return im.store.WriteWithRetry(
+	return im.store.WriteWithRetry(context.Background(),
 		`INSERT INTO incidents (id, title, severity, status, service, description, root_cause, remediation, started_at, mitigated_at, resolved_at, alert_source, affected_services)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		incident.ID, incident.Title, incident.Severity, incident.Status, incident.Service,
@@ -202,7 +203,7 @@ func (im *IncidentMemory) UpdateIncident(id string, updates map[string]any) erro
 	args = append(args, id)
 
 	query := "UPDATE incidents SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
-	return im.store.WriteWithRetry(query, args...)
+	return im.store.WriteWithRetry(context.Background(), query, args...)
 }
 
 // GetIncident retrieves a single incident by ID, including its timeline events.
@@ -310,7 +311,7 @@ func (im *IncidentMemory) AddTimelineEvent(incidentID string, event TimelineEven
 		event.Timestamp = time.Now().UTC()
 	}
 
-	return im.store.WriteWithRetry(
+	return im.store.WriteWithRetry(context.Background(),
 		`INSERT INTO incident_timeline (incident_id, timestamp, type, content, source)
 		 VALUES (?, ?, ?, ?, ?)`,
 		incidentID, event.Timestamp, event.Type, event.Content, event.Source,
@@ -324,7 +325,7 @@ func (im *IncidentMemory) ResolveIncident(id string, rootCause, remediation stri
 	}
 
 	now := time.Now().UTC()
-	return im.store.WriteWithRetry(
+	return im.store.WriteWithRetry(context.Background(),
 		`UPDATE incidents SET status = 'resolved', root_cause = ?, remediation = ?, resolved_at = ?, updated_at = ?
 		 WHERE id = ?`,
 		rootCause, remediation, now, now, id,
@@ -345,7 +346,7 @@ func (im *IncidentMemory) CreatePostmortem(pm *Postmortem) error {
 		pm.CreatedAt = time.Now().UTC()
 	}
 
-	return im.store.WriteWithRetry(
+	return im.store.WriteWithRetry(context.Background(),
 		`INSERT INTO postmortems (id, incident_id, title, summary, root_cause, contributing, action_items, lessons_learned, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		pm.ID, pm.IncidentID, pm.Title, pm.Summary, pm.RootCause,
@@ -445,7 +446,7 @@ func (im *IncidentMemory) SetSLOStatus(slo *SLOStatus) error {
 		return nil
 	}
 
-	return im.store.WriteWithRetry(
+	return im.store.WriteWithRetry(context.Background(),
 		`INSERT INTO slo_statuses (service, slo_name, target, current, error_budget_remaining, burn_rate, status, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(service, slo_name) DO UPDATE SET
