@@ -89,13 +89,13 @@ func ParseFileReference(ref string, workDir string) FileReference {
 func ReadFileContent(path string, startLine, endLine int) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("cannot open file: %v", err)
+		return "", fmt.Errorf("cannot open file: %w", err)
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
-		return "", fmt.Errorf("cannot get file info: %v", err)
+		return "", fmt.Errorf("cannot get file info: %w", err)
 	}
 
 	if info.Size() > 10*1024*1024 {
@@ -118,7 +118,7 @@ func ReadFileContent(path string, startLine, endLine int) (string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading file: %v", err)
+		return "", fmt.Errorf("error reading file: %w", err)
 	}
 
 	return strings.Join(lines, "\n"), nil

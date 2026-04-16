@@ -54,7 +54,7 @@ func RunProcess(name string, args []string, env []string, dir string) (string, e
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s: %s", err, output)
+		return "", fmt.Errorf("%w: %s", err, output)
 	}
 	return string(output), nil
 }
@@ -69,7 +69,7 @@ func RunProcessWithTimeout(name string, args []string, timeout time.Duration) (s
 		return "", fmt.Errorf("process timed out")
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %s", err, output)
+		return "", fmt.Errorf("%w: %s", err, output)
 	}
 	return string(output), nil
 }

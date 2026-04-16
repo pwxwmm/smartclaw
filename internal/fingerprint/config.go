@@ -1,5 +1,7 @@
 package fingerprint
 
+import "sync"
+
 type Config struct {
 	VectorSize   int
 	Threshold    float64
@@ -15,11 +17,16 @@ func DefaultConfig() Config {
 }
 
 var config = DefaultConfig()
+var configMu sync.RWMutex
 
 func SetConfig(c Config) {
+	configMu.Lock()
+	defer configMu.Unlock()
 	config = c
 }
 
 func GetConfig() Config {
+	configMu.RLock()
+	defer configMu.RUnlock()
 	return config
 }
