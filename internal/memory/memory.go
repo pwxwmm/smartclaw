@@ -3,6 +3,7 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,12 +11,12 @@ import (
 )
 
 type Memory struct {
-	Key       string      `json:"key"`
-	Value     any `json:"value"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
-	ExpiresAt *time.Time  `json:"expires_at,omitempty"`
-	Tags      []string    `json:"tags,omitempty"`
+	Key       string     `json:"key"`
+	Value     any        `json:"value"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Tags      []string   `json:"tags,omitempty"`
 }
 
 type MemoryStore struct {
@@ -69,19 +70,24 @@ func (s *MemoryStore) Set(key string, value any, ttl time.Duration) error {
 
 func (s *MemoryStore) Get(key string) (any, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	memory, ok := s.items[key]
 	if !ok {
+		s.mu.RUnlock()
 		return nil, fmt.Errorf("key not found: %s", key)
 	}
 
 	if memory.ExpiresAt != nil && time.Now().After(*memory.ExpiresAt) {
+		s.mu.RUnlock()
+		s.mu.Lock()
 		delete(s.items, key)
-		_ = s.deleteFile(key)
+		s.mu.Unlock()
+		if err := s.deleteFile(key); err != nil {
+			slog.Warn("failed to delete memory file", "key", key, "error", err)
+		}
 		return nil, fmt.Errorf("key expired: %s", key)
 	}
 
+	s.mu.RUnlock()
 	return memory.Value, nil
 }
 
@@ -122,7 +128,9 @@ func (s *MemoryStore) Clear() error {
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			_ = os.Remove(filepath.Join(s.basePath, entry.Name()))
+			if err := os.Remove(filepath.Join(s.basePath, entry.Name())); err != nil {
+				slog.Warn("failed to remove memory file", "error", err, "name", entry.Name())
+			}
 		}
 	}
 

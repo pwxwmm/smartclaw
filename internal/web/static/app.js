@@ -10,6 +10,8 @@
     ui: { sidebarOpen: true, activeSection: 'files', currentFile: null, editorFile: null, currentSessionId: null },
     tokens: { used: 0, limit: 200000 },
     cost: 0,
+    costByModel: {},
+    lastCostBreakdown: null,
     ws: null,
     connected: false,
     currentToolId: null,
@@ -17,11 +19,14 @@
     costHistory: [],
     agentHistory: [],
     isRecording: false,
+    isProcessing: false,
     audioContext: null,
     analyser: null,
     mediaStream: null,
     animFrame: null,
     cmdIndex: -1,
+    commandHistory: [],
+    historyIndex: -1,
     flatFiles: [],
     mentionIndex: -1,
     mentionStart: -1,
@@ -64,6 +69,10 @@
       toast('Connected', 'success');
       wsSend('file_tree', { path: '.' });
       wsSend('session_list', {});
+      try {
+        const savedSession = localStorage.getItem('smartclaw-active-session');
+        if (savedSession) wsSend('session_load', { id: savedSession });
+      } catch {}
     };
 
     ws.onclose = () => {
@@ -125,6 +134,14 @@
       case 'tool_end':
         finishToolCard(msg);
         break;
+      case 'tool_approval_request':
+        showApprovalCard(msg);
+        break;
+      case 'aborted':
+        setState('isProcessing', false);
+        updateStopBtn();
+        toast('Request aborted', 'warning');
+        break;
       case 'agent_status':
         updateAgentCard(msg);
         break;
@@ -132,6 +149,8 @@
         finishMessage(msg);
         break;
       case 'error':
+        setState('isProcessing', false);
+        updateStopBtn();
         toast(msg.message, 'error');
         break;
       case 'file_tree':
@@ -146,9 +165,11 @@
         break;
       case 'session_active':
         state.ui.currentSessionId = msg.id;
+        try { localStorage.setItem('smartclaw-active-session', msg.id); } catch {}
         break;
       case 'session_created':
         state.ui.currentSessionId = msg.id;
+        try { localStorage.setItem('smartclaw-active-session', msg.id); } catch {}
         $('#messages').innerHTML = '';
         state.messages = [];
         toast('Session created', 'success');
@@ -161,6 +182,7 @@
         toast('Session deleted', 'success');
         if (state.ui.currentSessionId === msg.id) {
           state.ui.currentSessionId = null;
+          try { localStorage.removeItem('smartclaw-active-session'); } catch {}
           $('#messages').innerHTML = '';
           state.messages = [];
         }
@@ -173,6 +195,9 @@
         break;
       case 'voice_transcript':
         $('#input').value = msg.text;
+        break;
+      case 'cmd_result':
+        addCmdResult(msg.content);
         break;
     }
   }
@@ -199,6 +224,8 @@
     if (!text) return;
 
     addMessage('user', text);
+    state.commandHistory.push(text);
+    state.historyIndex = state.commandHistory.length;
     input.value = '';
     input.style.height = 'auto';
 
@@ -232,8 +259,26 @@
     return el;
   }
 
+  function addCmdResult(content) {
+    const welcome = $('.welcome');
+    if (welcome) welcome.remove();
+    const el = document.createElement('div');
+    el.className = 'message cmd-result';
+    const now = new Date();
+    const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = `<div class="msg-role" style="color:var(--accent)">▶ Command</div><div class="msg-bubble" style="font-family:var(--font-d);background:var(--bg-2);border:1px solid var(--bd);border-radius:8px;white-space:pre-wrap;word-break:break-word;padding:10px 14px">${escapeHtml(content)}</div><div class="msg-ts">${ts}</div>`;
+    $('#messages').appendChild(el);
+    scrollChat();
+    state.messages.push({ role: 'cmd_result', content, ts: Date.now() });
+    return el;
+  }
+
   function appendToken(token) {
     if (!currentAssistantEl) return;
+    if (!state.isProcessing) {
+      setState('isProcessing', true);
+      updateStopBtn();
+    }
     currentContent += token;
     if (renderRAF) return;
     renderRAF = requestAnimationFrame(() => {
@@ -295,14 +340,21 @@
           thinkingBlock = null;
         }
         bindCodeCopy(bubble);
+        postRenderMarkdown(bubble);
       }
     }
     if (msg.tokens) {
       state.tokens.used = msg.tokens;
       state.cost += msg.cost || 0;
+      if (msg.costBreakdown) {
+        state.lastCostBreakdown = msg.costBreakdown;
+        const model = msg.costBreakdown.model || msg.model || 'unknown';
+        if (!state.costByModel[model]) state.costByModel[model] = 0;
+        state.costByModel[model] += msg.cost || 0;
+      }
       updateStats();
       state.tokenHistory.push({ t: Date.now(), v: msg.tokens });
-      state.costHistory.push({ t: Date.now(), v: state.cost });
+      state.costHistory.push({ t: Date.now(), v: state.cost, model: msg.costBreakdown?.model || msg.model });
     }
     if (thinkingBlock) {
       thinkingBlock.open = false;
@@ -313,33 +365,238 @@
     currentAssistantEl = null;
     currentContent = '';
     currentThinking = '';
+    setState('isProcessing', false);
+    updateStopBtn();
+
+    // Auto-title: if session title is empty/Untitled and we have user messages
+    if (state.ui.currentSessionId && state.messages.length > 0) {
+      const currentSession = (state.sessions || []).find(s => s.id === state.ui.currentSessionId);
+      const title = currentSession?.title || '';
+      if (!title || title === 'Untitled' || title === '') {
+        const firstUserMsg = state.messages.find(m => m.role === 'user');
+        if (firstUserMsg) {
+          let autoTitle = firstUserMsg.content.trim().replace(/\n/g, ' ');
+          if (autoTitle.length > 50) autoTitle = autoTitle.slice(0, 50) + '...';
+          if (autoTitle) wsSend('session_rename', { id: state.ui.currentSessionId, title: autoTitle });
+        }
+      }
+    }
   }
+
+  const toolColors = {
+    bash: '#f59e0b', read_file: '#3b82f6', write_file: '#10b981', edit_file: '#8b5cf6',
+    glob: '#6366f1', grep: '#ec4899', lsp: '#14b8a6', ast_grep: '#f97316',
+    browser_navigate: '#06b6d4', browser_click: '#06b6d4', browser_type: '#06b6d4',
+    browser_screenshot: '#06b6d4', browser_extract: '#06b6d4', browser_wait: '#06b6d4',
+    browser_select: '#06b6d4', browser_fill_form: '#06b6d4',
+    sopa_list_nodes: '#f43f5e', sopa_get_node: '#f43f5e', sopa_node_logs: '#f43f5e',
+    sopa_execute_task: '#f43f5e', sopa_execute_orchestration: '#f43f5e',
+    sopa_list_faults: '#f43f5e', sopa_get_fault: '#f43f5e',
+    sopa_list_audits: '#f43f5e', sopa_approve_audit: '#f43f5e', sopa_reject_audit: '#f43f5e',
+    git_ai: '#f97316', git_status: '#f97316', git_diff: '#f97316', git_log: '#f97316',
+    github_create_pr: '#a855f7', github_list_prs: '#a855f7', github_merge_pr: '#a855f7',
+    github_create_issue: '#a855f7', github_list_issues: '#a855f7',
+    docker_exec: '#0ea5e9', execute_code: '#0ea5e9',
+    mcp: '#84cc16', list_mcp_resources: '#84cc16', read_mcp_resource: '#84cc16',
+    investigate_incident: '#ef4444', incident_timeline: '#ef4444',
+    audit_query: '#f59e0b', audit_stats: '#f59e0b',
+    team_create: '#8b5cf6', team_share_memory: '#8b5cf6',
+    worktree_create: '#14b8a6', worktree_list: '#14b8a6',
+  };
 
   function addToolCard(msg) {
     state.currentToolId = msg.id || Date.now().toString();
     const el = document.createElement('div');
     el.className = 'tool-card';
     el.id = `tool-${state.currentToolId}`;
-    el.innerHTML = `<div class="tool-head"><span class="tool-dot running"></span><span>${msg.tool}</span></div><div class="tool-body"></div>`;
+    el.dataset.toolName = msg.tool || '';
+    const color = toolColors[msg.tool] || 'var(--accent)';
+    let detail = '';
+    const input = msg.input || {};
+    if (msg.tool === 'bash' && input.command) {
+      detail = `<div class="tool-cmd" style="font-family:var(--font-d);font-size:13px;color:var(--tx-1);background:var(--bg-0);padding:6px 10px;border-radius:4px;margin:6px 0 0;white-space:pre-wrap;word-break:break-all">$ ${escapeHtml(input.command)}</div>`;
+    } else if (msg.tool === 'edit_file' && input.path) {
+      let diffHtml = `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(input.path)}</div>`;
+      if (input.old_string || input.new_string) {
+        diffHtml += `<div style="margin:6px 0 0;font-family:var(--font-d);font-size:12px;line-height:1.6;border-radius:4px;overflow:hidden">`;
+        if (input.old_string) {
+          const oldLines = String(input.old_string).split('\n');
+          for (const line of oldLines) {
+            diffHtml += `<div class="diff-rm" style="padding:1px 8px;white-space:pre-wrap;word-break:break-all">- ${escapeHtml(line)}</div>`;
+          }
+        }
+        if (input.new_string) {
+          const newLines = String(input.new_string).split('\n');
+          for (const line of newLines) {
+            diffHtml += `<div class="diff-add" style="padding:1px 8px;white-space:pre-wrap;word-break:break-all">+ ${escapeHtml(line)}</div>`;
+          }
+        }
+        diffHtml += `</div>`;
+      }
+      detail = diffHtml;
+    } else if (msg.tool === 'write_file' && input.path) {
+      detail = `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(input.path)}</div>`;
+    } else if (msg.tool === 'read_file' && input.path) {
+      detail = `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(input.path)}</div>`;
+    } else if (msg.tool === 'browser_navigate' && input.url) {
+      detail = `<div style="font-family:var(--font-d);font-size:13px;color:#06b6d4;margin:4px 0 0">${escapeHtml(input.url)}</div>`;
+    } else if (msg.tool && msg.tool.startsWith('sopa_')) {
+      if (msg.tool === 'sopa_execute_task' && input.scriptId) {
+        detail = `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">script: ${escapeHtml(String(input.scriptId))}</div>`;
+      } else if (msg.tool === 'sopa_list_nodes') {
+        const filters = [];
+        if (input.status) filters.push(`status=${input.status}`);
+        if (input.hostname) filters.push(`host=${input.hostname}`);
+        detail = filters.length ? `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(filters.join(' · '))}</div>` : '';
+      }
+    } else if (msg.tool === 'git_diff' || msg.tool === 'git_status' || msg.tool === 'git_log') {
+      if (input.workdir || input.path) {
+        detail = `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(input.workdir || input.path)}</div>`;
+      }
+    } else if (msg.tool === 'docker_exec' && input.image) {
+      detail = `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(String(input.image))}</div>`;
+    } else if (msg.tool === 'investigate_incident') {
+      const parts = [];
+      if (input.incident_id) parts.push(`#${input.incident_id}`);
+      if (input.hypothesis) parts.push(String(input.hypothesis).slice(0, 80));
+      detail = parts.length ? `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(parts.join(' · '))}</div>` : '';
+    } else if (msg.tool === 'incident_timeline') {
+      const parts = [];
+      if (input.action) parts.push(String(input.action));
+      if (input.incident_id) parts.push(`#${input.incident_id}`);
+      detail = parts.length ? `<div style="font-family:var(--font-d);font-size:13px;color:var(--tx-2);margin:4px 0 0">${escapeHtml(parts.join(' · '))}</div>` : '';
+    }
+    el.innerHTML = `<div class="tool-head"><span class="tool-dot running"></span><span class="tool-badge" style="background:${color};color:#000;font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;margin-right:6px">${escapeHtml(msg.tool || 'tool')}</span></div>${detail}<div class="tool-body"></div>`;
     $('#messages').appendChild(el);
     scrollChat();
   }
 
   function updateToolCard(msg) {
-    const body = $(`#tool-${msg.id || state.currentToolId} .tool-body`);
-    if (body) body.textContent += msg.output || '';
+    const cardId = msg.id || state.currentToolId;
+    const body = $(`#tool-${cardId} .tool-body`);
+    if (!body) return;
+    const toolName = ($(`#tool-${cardId}`) || {}).dataset?.toolName || '';
+    const output = msg.output || '';
+    if (toolName === 'browser_screenshot' && output.length > 200 && /^[A-Za-z0-9+/=\s]+$/.test(output.slice(0, 500))) {
+      const img = document.createElement('img');
+      img.src = `data:image/png;base64,${output.replace(/\s/g, '')}`;
+      img.className = 'screenshot-img';
+      img.style.cssText = 'max-width:100%;border-radius:4px;border:1px solid var(--bd);margin:4px 0';
+      body.innerHTML = '';
+      body.appendChild(img);
+    } else {
+      body.textContent += output;
+    }
     scrollChat();
+  }
+
+  function formatDuration(ms) {
+    if (!ms) return '0ms';
+    if (ms < 1000) return ms + 'ms';
+    return (ms / 1000).toFixed(1) + 's';
   }
 
   function finishToolCard(msg) {
     const card = $(`#tool-${msg.id || state.currentToolId}`);
-    if (card) {
-      const dot = card.querySelector('.tool-dot');
-      dot.classList.remove('running');
-      dot.classList.add('ok');
-      const head = card.querySelector('.tool-head span:last-child');
-      head.textContent += ` (${msg.duration || 0}ms)`;
+    if (!card) return;
+    const dot = card.querySelector('.tool-dot');
+    dot.classList.remove('running');
+    dot.classList.add('ok');
+    const head = card.querySelector('.tool-head');
+    const durationSpan = document.createElement('span');
+    durationSpan.style.cssText = 'margin-left:auto;font-size:12px;color:var(--tx-2);font-family:var(--font-d)';
+    durationSpan.textContent = formatDuration(msg.duration);
+    head.appendChild(durationSpan);
+    const toolName = card.dataset.toolName;
+    if (toolName === 'write_file') {
+      const input = msg.input || {};
+      const path = input.path;
+      if (path) {
+        const viewBtn = document.createElement('button');
+        viewBtn.textContent = 'View';
+        viewBtn.style.cssText = 'margin-left:8px;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--bg-2);color:var(--accent);border:1px solid var(--bd);cursor:pointer';
+        viewBtn.addEventListener('click', () => {
+          state.ui.currentFile = path;
+          wsSend('file_open', { path });
+        });
+        head.appendChild(viewBtn);
+      }
     }
+  }
+
+  function updateStopBtn() {
+    const btn = $('#btn-stop');
+    if (!btn) return;
+    if (state.isProcessing) {
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
+  }
+
+  function showApprovalCard(msg) {
+    const el = document.createElement('div');
+    el.className = 'approval-card pending';
+    el.id = `approval-${msg.id}`;
+    el.dataset.toolName = msg.tool || '';
+
+    const color = toolColors[msg.tool] || 'var(--accent)';
+    const input = msg.input || {};
+
+    let preview = '';
+    if (msg.tool === 'bash' && input.command) {
+      preview = `<div class="approval-preview approval-cmd">$ ${escapeHtml(input.command)}</div>`;
+    } else if ((msg.tool === 'write_file' || msg.tool === 'edit_file' || msg.tool === 'read_file') && input.path) {
+      preview = `<div class="approval-preview approval-file">${escapeHtml(input.path)}</div>`;
+    } else if (msg.tool && msg.tool.startsWith('sopa_')) {
+      preview = `<div class="approval-preview approval-sopa">⚠ Affects production systems</div>`;
+    } else {
+      const jsonStr = JSON.stringify(input, null, 2);
+      const truncated = jsonStr.length > 500 ? jsonStr.slice(0, 500) + '…' : jsonStr;
+      preview = `<div class="approval-preview approval-generic"><pre>${escapeHtml(truncated)}</pre></div>`;
+    }
+
+    let reasonHtml = '';
+    if (input.reason) {
+      reasonHtml = `<div class="approval-reason">${escapeHtml(input.reason)}</div>`;
+    }
+
+    el.innerHTML = `
+      <div class="approval-head">
+        <span class="approval-icon">⚡</span>
+        <span class="tool-badge" style="background:${color};color:#000;font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px">${escapeHtml(msg.tool || 'tool')}</span>
+        <span class="approval-label">Requires Approval</span>
+      </div>
+      ${preview}
+      ${reasonHtml}
+      <div class="approval-actions">
+        <button class="approval-btn always" data-action="always_approve">Always Approve</button>
+        <button class="approval-btn approve" data-action="approve">Approve</button>
+        <button class="approval-btn deny" data-action="deny">Deny</button>
+      </div>
+      <div class="approval-status pending-status">Waiting for your decision…</div>
+    `;
+
+    el.querySelectorAll('.approval-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        wsSend('tool_approval', { id: msg.id, name: msg.tool, content: action });
+        el.classList.remove('pending');
+        if (action === 'deny') {
+          el.classList.add('denied');
+          el.querySelector('.approval-status').className = 'approval-status denied-status';
+          el.querySelector('.approval-status').textContent = '✗ Denied';
+        } else {
+          el.classList.add('approved');
+          el.querySelector('.approval-status').className = 'approval-status approved-status';
+          el.querySelector('.approval-status').textContent = action === 'always_approve' ? '✓ Always Approved' : '✓ Approved';
+        }
+        el.querySelectorAll('.approval-btn').forEach(b => b.disabled = true);
+      });
+    });
+
+    $('#messages').appendChild(el);
+    scrollChat();
   }
 
   function updateAgentCard(msg) {
@@ -457,14 +714,57 @@
       $('#s-total-sessions').textContent = '0';
       return;
     }
-    sessions.forEach(s => {
+
+    const searchTerm = ($('#session-search')?.value || '').toLowerCase();
+    const filtered = searchTerm
+      ? sessions.filter(s => (s.title || 'Untitled').toLowerCase().includes(searchTerm))
+      : sessions;
+
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No sessions found</div>';
+      setState('sessions', sessions);
+      $('#s-total-sessions').textContent = sessions.length;
+      return;
+    }
+
+    filtered.forEach(s => {
       const el = document.createElement('div');
       el.className = 'session-item' + (s.id === state.ui.currentSessionId ? ' active' : '');
-      el.innerHTML = `<div class="stitle">${s.title || 'Untitled'}</div><div class="smeta">${s.model} / ${s.messageCount} msgs / ${new Date(s.updatedAt).toLocaleDateString()}</div><button class="session-del" title="Delete session">&times;</button>`;
+      el.dataset.sessionId = s.id;
+      el.innerHTML = `
+        <div class="stitle">${escapeHtml(s.title || 'Untitled')}</div>
+        <div class="smeta">${escapeHtml(s.model)} / ${s.messageCount} msgs / ${new Date(s.updatedAt).toLocaleDateString()}</div>
+        <div class="session-actions">
+          <button class="session-rename" title="Rename session"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="session-del" title="Delete session">&times;</button>
+        </div>
+        <div class="session-confirm hidden">
+          <span>Delete this session? This cannot be undone.</span>
+          <button class="confirm-delete">Delete</button>
+          <button class="confirm-cancel">Cancel</button>
+        </div>
+      `;
+
+      el.querySelector('.session-rename').addEventListener('click', (e) => {
+        e.stopPropagation();
+        startRenameSession(el, s);
+      });
+
       el.querySelector('.session-del').addEventListener('click', (e) => {
         e.stopPropagation();
-        if (confirm('Delete this session?')) wsSend('session_delete', { id: s.id });
+        el.querySelector('.session-confirm').classList.remove('hidden');
       });
+
+      el.querySelector('.confirm-delete').addEventListener('click', (e) => {
+        e.stopPropagation();
+        wsSend('session_delete', { id: s.id });
+      });
+
+      el.querySelector('.confirm-cancel').addEventListener('click', (e) => {
+        e.stopPropagation();
+        el.querySelector('.session-confirm').classList.add('hidden');
+      });
+
       el.addEventListener('click', () => wsSend('session_load', { id: s.id }));
       list.appendChild(el);
     });
@@ -472,8 +772,48 @@
     $('#s-total-sessions').textContent = sessions.length;
   }
 
+  function startRenameSession(el, session) {
+    const titleEl = el.querySelector('.stitle');
+    const currentTitle = session.title || 'Untitled';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-input';
+    input.value = currentTitle;
+    input.maxLength = 100;
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function finishRename() {
+      const newTitle = input.value.trim();
+      if (newTitle && newTitle !== currentTitle) {
+        wsSend('session_rename', { id: session.id, title: newTitle });
+      } else {
+        const span = document.createElement('div');
+        span.className = 'stitle';
+        span.textContent = currentTitle;
+        input.replaceWith(span);
+      }
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finishRename(); }
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        const span = document.createElement('div');
+        span.className = 'stitle';
+        span.textContent = currentTitle;
+        input.replaceWith(span);
+      }
+    });
+
+    input.addEventListener('blur', finishRename);
+  }
+
   function loadSessionMessages(msg) {
     state.ui.currentSessionId = msg.id;
+    try { localStorage.setItem('smartclaw-active-session', msg.id); } catch {}
     const container = $('#messages');
     container.innerHTML = '';
     state.messages = [];
@@ -486,7 +826,9 @@
       el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${m.role === 'assistant' ? renderMarkdown(m.content) : escapeHtml(m.content)}</div>${ts ? `<div class="msg-ts">${ts}</div>` : ''}`;
       container.appendChild(el);
       if (m.role === 'assistant') {
-        bindCodeCopy(el.querySelector('.msg-bubble'));
+        const bubble = el.querySelector('.msg-bubble');
+        bindCodeCopy(bubble);
+        postRenderMarkdown(bubble);
       }
       state.messages.push({ role: m.role, content: m.content, ts: Date.now() });
     });
@@ -593,6 +935,11 @@
     $('#s-total-msgs').textContent = state.messages.length;
     $('#s-total-tokens').textContent = state.tokens.used.toLocaleString();
     $('#s-total-cost').textContent = `$${state.cost.toFixed(2)}`;
+    const modelBreakdown = Object.entries(state.costByModel)
+      .map(([m, c]) => `${m}: $${c.toFixed(4)}`)
+      .join('\n');
+    const costEl = $('#s-total-cost');
+    if (costEl && modelBreakdown) costEl.title = modelBreakdown;
   }
 
   function drawTokenChart() {
@@ -630,23 +977,51 @@
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = getCSS('--bg-0');
     ctx.fillRect(0, 0, w, h);
-    const data = state.costHistory.slice(-20);
-    if (data.length < 2) { ctx.fillStyle = getCSS('--tx-2'); ctx.font = '12px Inter'; ctx.fillText('Waiting for data...', w/2-50, h/2); return; }
-    const max = Math.max(...data.map(d => d.v), 0.01);
-    ctx.strokeStyle = getCSS('--accent');
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    data.forEach((d, i) => {
-      const x = (i / (data.length - 1)) * (w - 40) + 20;
-      const y = h - 20 - ((d.v / max) * (h - 40));
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    ctx.lineTo((w - 20), h - 20);
-    ctx.lineTo(20, h - 20);
-    ctx.closePath();
-    ctx.fillStyle = getCSS('--accent-bg');
-    ctx.fill();
+
+    const modelEntries = Object.entries(state.costByModel);
+    if (modelEntries.length > 0) {
+      const modelColors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#f97316','#84cc16','#6366f1'];
+      const maxCost = Math.max(...modelEntries.map(([,c]) => c), 0.01);
+      const barW = Math.min(40, (w - 40) / modelEntries.length - 4);
+      const totalBarW = modelEntries.length * (barW + 4);
+      const startX = (w - totalBarW) / 2;
+
+      modelEntries.forEach(([model, cost], i) => {
+        const barH = (cost / maxCost) * (h - 60);
+        const x = startX + i * (barW + 4);
+        const y = h - 30 - barH;
+        ctx.fillStyle = modelColors[i % modelColors.length];
+        ctx.fillRect(x, y, barW, barH);
+
+        ctx.fillStyle = getCSS('--tx-2');
+        ctx.font = '9px Inter';
+        ctx.textAlign = 'center';
+        const shortModel = model.replace(/^(claude|gpt|gemini|glm)-/, '').slice(0, 10);
+        ctx.fillText(shortModel, x + barW / 2, h - 16);
+        ctx.fillStyle = getCSS('--tx-0');
+        ctx.font = '9px JetBrains Mono';
+        ctx.fillText(`$${cost.toFixed(3)}`, x + barW / 2, y - 4);
+      });
+    } else {
+      const data = state.costHistory.slice(-20);
+      if (data.length < 2) { ctx.fillStyle = getCSS('--tx-2'); ctx.font = '12px Inter'; ctx.fillText('Waiting for data...', w/2-50, h/2); return; }
+      const max = Math.max(...data.map(d => d.v), 0.01);
+      ctx.strokeStyle = getCSS('--accent');
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      data.forEach((d, i) => {
+        const x = (i / (data.length - 1)) * (w - 40) + 20;
+        const y = h - 20 - ((d.v / max) * (h - 40));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.lineTo((w - 20), h - 20);
+      ctx.lineTo(20, h - 20);
+      ctx.closePath();
+      ctx.fillStyle = getCSS('--accent-bg');
+      ctx.fill();
+    }
+
     ctx.fillStyle = getCSS('--tx-0');
     ctx.font = 'bold 12px JetBrains Mono';
     ctx.textAlign = 'center';
@@ -917,6 +1292,19 @@
     $('#stat-tokens').textContent = `${(state.tokens.used / 1000).toFixed(1)}k / ${(state.tokens.limit / 1000)}k tokens`;
     $('#stat-cost').textContent = `$${state.cost.toFixed(2)}`;
     $('#stat-agents').textContent = `${state.agents.length} agents`;
+
+    const tokenBar = $('#token-bar');
+    if (tokenBar && state.lastCostBreakdown) {
+      const b = state.lastCostBreakdown;
+      tokenBar.title = `${b.model}\nInput: $${b.inputCost.toFixed(4)} (${b.inputRate})\nOutput: $${b.outputCost.toFixed(4)} (${b.outputRate})\nTotal: $${(b.inputCost + b.outputCost).toFixed(4)}`;
+    }
+
+    const models = Object.entries(state.costByModel);
+    if (models.length > 0) {
+      const breakdown = models.map(([m, c]) => `${m}: $${c.toFixed(4)}`).join('\n');
+      const costEl = $('#stat-cost');
+      if (costEl) costEl.title = breakdown;
+    }
   }
 
   function toast(msg, type = 'info') {
@@ -930,6 +1318,10 @@
   marked.use({
     renderer: {
       code({ text, lang }) {
+        if (lang === 'mermaid') {
+          const mermaidId = 'mermaid-' + Math.random().toString(36).slice(2, 8);
+          return `<div class="mermaid" id="${mermaidId}">${escapeHtml(text)}</div>`;
+        }
         const codeId = 'code-' + Math.random().toString(36).slice(2, 8);
         const langLabel = lang || 'code';
         let highlighted;
@@ -960,6 +1352,45 @@
     } catch (e) {
       return escapeHtml(text).replace(/\n/g, '<br>');
     }
+  }
+
+  function renderKatex(element) {
+    if (typeof window.renderMathInElement === 'function') {
+      try {
+        renderMathInElement(element, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false
+        });
+      } catch (e) {
+        console.warn('KaTeX render error:', e);
+      }
+    }
+  }
+
+  function renderMermaidInElement(element) {
+    const mermaidNodes = element.querySelectorAll('.mermaid');
+    if (mermaidNodes.length === 0) return;
+    if (typeof window.mermaid !== 'undefined') {
+      try {
+        mermaid.run({ nodes: mermaidNodes });
+      } catch (e) {
+        console.warn('Mermaid render error:', e);
+        mermaidNodes.forEach(node => {
+          if (!node.querySelector('svg')) {
+            const raw = node.textContent;
+            node.innerHTML = `<pre style="margin:0;white-space:pre-wrap;font-size:12px;color:var(--tx-2)">${escapeHtml(raw)}</pre>`;
+          }
+        });
+      }
+    }
+  }
+
+  function postRenderMarkdown(element) {
+    renderKatex(element);
+    renderMermaidInElement(element);
   }
 
   function renderPlainText(text) {
@@ -1117,6 +1548,54 @@
     }
   }
 
+  function focusModelSwitcher() {
+    const modelSelect = $('#model-select');
+    if (modelSelect) {
+      modelSelect.focus();
+      modelSelect.size = Math.min(modelSelect.options.length, 8);
+      modelSelect.addEventListener('blur', function handler() {
+        modelSelect.size = 1;
+        modelSelect.removeEventListener('blur', handler);
+      });
+      modelSelect.addEventListener('change', function handler() {
+        modelSelect.size = 1;
+        modelSelect.removeEventListener('change', handler);
+      });
+    }
+  }
+
+  function toggleSessionsPanel() {
+    const sb = $('#sidebar');
+    if (sb.classList.contains('collapsed')) {
+      sb.classList.remove('collapsed');
+      state.ui.sidebarOpen = true;
+    }
+    $$('.nav-btn').forEach(b => b.classList.remove('active'));
+    $$('.section').forEach(s => s.classList.remove('active'));
+    const sessionsBtn = $('[data-section="sessions"]');
+    if (sessionsBtn) sessionsBtn.classList.add('active');
+    $('#section-sessions')?.classList.add('active');
+    const searchInput = $('#session-search');
+    if (searchInput) setTimeout(() => searchInput.focus(), 100);
+  }
+
+  function clearChat() {
+    $('#messages').innerHTML = '';
+    state.messages = [];
+    toast('Chat cleared', 'success');
+  }
+
+  function showHelpModal() {
+    const modal = $('#help-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+  }
+
+  function hideHelpModal() {
+    const modal = $('#help-modal');
+    if (modal) modal.classList.add('hidden');
+  }
+
   function showWelcome() {
     const messages = $('#messages');
     if (messages.children.length > 0) return;
@@ -1154,6 +1633,9 @@
 
   function init() {
     loadSettings();
+    if (typeof window.mermaid !== 'undefined') {
+      mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+    }
     wsConnect();
     initDragDrop();
     initCmdPalette();
@@ -1164,6 +1646,20 @@
     $('#btn-send').addEventListener('click', sendMessage);
     $('#input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+      else if (e.key === 'ArrowUp' && e.target.value === '' && state.commandHistory.length > 0) {
+        e.preventDefault();
+        state.historyIndex = Math.max(0, state.historyIndex - 1);
+        e.target.value = state.commandHistory[state.historyIndex] || '';
+        e.target.style.height = 'auto';
+        e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+      }
+      else if (e.key === 'ArrowDown' && e.target.value === '' && state.commandHistory.length > 0) {
+        e.preventDefault();
+        state.historyIndex = Math.min(state.commandHistory.length, state.historyIndex + 1);
+        e.target.value = state.commandHistory[state.historyIndex] || '';
+        e.target.style.height = 'auto';
+        e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+      }
     });
     $('#input').addEventListener('input', function() {
       this.style.height = 'auto';
@@ -1266,8 +1762,21 @@
     });
     $('#voice-stop').addEventListener('click', stopVoice);
 
+    $('#btn-stop').addEventListener('click', () => {
+      wsSend('abort', {});
+      setState('isProcessing', false);
+      updateStopBtn();
+    });
+
     $('#refresh-files').addEventListener('click', () => wsSend('file_tree', { path: '.' }));
     $('#new-session').addEventListener('click', () => wsSend('session_new', { model: state.settings.model }));
+
+    $('#session-search')?.addEventListener('input', () => {
+      renderSessions(state.sessions || []);
+    });
+
+    $('#help-close')?.addEventListener('click', hideHelpModal);
+    $('#help-modal .modal-backdrop')?.addEventListener('click', hideHelpModal);
 
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey || e.metaKey) {
@@ -1275,6 +1784,10 @@
         else if (e.key === 's' && state.ui.editorFile) { e.preventDefault(); saveEditor(); }
         else if (e.key === 'n') { e.preventDefault(); wsSend('session_new', { model: state.settings.model }); }
         else if (e.key === '/') { e.preventDefault(); $('#sidebar').classList.toggle('collapsed'); }
+        else if (e.key === 'p') { e.preventDefault(); focusModelSwitcher(); }
+        else if (e.key === 'o') { e.preventDefault(); toggleSessionsPanel(); }
+        else if (e.key === 'l') { e.preventDefault(); clearChat(); }
+        else if (e.key === 'h') { e.preventDefault(); showHelpModal(); }
       }
       if (e.key === 'Escape') {
         closeDrawer();
@@ -1283,6 +1796,7 @@
         $('#theme-editor-panel').classList.remove('visible');
         $('#cmd-palette').classList.add('hidden');
         $('#file-mention').classList.add('hidden');
+        $('#help-modal')?.classList.add('hidden');
         state.mentionStart = -1;
       }
     });
