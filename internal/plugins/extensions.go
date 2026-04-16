@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,7 +90,7 @@ func (l *ExtensionLoader) LoadExtensions(ctx context.Context, p *Plugin) error {
 	}
 
 	if len(errors) > 0 {
-		return fmt.Errorf("extension loading errors: %v", errors)
+		return fmt.Errorf("extension loading errors: %w", stderrors.Join(errors...))
 	}
 
 	return nil
@@ -242,7 +243,7 @@ func (l *ExtensionLoader) UnloadExtensions(pluginName string) error {
 	}
 
 	if len(errors) > 0 {
-		return fmt.Errorf("extension unloading errors: %v", errors)
+		return fmt.Errorf("extension unloading errors: %w", stderrors.Join(errors...))
 	}
 
 	return nil

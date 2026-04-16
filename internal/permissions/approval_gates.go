@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -309,7 +310,7 @@ func (g *ApprovalGate) LoadConfig(path string) error {
 		}
 		if yamlErr := yaml.Unmarshal(data, &cfg); yamlErr != nil {
 			if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
-				return fmt.Errorf("parsing approval gates config: yaml error: %v, json error: %v", yamlErr, jsonErr)
+				return fmt.Errorf("parsing approval gates config: %w", errors.Join(yamlErr, jsonErr))
 			}
 		}
 	}
