@@ -2,11 +2,11 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/instructkr/smartclaw/internal/constants"
+	apperrors "github.com/instructkr/smartclaw/internal/errors"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -47,7 +47,7 @@ func NewClientWithModel(apiKey string, baseURL string, model string) *Client {
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
 		Model:      model,
-		HTTPClient: defaultHTTPClient(),
+		HTTPClient: defaultHTTPClient("anthropic"),
 		sdkClient:  newAnthropicSDKClient(apiKey, baseURL, nil),
 	}
 }
@@ -101,7 +101,8 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 
 		comp, err := c.openaiSDKClient.Chat.Completions.New(ctx, params)
 		if err != nil {
-			return nil, fmt.Errorf("OpenAI API error: %w", err)
+			return nil, apperrors.Wrap(err, "OPENAI_API_ERROR", "OpenAI API error",
+				apperrors.WithCategory(apperrors.CategoryNetwork))
 		}
 
 		return sdkCompletionToResponse(comp), nil
@@ -113,7 +114,8 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 
 	msg, err := c.sdkClient.Messages.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("Anthropic API error: %w", err)
+		return nil, apperrors.Wrap(err, "ANTHROPIC_API_ERROR", "Anthropic API error",
+			apperrors.WithCategory(apperrors.CategoryNetwork))
 	}
 
 	return sdkMessageToResponse(msg), nil

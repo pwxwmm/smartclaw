@@ -9,8 +9,11 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	apperrors "github.com/instructkr/smartclaw/internal/errors"
 )
 
 type APIError struct {
@@ -36,6 +39,26 @@ func NewAPIErrorWithCode(errType, message string, code int) *APIError {
 		Message: message,
 		Code:    code,
 	}
+}
+
+func (e *APIError) ToAppError() *apperrors.AppError {
+	category := apperrors.CategoryNetwork
+	code := e.Type
+
+	if strings.Contains(e.Type, "auth") || strings.Contains(e.Type, "unauthorized") {
+		category = apperrors.CategoryAuth
+	} else if e.Code == 429 || strings.Contains(e.Type, "rate_limit") {
+		category = apperrors.CategoryQuota
+		return apperrors.New(code, e.Message,
+			apperrors.WithCategory(category),
+			apperrors.WithRetryable(true))
+	} else if e.Code >= 500 {
+		return apperrors.New(code, e.Message,
+			apperrors.WithCategory(category),
+			apperrors.WithRetryable(true))
+	}
+
+	return apperrors.New(code, e.Message, apperrors.WithCategory(category))
 }
 
 type Usage struct {

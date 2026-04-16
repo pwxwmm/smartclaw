@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/instructkr/smartclaw/internal/errors"
 	"github.com/instructkr/smartclaw/internal/patch"
 )
 
@@ -72,7 +73,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	if !isPathAllowed(absPath) {
-		return nil, &Error{Code: "PATH_DENIED", Message: "access denied: path outside allowed directories"}
+		return nil, apperrors.New("PATH_DENIED", "access denied: path outside allowed directories",
+			apperrors.WithCategory(apperrors.CategorySecurity))
 	}
 
 	info, err := os.Stat(absPath)
@@ -151,7 +153,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (any,
 	}
 
 	if !isPathAllowed(absPath) {
-		return nil, &Error{Code: "PATH_DENIED", Message: "access denied: path outside allowed directories"}
+		return nil, apperrors.New("PATH_DENIED", "access denied: path outside allowed directories",
+			apperrors.WithCategory(apperrors.CategorySecurity))
 	}
 
 	dir := filepath.Dir(absPath)
@@ -206,7 +209,8 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	if !isPathAllowed(absPath) {
-		return nil, &Error{Code: "PATH_DENIED", Message: "access denied: path outside allowed directories"}
+		return nil, apperrors.New("PATH_DENIED", "access denied: path outside allowed directories",
+			apperrors.WithCategory(apperrors.CategorySecurity))
 	}
 
 	info, err := os.Stat(absPath)
@@ -509,7 +513,8 @@ func (t *LineEditTool) Execute(ctx context.Context, input map[string]any) (any, 
 	}
 
 	if !isPathAllowed(absPath) {
-		return nil, &Error{Code: "PATH_DENIED", Message: "access denied: path outside allowed directories"}
+		return nil, apperrors.New("PATH_DENIED", "access denied: path outside allowed directories",
+			apperrors.WithCategory(apperrors.CategorySecurity))
 	}
 
 	edit := patch.Edit{
@@ -607,7 +612,8 @@ func (t *PreviewFileTool) Execute(ctx context.Context, input map[string]any) (an
 	}
 
 	if !isPathAllowed(absPath) {
-		return nil, &Error{Code: "PATH_DENIED", Message: "access denied: path outside allowed directories"}
+		return nil, apperrors.New("PATH_DENIED", "access denied: path outside allowed directories",
+			apperrors.WithCategory(apperrors.CategorySecurity))
 	}
 
 	info, err := os.Stat(absPath)
