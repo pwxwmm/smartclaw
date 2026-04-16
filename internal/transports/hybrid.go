@@ -2,6 +2,7 @@ package transports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -86,7 +87,7 @@ func (t *HybridTransport) Close() error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("close errors: %v", errs)
+		return fmt.Errorf("close errors: %w", errors.Join(errs...))
 	}
 
 	return nil
