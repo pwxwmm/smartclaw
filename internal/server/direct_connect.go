@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,16 +21,44 @@ type DirectConnectSession struct {
 }
 
 type DirectConnectManager struct {
-	sessions map[string]*DirectConnectSession
-	mu       sync.RWMutex
-	port     int
-	server   *http.Server
+	sessions  map[string]*DirectConnectSession
+	mu        sync.RWMutex
+	port      int
+	server    *http.Server
+	authToken string
 }
 
-func NewDirectConnectManager(port int) *DirectConnectManager {
+func NewDirectConnectManager(port int, authToken string) *DirectConnectManager {
+	if authToken == "" {
+		slog.Warn("direct connect server: no auth token provided, binding to localhost only")
+	}
 	return &DirectConnectManager{
-		sessions: make(map[string]*DirectConnectSession),
-		port:     port,
+		sessions:  make(map[string]*DirectConnectSession),
+		port:      port,
+		authToken: authToken,
+	}
+}
+
+func (m *DirectConnectManager) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if m.authToken == "" {
+			next(w, r)
+			return
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "unauthorized: missing or invalid Authorization header", http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token != m.authToken {
+			http.Error(w, "unauthorized: invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
 	}
 }
 
@@ -87,7 +117,7 @@ func (m *DirectConnectManager) ListSessions() []*DirectConnectSession {
 func (m *DirectConnectManager) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "GET":
 			sessions := m.ListSessions()
@@ -109,9 +139,9 @@ func (m *DirectConnectManager) Start(ctx context.Context) error {
 
 			json.NewEncoder(w).Encode(session)
 		}
-	})
+	}))
 
-	mux.HandleFunc("/sessions/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions/", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Path[len("/sessions/"):]
 		session, exists := m.GetSession(id)
 		if !exists {
@@ -119,10 +149,16 @@ func (m *DirectConnectManager) Start(ctx context.Context) error {
 			return
 		}
 		json.NewEncoder(w).Encode(session)
-	})
+	}))
+
+	// Bind to localhost only if no auth token is set
+	addr := fmt.Sprintf(":%d", m.port)
+	if m.authToken == "" {
+		addr = fmt.Sprintf("127.0.0.1:%d", m.port)
+	}
 
 	m.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", m.port),
+		Addr:    addr,
 		Handler: mux,
 	}
 

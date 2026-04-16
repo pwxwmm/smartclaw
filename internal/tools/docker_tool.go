@@ -13,6 +13,18 @@ import (
 
 type DockerSandboxTool struct{ BaseTool }
 
+type DockerConfig struct {
+	NetworkMode string
+}
+
+func dockerConfigFromInput(input map[string]any) DockerConfig {
+	cfg := DockerConfig{}
+	if nm, ok := input["network_mode"].(string); ok {
+		cfg.NetworkMode = nm
+	}
+	return cfg
+}
+
 func (t *DockerSandboxTool) Name() string { return "docker_exec" }
 func (t *DockerSandboxTool) Description() string {
 	return "Execute a command inside an isolated Docker container. The project directory is mounted at /workspace. Supports both one-shot and session-persistent containers."
@@ -44,6 +56,11 @@ func (t *DockerSandboxTool) InputSchema() map[string]any {
 				"type":        "string",
 				"default":     "exec",
 				"description": "Action: exec (run command), start (create session container), stop (destroy session container)",
+			},
+			"network_mode": map[string]any{
+				"type":        "string",
+				"default":     "",
+				"description": "Docker network mode (e.g. 'host'). Empty string uses default bridge network for isolation.",
 			},
 		},
 		"required": []string{"command"},
@@ -97,15 +114,19 @@ func (t *DockerSandboxTool) execOneShot(ctx context.Context, input map[string]an
 
 	containerName := fmt.Sprintf("smartclaw-exec-%d", time.Now().UnixNano())
 
-	createCmd := exec.CommandContext(ctx, "docker", "run", "-d",
+	dockerCfg := dockerConfigFromInput(input)
+
+	createArgs := []string{"docker", "run", "-d",
 		"--name", containerName,
-		"-v", workDir+":/workspace",
+		"-v", workDir + ":/workspace",
 		"-w", "/workspace",
-		"--network", "host",
-		"--rm",
-		image,
-		"sleep", "infinity",
-	)
+	}
+	if dockerCfg.NetworkMode != "" {
+		createArgs = append(createArgs, "--network", dockerCfg.NetworkMode)
+	}
+	createArgs = append(createArgs, "--rm", image, "sleep", "infinity")
+
+	createCmd := exec.CommandContext(ctx, createArgs[0], createArgs[1:]...)
 	createOutput, err := createCmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker create failed: %w (%s)", err, strings.TrimSpace(string(createOutput)))
@@ -143,14 +164,19 @@ func (t *DockerSandboxTool) startSession(ctx context.Context, input map[string]a
 
 	workDir, _ := os.Getwd()
 
-	cmd := exec.CommandContext(ctx, "docker", "run", "-d",
+	dockerCfg := dockerConfigFromInput(input)
+
+	runArgs := []string{"docker", "run", "-d",
 		"--name", containerName,
-		"-v", workDir+":/workspace",
+		"-v", workDir + ":/workspace",
 		"-w", "/workspace",
-		"--network", "host",
-		image,
-		"sleep", "infinity",
-	)
+	}
+	if dockerCfg.NetworkMode != "" {
+		runArgs = append(runArgs, "--network", dockerCfg.NetworkMode)
+	}
+	runArgs = append(runArgs, image, "sleep", "infinity")
+
+	cmd := exec.CommandContext(ctx, runArgs[0], runArgs[1:]...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker session start failed: %w (%s)", err, strings.TrimSpace(string(output)))
@@ -224,6 +250,10 @@ func (t *DockerSandboxTool) execInSession(ctx context.Context, input map[string]
 }
 
 func execInContainer(ctx context.Context, containerName, command string) (any, error) {
+	if validationResult := ValidateCommandSecurity(command); !validationResult.Allowed {
+		return nil, fmt.Errorf("command rejected by security policy: %s", validationResult.Reason)
+	}
+
 	startTime := time.Now()
 
 	execCmd := exec.CommandContext(ctx, "docker", "exec", containerName, "bash", "-c", command)
