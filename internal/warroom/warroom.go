@@ -15,21 +15,23 @@ type AgentRunner interface {
 }
 
 type WarRoomCoordinator struct {
-	mu       sync.RWMutex
-	sessions map[string]*WarRoomSession
-	channels map[string]map[DomainAgentType]chan AgentMessage
-	findings map[string]chan AgentMessage
-	cancels  map[string]context.CancelFunc
-	runner   AgentRunner
+	mu          sync.RWMutex
+	sessions    map[string]*WarRoomSession
+	channels    map[string]map[DomainAgentType]chan AgentMessage
+	findings    map[string]chan AgentMessage
+	cancels     map[string]context.CancelFunc
+	runner      AgentRunner
+	maxSessions int
 }
 
 func NewWarRoomCoordinator() *WarRoomCoordinator {
 	return &WarRoomCoordinator{
-		sessions: make(map[string]*WarRoomSession),
-		channels: make(map[string]map[DomainAgentType]chan AgentMessage),
-		findings: make(map[string]chan AgentMessage),
-		cancels:  make(map[string]context.CancelFunc),
-		runner:   nil,
+		sessions:    make(map[string]*WarRoomSession),
+		channels:    make(map[string]map[DomainAgentType]chan AgentMessage),
+		findings:    make(map[string]chan AgentMessage),
+		cancels:     make(map[string]context.CancelFunc),
+		runner:      nil,
+		maxSessions: 50,
 	}
 }
 
@@ -81,6 +83,22 @@ func (c *WarRoomCoordinator) StartWarRoom(ctx context.Context, req WarRoomReques
 			return nil, fmt.Errorf("unknown agent type: %s", at)
 		}
 	}
+
+	c.mu.Lock()
+	if c.maxSessions > 0 && len(c.sessions) >= c.maxSessions {
+		var oldestID string
+		var oldestTime time.Time
+		for id, s := range c.sessions {
+			if oldestID == "" || s.CreatedAt.Before(oldestTime) {
+				oldestID = id
+				oldestTime = s.CreatedAt
+			}
+		}
+		if oldestID != "" {
+			c.cleanupSessionLocked(oldestID)
+		}
+	}
+	c.mu.Unlock()
 
 	sessionID := uuid.New().String()
 	now := time.Now()
@@ -313,6 +331,33 @@ func (c *WarRoomCoordinator) CloseSession(sessionID string) (*InvestigationResul
 
 	result := c.buildInvestigationResult(session)
 	return result, nil
+}
+
+func (c *WarRoomCoordinator) cleanupSessionLocked(sessionID string) {
+	if cancel, ok := c.cancels[sessionID]; ok {
+		cancel()
+		delete(c.cancels, sessionID)
+	}
+
+	if session, ok := c.sessions[sessionID]; ok {
+		now := time.Now()
+		session.Status = WarRoomClosed
+		session.ClosedAt = &now
+	}
+
+	if findingsCh, ok := c.findings[sessionID]; ok {
+		close(findingsCh)
+		delete(c.findings, sessionID)
+	}
+
+	for at, ch := range c.channels[sessionID] {
+		close(ch)
+		_ = at
+	}
+	delete(c.channels, sessionID)
+	delete(c.sessions, sessionID)
+
+	metricWarRoomSessionsActive.Dec()
 }
 
 func (c *WarRoomCoordinator) buildInvestigationResult(session *WarRoomSession) *InvestigationResult {

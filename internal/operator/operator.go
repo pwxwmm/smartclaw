@@ -32,7 +32,10 @@ type OperatorManager struct {
 	stopChans map[string]chan struct{}
 	running   bool
 
-	cronScheduler CronScheduler
+	cronScheduler   CronScheduler
+	maxConfigs      int
+	maxCheckResults int
+	maxEvents       int
 }
 
 func NewOperatorManager() *OperatorManager {
@@ -43,6 +46,9 @@ func NewOperatorManager() *OperatorManager {
 		events:          make(map[string][]OperatorEvent),
 		escalationState: make(map[string]map[int]bool),
 		stopChans:       make(map[string]chan struct{}),
+		maxConfigs:      100,
+		maxCheckResults: 100,
+		maxEvents:       1000,
 	}
 }
 
@@ -77,6 +83,27 @@ func (m *OperatorManager) Enable(ctx context.Context, config OperatorConfig) (*O
 
 	if config.EscalationPolicy.Levels == nil {
 		config.EscalationPolicy = defaultEscalationPolicy()
+	}
+
+	if m.maxConfigs > 0 && len(m.configs) >= m.maxConfigs {
+		var oldestID string
+		var oldestTime time.Time
+		for id, st := range m.statuses {
+			if st.LastCheckCycle == nil || oldestID == "" || st.LastCheckCycle.Before(oldestTime) {
+				oldestID = id
+				if st.LastCheckCycle != nil {
+					oldestTime = *st.LastCheckCycle
+				}
+			}
+		}
+		if oldestID != "" {
+			_ = m.disableLocked(oldestID)
+			delete(m.configs, oldestID)
+			delete(m.statuses, oldestID)
+			delete(m.checkResults, oldestID)
+			delete(m.events, oldestID)
+			delete(m.escalationState, oldestID)
+		}
 	}
 
 	m.configs[config.ID] = &config
@@ -306,8 +333,12 @@ func (m *OperatorManager) HandleCheckResult(configID string, result HealthCheckR
 	defer m.mu.Unlock()
 
 	m.checkResults[configID] = append(m.checkResults[configID], result)
-	if len(m.checkResults[configID]) > config.MaxRecentResults {
-		m.checkResults[configID] = m.checkResults[configID][len(m.checkResults[configID])-config.MaxRecentResults:]
+	maxCR := m.maxCheckResults
+	if maxCR <= 0 {
+		maxCR = 100
+	}
+	if len(m.checkResults[configID]) > maxCR {
+		m.checkResults[configID] = m.checkResults[configID][len(m.checkResults[configID])-maxCR:]
 	}
 
 	severity := "info"
@@ -565,8 +596,12 @@ func (m *OperatorManager) AddEvent(configID string, eventType string, details st
 
 func (m *OperatorManager) appendEventLocked(configID string, event OperatorEvent) {
 	m.events[configID] = append(m.events[configID], event)
-	if len(m.events[configID]) > config.MaxEvents {
-		m.events[configID] = m.events[configID][len(m.events[configID])-config.MaxEvents:]
+	maxE := m.maxEvents
+	if maxE <= 0 {
+		maxE = 1000
+	}
+	if len(m.events[configID]) > maxE {
+		m.events[configID] = m.events[configID][len(m.events[configID])-maxE:]
 	}
 }
 

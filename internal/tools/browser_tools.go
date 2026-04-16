@@ -18,9 +18,10 @@ type browserContextEntry struct {
 }
 
 var (
-	browserCtxMu sync.RWMutex
-	browserCtxs  map[string]*browserContextEntry
-	browserOnce  sync.Once
+	browserCtxMu   sync.RWMutex
+	browserCtxs    map[string]*browserContextEntry
+	browserOnce    sync.Once
+	maxBrowserCtxs = 50
 )
 
 func init() {
@@ -70,6 +71,22 @@ func getOrCreateBrowserContext(sessionID string) (*browserContextEntry, error) {
 	if entry, ok := browserCtxs[sessionID]; ok {
 		entry.lastUsed = time.Now()
 		return entry, nil
+	}
+
+	if len(browserCtxs) >= maxBrowserCtxs {
+		var oldestID string
+		var oldestTime time.Time
+		for id, e := range browserCtxs {
+			if oldestID == "" || e.lastUsed.Before(oldestTime) {
+				oldestID = id
+				oldestTime = e.lastUsed
+			}
+		}
+		if oldestID != "" {
+			browserCtxs[oldestID].cancel()
+			delete(browserCtxs, oldestID)
+			slog.Debug("browser: evicted oldest context to make room", "evicted_id", oldestID)
+		}
 	}
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
