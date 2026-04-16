@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/permissions"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type BashTool struct {
@@ -180,9 +181,9 @@ func (t *BashTool) executeBackground(ctx context.Context, cmdStr, workdir string
 		return nil, &Error{Code: "BACKGROUND_START_ERROR", Message: err.Error()}
 	}
 
-	go func() {
+	utils.Go(func() {
 		cmd.Wait()
-	}()
+	})
 
 	return &BashToolResult{
 		Stdout:           "",

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 var (
@@ -116,7 +118,7 @@ func (cs *CodeSandbox) executePython(ctx context.Context, code string, toolHandl
 	rpcCtx, rpcCancel := context.WithCancel(ctx)
 	defer rpcCancel()
 
-	go cs.serveRPC(rpcCtx, listener, toolHandler)
+	utils.Go(func() { cs.serveRPC(rpcCtx, listener, toolHandler) })
 
 	cmd := exec.CommandContext(ctx, "python3", scriptPath)
 	cmd.Dir = cs.config.WorkDir
@@ -136,17 +138,17 @@ func (cs *CodeSandbox) executePython(ctx context.Context, code string, toolHandl
 	var stdout strings.Builder
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
+	utils.Go(func() {
 		defer wg.Done()
 		io.Copy(&stdout, stdoutPipe)
-	}()
-	go io.Copy(io.Discard, stderrPipe)
+	})
+	utils.Go(func() { io.Copy(io.Discard, stderrPipe) })
 
 	done := make(chan error, 1)
-	go func() {
+	utils.Go(func() {
 		wg.Wait()
 		done <- cmd.Wait()
-	}()
+	})
 
 	var exitCode int
 	timedOut := false
@@ -260,7 +262,7 @@ func (cs *CodeSandbox) serveRPC(ctx context.Context, listener net.Listener, tool
 			return
 		}
 
-		go cs.handleConn(ctx, conn, toolHandler)
+		utils.Go(func() { cs.handleConn(ctx, conn, toolHandler) })
 	}
 }
 

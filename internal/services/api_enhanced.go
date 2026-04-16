@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -102,6 +103,12 @@ type RetryableRequest struct {
 func (r *RetryableRequest) Execute(ctx context.Context, client *http.Client) (*http.Response, error) {
 	var lastErr error
 
+	// Save body bytes once so each retry can reset the request body.
+	var bodyBytes []byte
+	if r.Body != nil {
+		bodyBytes = r.Body
+	}
+
 	for attempt := 0; attempt <= r.RetryConfig.MaxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, r.Method, r.URL, nil)
 		if err != nil {
@@ -112,8 +119,12 @@ func (r *RetryableRequest) Execute(ctx context.Context, client *http.Client) (*h
 			req.Header.Set(k, v)
 		}
 
-		if r.Body != nil {
-			req.Body = nil
+		if bodyBytes != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			req.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+			req.ContentLength = int64(len(bodyBytes))
 		}
 
 		resp, err := client.Do(req)
