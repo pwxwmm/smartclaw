@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -215,80 +216,5 @@ func Panic(format string, args ...any) {
 }
 
 func sprintf(format string, args ...any) string {
-	if len(args) == 0 {
-		return format
-	}
-	// Use fmt.Sprintf-like behavior
-	return fmtSprintf(format, args...)
-}
-
-func fmtSprintf(format string, args ...any) string {
-	// Simple implementation to avoid importing fmt at package level
-	// which could cause import cycle issues
-	result := make([]byte, 0, len(format)*2)
-	argIdx := 0
-	for i := 0; i < len(format); i++ {
-		if format[i] == '%' && i+1 < len(format) && argIdx < len(args) {
-			switch format[i+1] {
-			case 's':
-				if s, ok := args[argIdx].(string); ok {
-					result = append(result, s...)
-				} else {
-					result = append(result, args[argIdx].(fmtStringer).String()...)
-				}
-				argIdx++
-				i++
-			case 'd':
-				result = append(result, intToStr(args[argIdx].(int))...)
-				argIdx++
-				i++
-			case 'v':
-				result = append(result, anyToStr(args[argIdx])...)
-				argIdx++
-				i++
-			default:
-				result = append(result, format[i])
-			}
-		} else {
-			result = append(result, format[i])
-		}
-	}
-	return string(result)
-}
-
-type fmtStringer interface{ String() string }
-
-func intToStr(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := false
-	if n < 0 {
-		neg = true
-		n = -n
-	}
-	digits := make([]byte, 0, 20)
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	if neg {
-		digits = append([]byte{'-'}, digits...)
-	}
-	return string(digits)
-}
-
-func anyToStr(v any) string {
-	switch val := v.(type) {
-	case string:
-		return val
-	case int:
-		return intToStr(val)
-	case error:
-		return val.Error()
-	case fmtStringer:
-		return val.String()
-	default:
-		return "<?>"
-	}
+	return fmt.Sprintf(format, args...)
 }

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,9 +102,9 @@ func (ta *TelegramAdapter) Run() error {
 			slog.Info("telegram: received message", "chat_id", chatID, "length", len(text))
 
 			if ta.gateway != nil {
-				ctx := func() {}
-				_ = ctx
-				resp, err := ta.gateway.HandleMessage(nil, userID, "telegram", text)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				resp, err := ta.gateway.HandleMessage(ctx, userID, "telegram", text)
 				if err != nil {
 					slog.Warn("telegram: gateway error", "error", err)
 					ta.sendMessage(chatID, fmt.Sprintf("Error: %v", err))
