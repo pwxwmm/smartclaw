@@ -3,9 +3,12 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"log/slog"
 )
@@ -71,6 +74,11 @@ func (she *SelfHealingExecutor) ExecuteWithHealing(ctx context.Context, name str
 		if !she.enabled || attempt >= she.maxRetry {
 			return result
 		}
+
+		// Exponential backoff with jitter before retry
+		delay := time.Duration(math.Pow(2, float64(attempt))) * 100 * time.Millisecond
+		jitter := time.Duration(rand.Int63n(int64(delay / 2)))
+		time.Sleep(delay + jitter)
 
 		strategy := she.diagnose(name, err, currentInput)
 		result.Strategy = strategy
