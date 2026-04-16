@@ -12,7 +12,6 @@ require (
 	github.com/chromedp/chromedp v0.15.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/muesli/termenv v0.16.0
 	github.com/openai/openai-go/v3 v3.31.0
@@ -27,6 +26,7 @@ require (
 	golang.org/x/term v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.48.2
+	nhooyr.io/websocket v1.8.17
 )
 
 require (
