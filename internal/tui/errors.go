@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	apperrors "github.com/instructkr/smartclaw/internal/errors"
 )
 
 type ErrorType int
@@ -134,4 +136,37 @@ func (e *SmartError) FormatError() string {
 
 func FormatSimpleError(message string) string {
 	return fmt.Sprintf("✗ %s", message)
+}
+
+func (e *SmartError) ToAppError() *apperrors.AppError {
+	var category apperrors.Category
+	var code string
+
+	switch e.Type {
+	case ErrorTypeNetwork:
+		category = apperrors.CategoryNetwork
+		code = "TUI_NETWORK"
+	case ErrorTypeAPI:
+		category = apperrors.CategoryAuth
+		code = "TUI_API"
+	case ErrorTypeConfig:
+		category = apperrors.CategoryConfig
+		code = "TUI_CONFIG"
+	case ErrorTypePermission:
+		category = apperrors.CategorySecurity
+		code = "TUI_PERMISSION"
+	case ErrorTypeTimeout:
+		category = apperrors.CategoryNetwork
+		code = "TUI_TIMEOUT"
+	case ErrorTypeQuota:
+		category = apperrors.CategoryQuota
+		code = "TUI_QUOTA"
+	default:
+		category = apperrors.CategoryInternal
+		code = "TUI_UNKNOWN"
+	}
+
+	return apperrors.New(code, e.Message,
+		apperrors.WithCategory(category),
+		apperrors.WithRetryable(e.Retryable))
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	apperrors "github.com/instructkr/smartclaw/internal/errors"
 	_ "modernc.org/sqlite"
 )
 
@@ -132,7 +133,9 @@ func (s *Store) WriteWithRetryContext(ctx context.Context, query string, args ..
 				time.Sleep(jitter)
 				continue
 			}
-			return fmt.Errorf("store: exec: %w", err)
+			return apperrors.Wrap(err, "DB_EXEC_FAILED", "database exec failed",
+				apperrors.WithCategory(apperrors.CategoryInternal),
+				apperrors.WithRetryable(true))
 		}
 
 		if _, err := s.db.ExecContext(ctx, "COMMIT"); err != nil {
@@ -146,7 +149,9 @@ func (s *Store) WriteWithRetryContext(ctx context.Context, query string, args ..
 
 		return nil
 	}
-	return fmt.Errorf("store: max retries exceeded for query")
+	return apperrors.New("DB_MAX_RETRIES", "store: max retries exceeded for query",
+		apperrors.WithCategory(apperrors.CategoryInternal),
+		apperrors.WithRetryable(true))
 }
 
 func isLockedError(err error) bool {
