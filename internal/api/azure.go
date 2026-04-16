@@ -13,7 +13,7 @@ func NewAzureClient(apiKey, resource, deployment string) *Client {
 		Model:           deployment,
 		IsOpenAI:        true,
 		ProviderHeaders: map[string]string{},
-		HTTPClient:      defaultHTTPClient(),
+		HTTPClient:      defaultHTTPClient("azure"),
 		openaiSDKClient: newAzureSDKClient(apiKey, endpoint, deployment),
 	}
 }

@@ -59,7 +59,7 @@ func NewGoogleClient(apiKey, model string) *Client {
 		Model:      model,
 		IsOpenAI:   false,
 		IsGoogle:   true,
-		HTTPClient: defaultHTTPClient(),
+		HTTPClient: defaultHTTPClient("google"),
 	}
 }
 
