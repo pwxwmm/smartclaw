@@ -51,6 +51,31 @@ func (ss *SessionSearch) Search(ctx context.Context, query string, limit int) ([
 	return fragments, nil
 }
 
+func (ss *SessionSearch) SearchByUser(ctx context.Context, query string, userID string, limit int) ([]SessionFragment, error) {
+	if ss.store == nil || query == "" {
+		return nil, nil
+	}
+
+	results, err := ss.store.SearchMessagesByUser(query, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("session search by user: %w", err)
+	}
+
+	fragments := make([]SessionFragment, 0, len(results))
+	for _, r := range results {
+		fragments = append(fragments, SessionFragment{
+			SessionID:  r.SessionID,
+			Timestamp:  r.Timestamp,
+			Role:       r.Role,
+			Content:    r.Content,
+			Relevance:  r.Rank,
+			SourceTurn: int(r.ID),
+		})
+	}
+
+	return fragments, nil
+}
+
 func (ss *SessionSearch) SearchAndSummarize(ctx context.Context, query string, maxTokens int, summarizeFunc func(fragments []SessionFragment, query string, maxTokens int) (string, error)) (string, error) {
 	fragments, err := ss.Search(ctx, query, 10)
 	if err != nil {

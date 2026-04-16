@@ -97,6 +97,49 @@ func (s *Store) SearchMessages(query string, limit int) ([]*SearchResult, error)
 	return results, nil
 }
 
+func (s *Store) SearchMessagesByUser(query string, userID string, limit int) ([]*SearchResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if query == "" {
+		return nil, nil
+	}
+
+	if userID == "" || userID == "default" {
+		return s.SearchMessages(query, limit)
+	}
+
+	rows, err := s.db.Query(`
+		SELECT m.id, m.session_id, m.role, m.content, m.timestamp, f.rank
+		FROM messages_fts f
+		JOIN messages m ON m.id = f.rowid
+		JOIN sessions s ON m.session_id = s.id
+		WHERE messages_fts MATCH ? AND s.user_id = ?
+		ORDER BY f.rank
+		LIMIT ?
+	`, query, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: search messages by user: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*SearchResult
+	for rows.Next() {
+		r := &SearchResult{}
+		var ts sql.NullString
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Role, &r.Content, &ts, &r.Rank); err != nil {
+			return nil, fmt.Errorf("store: scan search result: %w", err)
+		}
+		if t, err := time.Parse("2006-01-02 15:04:05", val(ts)); err == nil {
+			r.Timestamp = t
+		}
+		results = append(results, r)
+	}
+
+	return results, nil
+}
+
 func (s *Store) GetMessageCount(sessionID string) (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE session_id = ?`, sessionID).Scan(&count)
@@ -104,6 +147,25 @@ func (s *Store) GetMessageCount(sessionID string) (int, error) {
 		return 0, fmt.Errorf("store: message count: %w", err)
 	}
 	return count, nil
+}
+
+func (s *Store) GetMessageCountsBatch() (map[string]int64, error) {
+	rows, err := s.db.Query("SELECT session_id, COUNT(*) FROM messages GROUP BY session_id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int64)
+	for rows.Next() {
+		var sessionID string
+		var count int64
+		if err := rows.Scan(&sessionID, &count); err != nil {
+			continue
+		}
+		counts[sessionID] = count
+	}
+	return counts, nil
 }
 
 func (s *Store) GetRecentMessages(sessionID string, limit int) ([]*Message, error) {

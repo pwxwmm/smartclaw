@@ -23,6 +23,7 @@ type Message struct {
 
 type Session struct {
 	ID        string    `json:"id"`
+	UserID    string    `json:"user_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Messages  []Message `json:"messages"`
@@ -32,6 +33,10 @@ type Session struct {
 	Title     string    `json:"title"`
 }
 
+// Manager manages sessions using JSON file storage.
+//
+// Deprecated: Use store.Store for SQLite-backed session management.
+// This type is kept for backward compatibility and will be removed in a future version.
 type Manager struct {
 	sessionsDir string
 }
@@ -53,10 +58,11 @@ func NewManager() (*Manager, error) {
 	}, nil
 }
 
-func (m *Manager) NewSession(model string) *Session {
+func (m *Manager) NewSession(model string, userID string) *Session {
 	now := time.Now()
 	return &Session{
 		ID:        generateSessionID(),
+		UserID:    userID,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Messages:  make([]Message, 0),
@@ -106,6 +112,7 @@ func (m *Manager) Load(sessionID string) (*Session, error) {
 
 type SessionInfo struct {
 	ID           string
+	UserID       string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	MessageCount int
@@ -135,6 +142,7 @@ func (m *Manager) List() ([]SessionInfo, error) {
 
 		sessions = append(sessions, SessionInfo{
 			ID:           session.ID,
+			UserID:       session.UserID,
 			CreatedAt:    session.CreatedAt,
 			UpdatedAt:    session.UpdatedAt,
 			MessageCount: len(session.Messages),
@@ -159,6 +167,89 @@ func (m *Manager) Delete(sessionID string) error {
 	}
 
 	return nil
+}
+
+// ListByUser returns sessions owned by the given userID.
+// Sessions with no UserID (empty string) are included for all users.
+func (m *Manager) ListByUser(userID string) ([]SessionInfo, error) {
+	all, err := m.List()
+	if err != nil {
+		return nil, err
+	}
+	var filtered []SessionInfo
+	for _, s := range all {
+		if s.UserID == "" || s.UserID == userID {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered, nil
+}
+
+const (
+	// DefaultSessionTTL is the default time-to-live for sessions (30 days).
+	DefaultSessionTTL = 30 * 24 * time.Hour
+	// CleanupInterval is how often the background cleanup goroutine runs.
+	CleanupInterval = 1 * time.Hour
+)
+
+// CleanExpired removes sessions whose UpdatedAt is older than the TTL.
+// Returns the number of sessions cleaned.
+func (m *Manager) CleanExpired(ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		ttl = DefaultSessionTTL
+	}
+
+	files, err := os.ReadDir(m.sessionsDir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read sessions directory: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cleaned := 0
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		sessionID := strings.TrimSuffix(file.Name(), ".json")
+		session, err := m.Load(sessionID)
+		if err != nil {
+			continue
+		}
+
+		if session.UpdatedAt.Before(cutoff) {
+			if err := m.Delete(sessionID); err == nil {
+				cleaned++
+			}
+		}
+	}
+
+	return cleaned, nil
+}
+
+// StartCleanup starts a background goroutine that periodically cleans expired sessions.
+// Returns a stop function that should be called on shutdown.
+func (m *Manager) StartCleanup(ttl time.Duration) func() {
+	stopCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(CleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleaned, err := m.CleanExpired(ttl)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Session cleanup error: %v\n", err)
+				} else if cleaned > 0 {
+					fmt.Fprintf(os.Stderr, "Cleaned %d expired sessions\n", cleaned)
+				}
+			case <-stopCh:
+				return
+			}
+		}
+	}()
+	return func() { close(stopCh) }
 }
 
 func (m *Manager) Export(sessionID string, format string) (string, error) {
@@ -208,6 +299,16 @@ func generateSessionID() string {
 	timestamp := time.Now().Format("20060102_150405")
 	uniqueID := uuid.New().String()[:8]
 	return fmt.Sprintf("%s_%s", timestamp, uniqueID)
+}
+
+func (m *Manager) Rename(sessionID, title string) error {
+	sess, err := m.Load(sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to load session for rename: %w", err)
+	}
+	sess.Title = title
+	sess.UpdatedAt = time.Now()
+	return m.Save(sess)
 }
 
 func (m *Manager) GetSessionsDir() string {

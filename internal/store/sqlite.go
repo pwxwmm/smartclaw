@@ -58,6 +58,10 @@ func NewStoreWithDir(dir string) (*Store, error) {
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
 
+	if err := MigrateUserObservationsUserID(db); err != nil {
+		slog.Warn("store: user_observations migration failed", "error", err)
+	}
+
 	s.db = db
 	slog.Info("store: opened SQLite database", "path", dbPath)
 	return s, nil

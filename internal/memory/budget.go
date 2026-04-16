@@ -10,6 +10,7 @@ const (
 	LayerUserModel     LayerName = "user_model"
 	LayerSkills        LayerName = "skills"
 	LayerSessionSearch LayerName = "session_search"
+	LayerIncident      LayerName = "incident"
 )
 
 type BudgetLayer struct {
@@ -47,7 +48,8 @@ func DefaultContextBudget() ContextBudget {
 			{Name: LayerUser, Weight: 0.10, MinChars: 0, MaxChars: 1000},
 			{Name: LayerUserModel, Weight: 0.05, MinChars: 0, MaxChars: 500},
 			{Name: LayerSkills, Weight: 0.10, MinChars: 0, MaxChars: 800},
-			{Name: LayerSessionSearch, Weight: 0.30, MinChars: 0, MaxChars: 2000},
+			{Name: LayerSessionSearch, Weight: 0.25, MinChars: 0, MaxChars: 2000},
+			{Name: LayerIncident, Weight: 0.05, MinChars: 0, MaxChars: 2000},
 		},
 	}
 }

@@ -1,3 +1,5 @@
+// Package moreright is a stub completion service.
+// Deprecated: This package is a stub and will be removed in a future version.
 package moreright
 
 import (

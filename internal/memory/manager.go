@@ -20,14 +20,15 @@ type MemorySnapshot struct {
 }
 
 type MemoryManager struct {
-	promptMemory  *layers.PromptMemory
-	sessionSearch *layers.SessionSearch
-	skillMemory   *layers.SkillProceduralMemory
-	userModel     *layers.UserModelingLayer
-	dataStore     *store.Store
-	soulMD        *layers.ManagedFile
-	agentsMD      *layers.ManagedFile
-	baseDir       string
+	promptMemory   *layers.PromptMemory
+	sessionSearch  *layers.SessionSearch
+	skillMemory    *layers.SkillProceduralMemory
+	userModel      *layers.UserModelingLayer
+	incidentMemory *layers.IncidentMemory
+	dataStore      *store.Store
+	soulMD         *layers.ManagedFile
+	agentsMD       *layers.ManagedFile
+	baseDir        string
 
 	snapshots map[string]*MemorySnapshot
 	snapMu    sync.RWMutex
@@ -95,6 +96,7 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 	if s != nil {
 		mm.sessionSearch = layers.NewSessionSearch(s)
 		mm.userModel = layers.NewUserModelingLayer(s, pm)
+		mm.incidentMemory = layers.NewIncidentMemory(s)
 	}
 
 	return mm, nil
@@ -160,6 +162,16 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 			observability.RecordMemoryLayerSize("user_model", len(honchoBlock))
 			observability.EndSpan(span)
 		}
+	}
+
+	if mm.incidentMemory != nil {
+		_, span := observability.StartSpan(ctx, "memory.layer.incident")
+		incidentPrompt := mm.incidentMemory.BuildIncidentPrompt()
+		if incidentPrompt != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerIncident, Content: incidentPrompt})
+			observability.RecordMemoryLayerSize("incident", len(incidentPrompt))
+		}
+		observability.EndSpan(span)
 	}
 
 	if mm.skillMemory != nil {
@@ -296,6 +308,14 @@ func (mm *MemoryManager) BuildSystemContextWithSnapshot(ctx context.Context, cur
 		}
 	}
 
+	if mm.incidentMemory != nil {
+		incidentPrompt := mm.incidentMemory.BuildIncidentPrompt()
+		if incidentPrompt != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerIncident, Content: incidentPrompt})
+			observability.RecordMemoryLayerSize("incident", len(incidentPrompt))
+		}
+	}
+
 	if mm.skillMemory != nil {
 		skillPrompt := mm.skillMemory.BuildSkillPrompt()
 		if skillPrompt != "" {
@@ -377,6 +397,10 @@ func (mm *MemoryManager) GetUserModel() *layers.UserModelingLayer {
 	return mm.userModel
 }
 
+func (mm *MemoryManager) GetIncidentMemory() *layers.IncidentMemory {
+	return mm.incidentMemory
+}
+
 func (mm *MemoryManager) GetSoulMD() *layers.ManagedFile {
 	return mm.soulMD
 }
@@ -399,6 +423,142 @@ func (mm *MemoryManager) EnableContextAwareSkills(enabled bool) {
 
 func (mm *MemoryManager) IsContextAwareSkills() bool {
 	return mm.contextAwareSkills
+}
+
+func (mm *MemoryManager) ForUser(userID string) *UserMemory {
+	if userID == "" || userID == "default" {
+		return &UserMemory{
+			manager:       mm,
+			userID:        "default",
+			promptMemory:  mm.promptMemory,
+			sessionSearch: mm.sessionSearch,
+			userModel:     mm.userModel,
+		}
+	}
+
+	pm, err := layers.NewPromptMemoryForUser(mm.baseDir, userID)
+	if err != nil {
+		slog.Warn("memory manager: failed to create per-user prompt memory, falling back to global", "user_id", userID, "error", err)
+		pm = mm.promptMemory
+	}
+
+	var uml *layers.UserModelingLayer
+	if mm.dataStore != nil {
+		uml = layers.NewUserModelingLayerForUser(mm.dataStore, pm, userID)
+	}
+
+	return &UserMemory{
+		manager:       mm,
+		userID:        userID,
+		promptMemory:  pm,
+		sessionSearch: mm.sessionSearch,
+		userModel:     uml,
+	}
+}
+
+type UserMemory struct {
+	manager       *MemoryManager
+	userID        string
+	promptMemory  *layers.PromptMemory
+	sessionSearch *layers.SessionSearch
+	userModel     *layers.UserModelingLayer
+}
+
+func (um *UserMemory) BuildPrompt() string {
+	return um.promptMemory.AutoLoad()
+}
+
+func (um *UserMemory) Search(ctx context.Context, query string, limit int) ([]layers.SessionFragment, error) {
+	return um.sessionSearch.SearchByUser(ctx, query, um.userID, limit)
+}
+
+func (um *UserMemory) GetPromptMemory() *layers.PromptMemory {
+	return um.promptMemory
+}
+
+func (um *UserMemory) GetUserModel() *layers.UserModelingLayer {
+	return um.userModel
+}
+
+func (um *UserMemory) UserID() string {
+	return um.userID
+}
+
+func (um *UserMemory) BuildSystemContext(ctx context.Context, currentQuery string) string {
+	return um.manager.buildSystemContextForUser(ctx, currentQuery, um)
+}
+
+func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQuery string, um *UserMemory) string {
+	ctx, buildSpan := observability.StartSpan(ctx, "memory.build_context_user")
+	defer observability.EndSpan(buildSpan)
+
+	var layerContents []LayerContent
+
+	if mm.soulMD != nil && mm.soulMD.Content() != "" {
+		layerContents = append(layerContents, LayerContent{Name: LayerSOUL, Content: mm.soulMD.Content()})
+	}
+
+	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
+		layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: mm.agentsMD.Content()})
+	}
+
+	memoryContent := um.promptMemory.GetMemoryContent()
+	if memoryContent != "" {
+		layerContents = append(layerContents, LayerContent{Name: LayerMemory, Content: memoryContent})
+	}
+
+	userContent := um.promptMemory.GetUserContent()
+	if userContent != "" {
+		layerContents = append(layerContents, LayerContent{Name: LayerUser, Content: userContent})
+	}
+
+	if um.userModel != nil {
+		honchoBlock := um.userModel.BuildStaticBlock()
+		if honchoBlock != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerUserModel, Content: honchoBlock})
+		}
+	}
+
+	if mm.incidentMemory != nil {
+		incidentPrompt := mm.incidentMemory.BuildIncidentPrompt()
+		if incidentPrompt != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerIncident, Content: incidentPrompt})
+		}
+	}
+
+	if mm.skillMemory != nil {
+		var skillPrompt string
+		if mm.contextAwareSkills && mm.skillInjector != nil {
+			hint := layers.ContextHint{
+				Keywords: extractKeywords(currentQuery),
+			}
+			skillPrompt = mm.skillInjector.BuildContextAwarePrompt(hint, 5)
+		} else {
+			skillPrompt = mm.skillMemory.BuildSkillPrompt()
+		}
+		if skillPrompt != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerSkills, Content: skillPrompt})
+		}
+	}
+
+	if um.sessionSearch != nil && currentQuery != "" {
+		fragments, err := um.sessionSearch.SearchByUser(ctx, currentQuery, um.userID, 5)
+		if err != nil {
+			slog.Warn("memory manager: per-user session search failed", "error", err)
+		} else if len(fragments) > 0 {
+			content := layers.FormatFragmentsStatic(fragments, 1000)
+			layerContents = append(layerContents, LayerContent{Name: LayerSessionSearch, Content: content})
+		}
+	}
+
+	allocated := mm.budget.Allocate(layerContents)
+
+	var parts []string
+	for _, a := range allocated {
+		parts = append(parts, a.Content)
+	}
+
+	return joinParts(parts)
 }
 
 func (mm *MemoryManager) Close() error {
@@ -479,6 +639,17 @@ func buildBundledSkillSummaries() map[string]*layers.SkillSummary {
 		"claude-api":     {Name: "claude-api", Description: "Work with Claude API directly", Tags: []string{"api", "claude", "integration"}, Triggers: []string{"/claude-api", "/api-call"}},
 		"keybindings":    {Name: "keybindings", Description: "Manage and configure keybindings", Tags: []string{"keybindings", "configuration", "shortcuts"}, Triggers: []string{"/keybindings", "/keys", "/shortcuts"}},
 		"update-config":  {Name: "update-config", Description: "Update and manage configuration", Tags: []string{"configuration", "settings", "management"}, Triggers: []string{"/update-config", "/config", "/settings"}},
+
+		"sre-incident-triage": {Name: "sre-incident-triage", Description: "Triage active incidents: assess severity, identify affected services, determine priority", Tags: []string{"sre", "incident", "triage"}, Triggers: []string{"/triage", "/incident-triage"}},
+		"sre-root-cause":      {Name: "sre-root-cause", Description: "Root cause analysis: correlate logs, metrics, and timeline events", Tags: []string{"sre", "rca", "investigation"}, Triggers: []string{"/rca", "/root-cause"}},
+		"sre-remediation":     {Name: "sre-remediation", Description: "Execute remediation runbooks: restart services, scale resources, apply fixes", Tags: []string{"sre", "remediation", "runbook"}, Triggers: []string{"/remediate", "/runbook"}},
+		"sre-verify":          {Name: "sre-verify", Description: "Verify remediation: confirm service health, check SLOs, validate fix", Tags: []string{"sre", "verification", "slo"}, Triggers: []string{"/verify-remediation", "/check-slo"}},
+		"sre-postmortem":      {Name: "sre-postmortem", Description: "Generate postmortem: document timeline, root cause, action items", Tags: []string{"sre", "postmortem", "review"}, Triggers: []string{"/postmortem", "/incident-review"}},
+		"sre-node-inspect":    {Name: "sre-node-inspect", Description: "Inspect node: check logs, tasks, and system status", Tags: []string{"sre", "node", "inspect"}, Triggers: []string{"/inspect-node", "/node-status"}},
+		"sre-deploy-monitor":  {Name: "sre-deploy-monitor", Description: "Monitor deployment: track task progress, check node health", Tags: []string{"sre", "deployment", "monitoring"}, Triggers: []string{"/monitor-deploy", "/deploy-status"}},
+		"sre-audit-review":    {Name: "sre-audit-review", Description: "Review audit: evaluate change safety, approve or reject", Tags: []string{"sre", "audit", "review"}, Triggers: []string{"/review-audit", "/audit-approve"}},
+		"sre-capacity":        {Name: "sre-capacity", Description: "Capacity review: analyze resource utilization, predict exhaustion", Tags: []string{"sre", "capacity", "resources"}, Triggers: []string{"/capacity", "/resource-check"}},
+		"sre-hardware":        {Name: "sre-hardware", Description: "Hardware management: check warranty, initiate replacement", Tags: []string{"sre", "hardware", "warranty"}, Triggers: []string{"/hardware", "/warranty"}},
 	}
 
 	summaries := make(map[string]*layers.SkillSummary, len(defs))
