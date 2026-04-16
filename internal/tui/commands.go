@@ -19,6 +19,19 @@ import (
 	"github.com/instructkr/smartclaw/internal/tools"
 )
 
+type slashCommandHandler func(m *Model, args []string) tea.Cmd
+
+var slashCommands = map[string]slashCommandHandler{}
+
+var slashCommandAliases = map[string]string{}
+
+func registerSlashCommand(name string, handler slashCommandHandler, aliases ...string) {
+	slashCommands[name] = handler
+	for _, alias := range aliases {
+		slashCommandAliases[alias] = name
+	}
+}
+
 func initColorProfile() {
 	// 自动检测终端颜色能力，如果检测失败则强制启用 TrueColor
 	profile := termenv.ColorProfile()
@@ -86,6 +99,455 @@ func StartTUIWithClient(client *api.Client) error {
 	return nil
 }
 
+func cmdHelp(m *Model, args []string) tea.Cmd {
+	m.showHelp = !m.showHelp
+	AddOutput(m, m.formatAssistantOutput("Help toggled. Press Ctrl+H to toggle again."))
+	return nil
+}
+
+func cmdStatus(m *Model, args []string) tea.Cmd {
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+		"Model: %s\nTokens: %d\nCost: $%.4f\nMode: %s\nTheme: %s",
+		m.model, m.tokens, m.cost, m.mode, m.theme.Name)))
+	return nil
+}
+
+func cmdClear(m *Model, args []string) tea.Cmd {
+	ClearOutput(m)
+	return nil
+}
+
+func cmdQuit(m *Model, args []string) tea.Cmd {
+	return tea.Quit
+}
+
+func cmdModel(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		currentModel := m.modelManager.GetCurrentModel()
+		if currentModel != nil {
+			AddOutput(m, m.formatAssistantOutput(m.modelManager.FormatModelInfo(currentModel)))
+		} else {
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current model: %s", m.model)))
+		}
+		return nil
+	}
+
+	switch args[0] {
+	case "list", "ls":
+		AddOutput(m, m.formatAssistantOutput(m.modelManager.FormatModelList()))
+
+	case "switch", "use":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /model switch <model-id>"))
+			return nil
+		}
+		modelID := args[1]
+		if err := m.modelManager.SetCurrentModel(modelID); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to switch model: %v", err)))
+			return nil
+		}
+		m.model = modelID
+		model := m.modelManager.GetCurrentModel()
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Switched to %s\n%s", model.Name, model.Description)))
+
+	case "info":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /model info <model-id>"))
+			return nil
+		}
+		model := m.modelManager.GetModel(args[1])
+		if model == nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Model %s not found", args[1])))
+			return nil
+		}
+		AddOutput(m, m.formatAssistantOutput(m.modelManager.FormatModelInfo(model)))
+
+	case "compare":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput(
+				"Model Comparison:\n"+
+					"  /model compare <id1> <id2>  - Compare two models\n\n"+
+					"Example:\n"+
+					"  /model compare claude-sonnet-4-5 gpt-4o",
+			))
+			return nil
+		}
+		modelIDs := args[1:]
+		AddOutput(m, m.formatAssistantOutput(m.modelManager.CompareModels(modelIDs)))
+
+	default:
+		AddOutput(m, m.formatAssistantOutput(
+			"Model Management Commands:\n"+
+				"  /model              - Show current model details\n"+
+				"  /model list         - List all available models\n"+
+				"  /model switch <id>  - Switch to a different model\n"+
+				"  /model info <id>    - Show detailed model info\n"+
+				"  /model compare <ids> - Compare multiple models\n\n"+
+				"Examples:\n"+
+				"  /model switch claude-sonnet-4-5\n"+
+				"  /model compare claude-opus-4-6 gpt-4o",
+		))
+	}
+	return nil
+}
+
+func cmdCost(m *Model, args []string) tea.Cmd {
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Tokens used: %d\nEstimated cost: $%.4f", m.tokens, m.cost)))
+	return nil
+}
+
+func cmdVoice(m *Model, args []string) tea.Cmd {
+	ProcessVoiceCommand(m, args)
+	return nil
+}
+
+func cmdSession(m *Model, args []string) tea.Cmd {
+	if m.sessionManager == nil {
+		AddOutput(m, m.formatError("Session manager not initialized. Please restart SmartClaw."))
+		return nil
+	}
+
+	if m.currentSession == nil {
+		AddOutput(m, m.formatError("No active session. Creating new session..."))
+		m.currentSession = m.sessionManager.NewSession(m.model, "default")
+		return nil
+	}
+
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+			"Session Management Commands:\n"+
+				"  /session new          - Create new session\n"+
+				"  /session list         - List all sessions\n"+
+				"  /session load <id>    - Load a session\n"+
+				"  /session save         - Save current session\n"+
+				"  /session delete <id>  - Delete a session\n"+
+				"  /session export <id>  - Export session (markdown/json)\n"+
+				"  /session record start - Start recording session\n"+
+				"  /session record stop  - Stop recording session\n"+
+				"  /session record status- Show recording status\n"+
+				"  /session replay <file>- Replay a recording\n\n"+
+				"Current session: %s\n"+
+				"Messages: %d",
+			m.currentSession.ID, len(m.currentSession.Messages))))
+		return nil
+	}
+
+	switch args[0] {
+	case "new":
+		m.currentSession = m.sessionManager.NewSession(m.model, "default")
+		ClearOutput(m)
+		m.tokens = 0
+		m.cost = 0
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("New session created: %s", m.currentSession.ID)))
+
+	case "list", "ls":
+		sessions, err := m.sessionManager.List()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to list sessions: %v", err)))
+			return nil
+		}
+
+		if len(sessions) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No sessions found."))
+			return nil
+		}
+
+		var output strings.Builder
+		output.WriteString("Saved Sessions:\n\n")
+		for i, s := range sessions {
+			if i >= 10 {
+				break
+			}
+			title := s.Title
+			if title == "" {
+				title = "Untitled"
+			}
+			if len(title) > 40 {
+				title = title[:40] + "..."
+			}
+			output.WriteString(fmt.Sprintf("  %s  %s  [%d msgs]  %s\n",
+				s.ID[:16],
+				s.UpdatedAt.Format("2006-01-02 15:04"),
+				s.MessageCount,
+				title))
+		}
+		if len(sessions) > 10 {
+			output.WriteString(fmt.Sprintf("\n  ... and %d more sessions", len(sessions)-10))
+		}
+		AddOutput(m, m.formatAssistantOutput(output.String()))
+		return nil
+
+	case "load":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /session load <session-id>"))
+			return nil
+		}
+
+		sessionID := args[1]
+		sess, err := m.sessionManager.Load(sessionID)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to load session: %v", err)))
+			return nil
+		}
+
+		m.currentSession = sess
+		ClearOutput(m)
+		m.tokens = sess.Tokens
+		m.cost = sess.Cost
+		m.model = sess.Model
+
+		for _, msg := range sess.Messages {
+			if msg.Role == "user" {
+				m.output = append(m.output, m.formatUserInput(msg.Content))
+				m.rawOutput = append(m.rawOutput, "\nYou: "+msg.Content)
+			} else {
+				m.output = append(m.output, m.formatAssistantOutput(msg.Content))
+				m.rawOutput = append(m.rawOutput, "\nSmartClaw: "+msg.Content)
+			}
+		}
+
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+			"Session loaded: %s\nMessages: %d\nTokens: %d\nCost: $%.4f",
+			sess.ID, len(sess.Messages), sess.Tokens, sess.Cost)))
+
+	case "save":
+		if m.currentSession == nil {
+			AddOutput(m, m.formatError("No active session to save"))
+			return nil
+		}
+
+		if err := m.sessionManager.Save(m.currentSession); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to save session: %v", err)))
+			return nil
+		}
+
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+			"Session saved: %s\nLocation: %s/%s.json",
+			m.currentSession.ID,
+			m.sessionManager.GetSessionsDir(),
+			m.currentSession.ID)))
+
+	case "delete", "rm":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /session delete <session-id>"))
+			return nil
+		}
+
+		sessionID := args[1]
+		if err := m.sessionManager.Delete(sessionID); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to delete session: %v", err)))
+			return nil
+		}
+
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Session deleted: %s", sessionID)))
+
+	case "export":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /session export <session-id> [markdown|json]"))
+			return nil
+		}
+
+		sessionID := args[1]
+		format := "markdown"
+		if len(args) >= 3 {
+			format = args[2]
+		}
+
+		content, err := m.sessionManager.Export(sessionID, format)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to export session: %v", err)))
+			return nil
+		}
+
+		homeDir, _ := os.UserHomeDir()
+		exportPath := filepath.Join(homeDir, ".smartclaw", "exports")
+		os.MkdirAll(exportPath, 0755)
+
+		ext := "md"
+		if format == "json" {
+			ext = "json"
+		}
+		filename := fmt.Sprintf("%s_export.%s", sessionID, ext)
+		fullPath := filepath.Join(exportPath, filename)
+
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to write export file: %v", err)))
+			return nil
+		}
+
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+			"Session exported to: %s\nFormat: %s",
+			fullPath, format)))
+
+	case "record":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /session record <start|stop|status>"))
+			return nil
+		}
+
+		switch args[1] {
+		case "start":
+			if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
+				AddOutput(m, m.formatError("Already recording. Use /session record stop first."))
+				return nil
+			}
+			recorder, err := services.NewSessionRecorder("")
+			if err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to create recorder: %v", err)))
+				return nil
+			}
+			if err := recorder.Start(); err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to start recording: %v", err)))
+				return nil
+			}
+			m.sessionRecorder = recorder
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Recording started: %s", recorder.GetPath())))
+
+		case "stop":
+			if m.sessionRecorder == nil || !m.sessionRecorder.IsRecording() {
+				AddOutput(m, m.formatError("Not currently recording."))
+				return nil
+			}
+			path := m.sessionRecorder.GetPath()
+			if err := m.sessionRecorder.Stop(); err != nil {
+				AddOutput(m, m.formatError(fmt.Sprintf("Failed to stop recording: %v", err)))
+				return nil
+			}
+			m.sessionRecorder = nil
+			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Recording stopped. Saved to: %s", path)))
+
+		case "status":
+			if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
+				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
+					"Recording: active\nFile: %s\nEntries: %d",
+					m.sessionRecorder.GetPath(),
+					len(m.sessionRecorder.GetEntries()))))
+			} else {
+				AddOutput(m, m.formatAssistantOutput("Recording: inactive"))
+			}
+
+		default:
+			AddOutput(m, m.formatError("Usage: /session record <start|stop|status>"))
+		}
+
+	case "replay":
+		if len(args) < 2 {
+			AddOutput(m, m.formatError("Usage: /session replay <recording-file>"))
+			return nil
+		}
+		playback, err := services.NewPlayback(args[1])
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to open recording: %v", err)))
+			return nil
+		}
+		defer playback.Close()
+
+		if err := playback.Load(); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Failed to load recording: %v", err)))
+			return nil
+		}
+
+		entries := playback.GetAll()
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Replay: %s (%d entries)\n\n", args[1], len(entries)))
+		for _, entry := range entries {
+			role, _ := entry.Data["role"].(string)
+			content, _ := entry.Data["content"].(string)
+			if role != "" && content != "" {
+				sb.WriteString(fmt.Sprintf("[%s] %s\n", role, content))
+			} else {
+				sb.WriteString(fmt.Sprintf("[%s] %v\n", entry.Type, entry.Data))
+			}
+		}
+		AddOutput(m, m.formatAssistantOutput(sb.String()))
+
+	default:
+		AddOutput(m, m.formatError(fmt.Sprintf("Unknown session command: %s", args[0])))
+	}
+	return nil
+}
+
+func cmdAgent(m *Model, args []string) tea.Cmd {
+	ProcessAgentCommand(m, args)
+	return nil
+}
+
+func cmdTemplate(m *Model, args []string) tea.Cmd {
+	ProcessTemplateCommand(m, args)
+	return nil
+}
+
+func cmdSubagent(m *Model, args []string) tea.Cmd {
+	ProcessSubagentCommand(m, args)
+	return nil
+}
+
+func cmdMemory(m *Model, args []string) tea.Cmd {
+	ProcessMemoryCommand(m, args)
+	return nil
+}
+
+func cmdCompact(m *Model, args []string) tea.Cmd {
+	ProcessCompactCommand(m, args)
+	return nil
+}
+
+func cmdGit(m *Model, args []string) tea.Cmd {
+	ProcessGitCommand(m, args)
+	return nil
+}
+
+func cmdLSP(m *Model, args []string) tea.Cmd {
+	ProcessLSPCommand(m, args)
+	return nil
+}
+
+func cmdTeam(m *Model, args []string) tea.Cmd {
+	ProcessTeamCommand(m, args)
+	return nil
+}
+
+func cmdProvider(m *Model, args []string) tea.Cmd {
+	ProcessProviderCommand(m, args)
+	return nil
+}
+
+func cmdMCP(m *Model, args []string) tea.Cmd {
+	return ProcessMCPCommand(m, args)
+}
+
+func cmdMCPStart(m *Model, args []string) tea.Cmd {
+	return ProcessMCPStartCommand(m, args)
+}
+
+func cmdMCPStop(m *Model, args []string) tea.Cmd {
+	ProcessMCPStopCommand(m, args)
+	return nil
+}
+
+func init() {
+	registerSlashCommand("help", cmdHelp, "h")
+	registerSlashCommand("status", cmdStatus)
+	registerSlashCommand("clear", cmdClear)
+	registerSlashCommand("exit", cmdQuit, "quit", "q")
+	registerSlashCommand("model", cmdModel, "m")
+	registerSlashCommand("cost", cmdCost)
+	registerSlashCommand("voice", cmdVoice)
+	registerSlashCommand("session", cmdSession, "s")
+	registerSlashCommand("agent", cmdAgent)
+	registerSlashCommand("template", cmdTemplate)
+	registerSlashCommand("subagent", cmdSubagent)
+	registerSlashCommand("memory", cmdMemory)
+	registerSlashCommand("compact", cmdCompact)
+	registerSlashCommand("git", cmdGit)
+	registerSlashCommand("lsp", cmdLSP)
+	registerSlashCommand("team", cmdTeam)
+	registerSlashCommand("provider", cmdProvider)
+	registerSlashCommand("mcp", cmdMCP)
+	registerSlashCommand("mcp-start", cmdMCPStart)
+	registerSlashCommand("mcp-stop", cmdMCPStop)
+}
+
 func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
@@ -95,20 +557,18 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 	command := parts[0]
 	args := parts[1:]
 
+	cmdName := strings.TrimPrefix(strings.ToLower(command), "/")
+	if resolved, ok := slashCommandAliases[cmdName]; ok {
+		cmdName = resolved
+	}
+
+	if handler, ok := slashCommands[cmdName]; ok {
+		return handler(m, args)
+	}
+
 	switch command {
-	case "/help":
-		m.showHelp = !m.showHelp
-		AddOutput(m, m.formatAssistantOutput("Help toggled. Press Ctrl+H to toggle again."))
 	case "/test":
 		AddOutput(m, m.formatAssistantOutput("✓ Command processing is working! Session ID: "+m.currentSession.ID))
-	case "/status":
-		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-			"Model: %s\nTokens: %d\nCost: $%.4f\nMode: %s\nTheme: %s",
-			m.model, m.tokens, m.cost, m.mode, m.theme.Name)))
-	case "/clear":
-		ClearOutput(m)
-	case "/exit", "/quit":
-		return tea.Quit
 	case "/edit":
 		if len(args) == 0 {
 			AddOutput(m, m.formatAssistantOutput("Opening editor for new content..."))
@@ -195,75 +655,6 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 		m.textArea.SetValue(content)
 		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Updated input (%d bytes)", len(content))))
 
-	case "/model":
-		if len(args) == 0 {
-			currentModel := m.modelManager.GetCurrentModel()
-			if currentModel != nil {
-				AddOutput(m, m.formatAssistantOutput(m.modelManager.FormatModelInfo(currentModel)))
-			} else {
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Current model: %s", m.model)))
-			}
-			return nil
-		}
-
-		switch args[0] {
-		case "list", "ls":
-			AddOutput(m, m.formatAssistantOutput(m.modelManager.FormatModelList()))
-
-		case "switch", "use":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /model switch <model-id>"))
-				return nil
-			}
-			modelID := args[1]
-			if err := m.modelManager.SetCurrentModel(modelID); err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to switch model: %v", err)))
-				return nil
-			}
-			m.model = modelID
-			model := m.modelManager.GetCurrentModel()
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Switched to %s\n%s", model.Name, model.Description)))
-
-		case "info":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /model info <model-id>"))
-				return nil
-			}
-			model := m.modelManager.GetModel(args[1])
-			if model == nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Model %s not found", args[1])))
-				return nil
-			}
-			AddOutput(m, m.formatAssistantOutput(m.modelManager.FormatModelInfo(model)))
-
-		case "compare":
-			if len(args) < 2 {
-				AddOutput(m, m.formatAssistantOutput(
-					"Model Comparison:\n"+
-						"  /model compare <id1> <id2>  - Compare two models\n\n"+
-						"Example:\n"+
-						"  /model compare claude-sonnet-4-5 gpt-4o",
-				))
-				return nil
-			}
-			modelIDs := args[1:]
-			AddOutput(m, m.formatAssistantOutput(m.modelManager.CompareModels(modelIDs)))
-
-		default:
-			AddOutput(m, m.formatAssistantOutput(
-				"Model Management Commands:\n"+
-					"  /model              - Show current model details\n"+
-					"  /model list         - List all available models\n"+
-					"  /model switch <id>  - Switch to a different model\n"+
-					"  /model info <id>    - Show detailed model info\n"+
-					"  /model compare <ids> - Compare multiple models\n\n"+
-					"Examples:\n"+
-					"  /model switch claude-sonnet-4-5\n"+
-					"  /model compare claude-opus-4-6 gpt-4o",
-			))
-		}
-	case "/cost":
-		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Tokens used: %d\nEstimated cost: $%.4f", m.tokens, m.cost)))
 	case "/retry":
 		if m.lastError == nil {
 			AddOutput(m, m.formatError("No previous error to retry"))
@@ -282,8 +673,6 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 
 		AddOutput(m, m.formatAssistantOutput("Retrying last request..."))
 		return m.processInput(m.lastInput)
-	case "/voice":
-		ProcessVoiceCommand(m, args)
 	case "/theme":
 		if len(args) > 0 {
 			themeName := args[0]
@@ -434,306 +823,6 @@ func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {
 		} else {
 			AddOutput(m, m.formatAssistantOutput("Usage: /dialog [info|confirm|select]"))
 		}
-	case "/session":
-		if m.sessionManager == nil {
-			AddOutput(m, m.formatError("Session manager not initialized. Please restart SmartClaw."))
-			return nil
-		}
-
-		if m.currentSession == nil {
-			AddOutput(m, m.formatError("No active session. Creating new session..."))
-			m.currentSession = m.sessionManager.NewSession(m.model, "default")
-			return nil
-		}
-
-		if len(args) == 0 {
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-				"Session Management Commands:\n"+
-					"  /session new          - Create new session\n"+
-					"  /session list         - List all sessions\n"+
-					"  /session load <id>    - Load a session\n"+
-					"  /session save         - Save current session\n"+
-					"  /session delete <id>  - Delete a session\n"+
-					"  /session export <id>  - Export session (markdown/json)\n"+
-					"  /session record start - Start recording session\n"+
-					"  /session record stop  - Stop recording session\n"+
-					"  /session record status- Show recording status\n"+
-					"  /session replay <file>- Replay a recording\n\n"+
-					"Current session: %s\n"+
-					"Messages: %d",
-				m.currentSession.ID, len(m.currentSession.Messages))))
-			return nil
-		}
-
-		switch args[0] {
-		case "new":
-			m.currentSession = m.sessionManager.NewSession(m.model, "default")
-			ClearOutput(m)
-			m.tokens = 0
-			m.cost = 0
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("New session created: %s", m.currentSession.ID)))
-
-		case "list", "ls":
-			sessions, err := m.sessionManager.List()
-			if err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to list sessions: %v", err)))
-				return nil
-			}
-
-			if len(sessions) == 0 {
-				AddOutput(m, m.formatAssistantOutput("No sessions found."))
-				return nil
-			}
-
-			var output strings.Builder
-			output.WriteString("Saved Sessions:\n\n")
-			for i, s := range sessions {
-				if i >= 10 {
-					break
-				}
-				title := s.Title
-				if title == "" {
-					title = "Untitled"
-				}
-				if len(title) > 40 {
-					title = title[:40] + "..."
-				}
-				output.WriteString(fmt.Sprintf("  %s  %s  [%d msgs]  %s\n",
-					s.ID[:16],
-					s.UpdatedAt.Format("2006-01-02 15:04"),
-					s.MessageCount,
-					title))
-			}
-			if len(sessions) > 10 {
-				output.WriteString(fmt.Sprintf("\n  ... and %d more sessions", len(sessions)-10))
-			}
-			AddOutput(m, m.formatAssistantOutput(output.String()))
-			return nil
-
-		case "load":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /session load <session-id>"))
-				return nil
-			}
-
-			sessionID := args[1]
-			sess, err := m.sessionManager.Load(sessionID)
-			if err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to load session: %v", err)))
-				return nil
-			}
-
-			m.currentSession = sess
-			ClearOutput(m)
-			m.tokens = sess.Tokens
-			m.cost = sess.Cost
-			m.model = sess.Model
-
-			for _, msg := range sess.Messages {
-				if msg.Role == "user" {
-					m.output = append(m.output, m.formatUserInput(msg.Content))
-					m.rawOutput = append(m.rawOutput, "\nYou: "+msg.Content)
-				} else {
-					m.output = append(m.output, m.formatAssistantOutput(msg.Content))
-					m.rawOutput = append(m.rawOutput, "\nSmartClaw: "+msg.Content)
-				}
-			}
-
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-				"Session loaded: %s\nMessages: %d\nTokens: %d\nCost: $%.4f",
-				sess.ID, len(sess.Messages), sess.Tokens, sess.Cost)))
-
-		case "save":
-			if m.currentSession == nil {
-				AddOutput(m, m.formatError("No active session to save"))
-				return nil
-			}
-
-			if err := m.sessionManager.Save(m.currentSession); err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to save session: %v", err)))
-				return nil
-			}
-
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-				"Session saved: %s\nLocation: %s/%s.json",
-				m.currentSession.ID,
-				m.sessionManager.GetSessionsDir(),
-				m.currentSession.ID)))
-
-		case "delete", "rm":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /session delete <session-id>"))
-				return nil
-			}
-
-			sessionID := args[1]
-			if err := m.sessionManager.Delete(sessionID); err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to delete session: %v", err)))
-				return nil
-			}
-
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Session deleted: %s", sessionID)))
-
-		case "export":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /session export <session-id> [markdown|json]"))
-				return nil
-			}
-
-			sessionID := args[1]
-			format := "markdown"
-			if len(args) >= 3 {
-				format = args[2]
-			}
-
-			content, err := m.sessionManager.Export(sessionID, format)
-			if err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to export session: %v", err)))
-				return nil
-			}
-
-			homeDir, _ := os.UserHomeDir()
-			exportPath := filepath.Join(homeDir, ".smartclaw", "exports")
-			os.MkdirAll(exportPath, 0755)
-
-			ext := "md"
-			if format == "json" {
-				ext = "json"
-			}
-			filename := fmt.Sprintf("%s_export.%s", sessionID, ext)
-			fullPath := filepath.Join(exportPath, filename)
-
-			if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to write export file: %v", err)))
-				return nil
-			}
-
-			AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-				"Session exported to: %s\nFormat: %s",
-				fullPath, format)))
-
-		case "record":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /session record <start|stop|status>"))
-				return nil
-			}
-
-			switch args[1] {
-			case "start":
-				if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
-					AddOutput(m, m.formatError("Already recording. Use /session record stop first."))
-					return nil
-				}
-				recorder, err := services.NewSessionRecorder("")
-				if err != nil {
-					AddOutput(m, m.formatError(fmt.Sprintf("Failed to create recorder: %v", err)))
-					return nil
-				}
-				if err := recorder.Start(); err != nil {
-					AddOutput(m, m.formatError(fmt.Sprintf("Failed to start recording: %v", err)))
-					return nil
-				}
-				m.sessionRecorder = recorder
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Recording started: %s", recorder.GetPath())))
-
-			case "stop":
-				if m.sessionRecorder == nil || !m.sessionRecorder.IsRecording() {
-					AddOutput(m, m.formatError("Not currently recording."))
-					return nil
-				}
-				path := m.sessionRecorder.GetPath()
-				if err := m.sessionRecorder.Stop(); err != nil {
-					AddOutput(m, m.formatError(fmt.Sprintf("Failed to stop recording: %v", err)))
-					return nil
-				}
-				m.sessionRecorder = nil
-				AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Recording stopped. Saved to: %s", path)))
-
-			case "status":
-				if m.sessionRecorder != nil && m.sessionRecorder.IsRecording() {
-					AddOutput(m, m.formatAssistantOutput(fmt.Sprintf(
-						"Recording: active\nFile: %s\nEntries: %d",
-						m.sessionRecorder.GetPath(),
-						len(m.sessionRecorder.GetEntries()))))
-				} else {
-					AddOutput(m, m.formatAssistantOutput("Recording: inactive"))
-				}
-
-			default:
-				AddOutput(m, m.formatError("Usage: /session record <start|stop|status>"))
-			}
-
-		case "replay":
-			if len(args) < 2 {
-				AddOutput(m, m.formatError("Usage: /session replay <recording-file>"))
-				return nil
-			}
-			playback, err := services.NewPlayback(args[1])
-			if err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to open recording: %v", err)))
-				return nil
-			}
-			defer playback.Close()
-
-			if err := playback.Load(); err != nil {
-				AddOutput(m, m.formatError(fmt.Sprintf("Failed to load recording: %v", err)))
-				return nil
-			}
-
-			entries := playback.GetAll()
-			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Replay: %s (%d entries)\n\n", args[1], len(entries)))
-			for _, entry := range entries {
-				role, _ := entry.Data["role"].(string)
-				content, _ := entry.Data["content"].(string)
-				if role != "" && content != "" {
-					sb.WriteString(fmt.Sprintf("[%s] %s\n", role, content))
-				} else {
-					sb.WriteString(fmt.Sprintf("[%s] %v\n", entry.Type, entry.Data))
-				}
-			}
-			AddOutput(m, m.formatAssistantOutput(sb.String()))
-
-		default:
-			AddOutput(m, m.formatError(fmt.Sprintf("Unknown session command: %s", args[0])))
-		}
-
-	case "/agent":
-		ProcessAgentCommand(m, args)
-
-	case "/template":
-		ProcessTemplateCommand(m, args)
-
-	case "/subagent":
-		ProcessSubagentCommand(m, args)
-
-	case "/memory":
-		ProcessMemoryCommand(m, args)
-
-	case "/compact":
-		ProcessCompactCommand(m, args)
-
-	case "/git":
-		ProcessGitCommand(m, args)
-
-	case "/lsp":
-		ProcessLSPCommand(m, args)
-
-	case "/team":
-		ProcessTeamCommand(m, args)
-
-	case "/provider":
-		ProcessProviderCommand(m, args)
-
-	case "/mcp":
-		return ProcessMCPCommand(m, args)
-
-	case "/mcp-start":
-		return ProcessMCPStartCommand(m, args)
-
-	case "/mcp-stop":
-		ProcessMCPStopCommand(m, args)
-
 	default:
 		AddOutput(m, m.formatError(fmt.Sprintf("Unknown command: %s. Type /help for available commands.", command)))
 	}
