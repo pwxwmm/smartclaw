@@ -92,20 +92,69 @@ func (s *Store) ListSessions(userID string, limit int) ([]*Session, error) {
 	}
 	defer rows.Close()
 
+	return scanSessionRows(rows)
+}
+
+// ListAllSessions returns all sessions (for "default" user / admin access).
+func (s *Store) ListAllSessions(limit int) ([]*Session, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT id, user_id, source, model, title, summary, tokens, cost, created_at, updated_at
+		FROM sessions ORDER BY updated_at DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list all sessions: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSessionRows(rows)
+}
+
+// UpdateSessionTitle updates a session's title.
+func (s *Store) UpdateSessionTitle(id string, title string) error {
+	return s.WriteWithRetry(`UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, title, id)
+}
+
+// CleanExpiredSessions deletes sessions not updated within the TTL.
+func (s *Store) CleanExpiredSessions(ttl time.Duration) (int, error) {
+	cutoff := time.Now().Add(-ttl).Format("2006-01-02 15:04:05")
+	result, err := s.db.Exec(`DELETE FROM sessions WHERE updated_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("store: clean expired sessions: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	return int(affected), nil
+}
+
+// InsertSessionMessage adds a message to a session.
+func (s *Store) InsertSessionMessage(sessionID, role, content string, tokens int) error {
+	msg := &Message{
+		SessionID: sessionID,
+		Role:      role,
+		Content:   content,
+		Tokens:    tokens,
+		Timestamp: time.Now(),
+	}
+	_, err := s.InsertMessage(msg)
+	return err
+}
+
+func scanSessionRows(rows *sql.Rows) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		session := &Session{}
 		var createdAt, updatedAt sql.NullString
-		var source, model, title, summary sql.NullString
-
+		var userID, source, model, title, summary sql.NullString
 		if err := rows.Scan(
-			&session.ID, &session.UserID, &source, &model,
+			&session.ID, &userID, &source, &model,
 			&title, &summary, &session.Tokens, &session.Cost,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan session: %w", err)
 		}
-
+		session.UserID = val(userID)
 		session.Source = val(source)
 		session.Model = val(model)
 		session.Title = val(title)
@@ -116,10 +165,8 @@ func (s *Store) ListSessions(userID string, limit int) ([]*Session, error) {
 		if t, err := time.Parse("2006-01-02 15:04:05", val(updatedAt)); err == nil {
 			session.UpdatedAt = t
 		}
-
 		sessions = append(sessions, session)
 	}
-
 	return sessions, nil
 }
 

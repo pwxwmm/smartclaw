@@ -2,6 +2,7 @@ package layers
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -30,6 +31,7 @@ type UserModelingLayer struct {
 	store     *store.Store
 	promptMem *PromptMemory
 	mu        sync.RWMutex
+	userID    string
 }
 
 func NewUserModelingLayer(s *store.Store, pm *PromptMemory) *UserModelingLayer {
@@ -42,15 +44,35 @@ func NewUserModelingLayer(s *store.Store, pm *PromptMemory) *UserModelingLayer {
 	}
 }
 
+func NewUserModelingLayerForUser(s *store.Store, pm *PromptMemory, userID string) *UserModelingLayer {
+	return &UserModelingLayer{
+		model: &UserModel{
+			Preferences: make(map[string]string),
+		},
+		store:     s,
+		promptMem: pm,
+		userID:    userID,
+	}
+}
+
+func (uml *UserModelingLayer) UserID() string {
+	return uml.userID
+}
+
 func (uml *UserModelingLayer) TrackPassive(ctx context.Context, messages []Observation) error {
 	if uml.store == nil {
 		return nil
 	}
 
+	userID := uml.userID
+	if userID == "" {
+		userID = "default"
+	}
+
 	for _, obs := range messages {
 		if _, err := uml.store.DB().Exec(
-			`INSERT INTO user_observations (category, key, value, confidence, observed_at, session_id) VALUES (?, ?, ?, ?, ?, ?)`,
-			obs.Category, obs.Key, obs.Value, obs.Confidence, time.Now(), obs.SessionID,
+			`INSERT INTO user_observations (category, key, value, confidence, observed_at, session_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			obs.Category, obs.Key, obs.Value, obs.Confidence, time.Now(), obs.SessionID, userID,
 		); err != nil {
 			slog.Warn("user modeling: failed to record observation", "error", err)
 		}
@@ -67,13 +89,27 @@ func (uml *UserModelingLayer) UpdateProfile(ctx context.Context) error {
 	uml.mu.Lock()
 	defer uml.mu.Unlock()
 
-	rows, err := uml.store.DB().Query(`
-		SELECT category, key, value, COUNT(*) as freq
-		FROM user_observations
-		GROUP BY category, key
-		ORDER BY freq DESC
-		LIMIT 50
-	`)
+	var rows *sql.Rows
+	var err error
+
+	if uml.userID != "" && uml.userID != "default" {
+		rows, err = uml.store.DB().Query(`
+			SELECT category, key, value, COUNT(*) as freq
+			FROM user_observations
+			WHERE user_id = ?
+			GROUP BY category, key
+			ORDER BY freq DESC
+			LIMIT 50
+		`, uml.userID)
+	} else {
+		rows, err = uml.store.DB().Query(`
+			SELECT category, key, value, COUNT(*) as freq
+			FROM user_observations
+			GROUP BY category, key
+			ORDER BY freq DESC
+			LIMIT 50
+		`)
+	}
 	if err != nil {
 		return fmt.Errorf("user modeling: query: %w", err)
 	}

@@ -1,96 +1,129 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
+// MigrateJSONToSQLite migrates sessions from JSON files into the SQLite store.
+// Deprecated: Use Store.MigrateJSONSessions instead.
 func MigrateJSONToSQLite(sessionDir string, s *Store) error {
-	if s == nil {
-		return fmt.Errorf("migrate: store is nil")
-	}
+	_, err := s.MigrateJSONSessions(sessionDir)
+	return err
+}
 
-	entries, err := os.ReadDir(sessionDir)
+// MigrateJSONSessions migrates sessions from JSON files to SQLite.
+// Called once at startup. Skips sessions already in SQLite (by ID).
+func (s *Store) MigrateJSONSessions(sessionsDir string) (int, error) {
+	files, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return 0, nil
 		}
-		return fmt.Errorf("migrate: read dir: %w", err)
+		return 0, fmt.Errorf("migrate: read dir: %w", err)
 	}
 
 	migrated := 0
-	skipped := 0
 
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) != ".json" {
+	for _, file := range files {
+		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
 			continue
 		}
 
-		path := filepath.Join(sessionDir, entry.Name())
-		data, err := os.ReadFile(path)
+		sessionID := strings.TrimSuffix(file.Name(), ".json")
+
+		if existing, _ := s.GetSession(sessionID); existing != nil {
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(sessionsDir, file.Name()))
 		if err != nil {
-			slog.Warn("migrate: failed to read file", "path", path, "error", err)
+			slog.Warn("migrate: failed to read file", "file", file.Name(), "error", err)
 			continue
 		}
 
-		var session struct {
-			ID        string `json:"id"`
-			Model     string `json:"model"`
-			CreatedAt string `json:"created_at"`
+		var sess struct {
+			ID        string    `json:"id"`
+			UserID    string    `json:"user_id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Model     string    `json:"model"`
+			Tokens    int       `json:"tokens"`
+			Cost      float64   `json:"cost"`
+			Title     string    `json:"title"`
 			Messages  []struct {
-				Role      string `json:"role"`
-				Content   string `json:"content"`
-				Timestamp string `json:"timestamp"`
+				Role      string    `json:"role"`
+				Content   string    `json:"content"`
+				Timestamp time.Time `json:"timestamp"`
+				Tokens    int       `json:"tokens"`
 			} `json:"messages"`
 		}
 
-		if err := json.Unmarshal(data, &session); err != nil {
-			slog.Warn("migrate: failed to parse JSON", "path", path, "error", err)
-			skipped++
+		if err := json.Unmarshal(data, &sess); err != nil {
+			slog.Warn("migrate: failed to parse JSON", "file", file.Name(), "error", err)
 			continue
 		}
 
-		if session.ID == "" {
-			session.ID = "migrated_" + entry.Name()
+		if sess.ID == "" {
+			sess.ID = sessionID
 		}
 
-		sessionRecord := &Session{
-			ID:        session.ID,
-			UserID:    "default",
-			Source:    "cli",
-			Model:     session.Model,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+		storeSession := &Session{
+			ID:        sess.ID,
+			UserID:    sess.UserID,
+			Source:    "web",
+			Model:     sess.Model,
+			Title:     sess.Title,
+			Tokens:    sess.Tokens,
+			Cost:      sess.Cost,
+			CreatedAt: sess.CreatedAt,
+			UpdatedAt: sess.UpdatedAt,
+		}
+		if storeSession.UserID == "" {
+			storeSession.UserID = "default"
+		}
+		if storeSession.CreatedAt.IsZero() {
+			storeSession.CreatedAt = time.Now()
+		}
+		if storeSession.UpdatedAt.IsZero() {
+			storeSession.UpdatedAt = time.Now()
 		}
 
-		if err := s.UpsertSession(sessionRecord); err != nil {
-			slog.Warn("migrate: failed to upsert session", "id", session.ID, "error", err)
+		if err := s.UpsertSession(storeSession); err != nil {
+			slog.Warn("migrate: failed to upsert session", "id", sess.ID, "error", err)
 			continue
 		}
 
-		for _, msg := range session.Messages {
+		for _, msg := range sess.Messages {
 			storeMsg := &Message{
-				SessionID: session.ID,
+				SessionID: sess.ID,
 				Role:      msg.Role,
 				Content:   msg.Content,
-				Timestamp: time.Now(),
+				Tokens:    msg.Tokens,
+				Timestamp: msg.Timestamp,
+			}
+			if storeMsg.Timestamp.IsZero() {
+				storeMsg.Timestamp = time.Now()
 			}
 
 			if _, err := s.InsertMessage(storeMsg); err != nil {
 				slog.Warn("migrate: failed to insert message", "error", err)
-				continue
 			}
 		}
 
 		migrated++
 	}
 
-	slog.Info("migrate: complete", "migrated", migrated, "skipped", skipped)
-	return nil
+	if migrated > 0 {
+		slog.Info("migrate: JSON sessions migrated", "count", migrated)
+	}
+	return migrated, nil
 }
 
 func MigrateJSONLToSQLite(jsonlDir string, s *Store) error {
@@ -174,4 +207,40 @@ func splitLines(s string) []string {
 		lines = append(lines, s[start:])
 	}
 	return lines
+}
+
+func MigrateUserObservationsUserID(db *sql.DB) error {
+	var hasUserID bool
+	rows, err := db.Query(`PRAGMA table_info(user_observations)`)
+	if err != nil {
+		return fmt.Errorf("migrate: check user_observations columns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		if name == "user_id" {
+			hasUserID = true
+			break
+		}
+	}
+
+	if !hasUserID {
+		if _, err := db.Exec(`ALTER TABLE user_observations ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'`); err != nil {
+			return fmt.Errorf("migrate: add user_id to user_observations: %w", err)
+		}
+		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_observations_user ON user_observations(user_id, category)`); err != nil {
+			return fmt.Errorf("migrate: create idx_observations_user: %w", err)
+		}
+		slog.Info("migrate: added user_id column to user_observations")
+	}
+
+	return nil
 }

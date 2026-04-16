@@ -70,6 +70,7 @@ type PromptMemory struct {
 	memoryMD *ManagedFile
 	userMD   *ManagedFile
 	mu       sync.RWMutex
+	userID   string // user this instance belongs to (empty = global)
 }
 
 func NewPromptMemory() (*PromptMemory, error) {
@@ -82,6 +83,7 @@ func NewPromptMemory() (*PromptMemory, error) {
 	pm := &PromptMemory{
 		memoryMD: NewManagedFile(filepath.Join(baseDir, "MEMORY.md")),
 		userMD:   NewManagedFile(filepath.Join(baseDir, "USER.md")),
+		userID:   "",
 	}
 
 	if err := pm.ensureDefaults(); err != nil {
@@ -95,6 +97,7 @@ func NewPromptMemoryWithDir(dir string) (*PromptMemory, error) {
 	pm := &PromptMemory{
 		memoryMD: NewManagedFile(filepath.Join(dir, "MEMORY.md")),
 		userMD:   NewManagedFile(filepath.Join(dir, "USER.md")),
+		userID:   "",
 	}
 
 	if err := pm.ensureDefaults(); err != nil {
@@ -102,6 +105,34 @@ func NewPromptMemoryWithDir(dir string) (*PromptMemory, error) {
 	}
 
 	return pm, nil
+}
+
+func UserMemoryPaths(baseDir, userID string) (memoryPath, userPath string) {
+	if userID != "" && userID != "default" {
+		userDir := filepath.Join(baseDir, "memory", userID)
+		return filepath.Join(userDir, "MEMORY.md"), filepath.Join(userDir, "USER.md")
+	}
+	return filepath.Join(baseDir, "MEMORY.md"), filepath.Join(baseDir, "USER.md")
+}
+
+func NewPromptMemoryForUser(dir, userID string) (*PromptMemory, error) {
+	memoryPath, userPath := UserMemoryPaths(dir, userID)
+
+	pm := &PromptMemory{
+		memoryMD: NewManagedFile(memoryPath),
+		userMD:   NewManagedFile(userPath),
+		userID:   userID,
+	}
+
+	if err := pm.ensureDefaults(); err != nil {
+		return nil, err
+	}
+
+	return pm, nil
+}
+
+func (pm *PromptMemory) UserID() string {
+	return pm.userID
 }
 
 const defaultMemoryMD = `# System Memory

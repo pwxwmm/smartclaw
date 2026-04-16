@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	InitPrometheus()
+}
+
 type MetricsSnapshot struct {
 	QueryCount        int64
 	QueryTotalTime    time.Duration
@@ -168,20 +172,25 @@ func (m *Metrics) Reset() {
 
 func RecordQueryDuration(duration time.Duration, model string) {
 	DefaultMetrics.RecordQueryDuration(duration, model)
+	RecordPrometheusQuery(duration, model)
 }
 
 func RecordCacheHit(hit bool) {
 	DefaultMetrics.RecordCacheHit(hit)
+	RecordPrometheusCacheOperation(hit)
 }
 
 func RecordTokenUsage(input, output, cacheRead, cacheCreation int, model string) {
 	DefaultMetrics.RecordTokenUsage(input, output, cacheRead, cacheCreation, model)
+	RecordPrometheusTokens(input, output, cacheRead, cacheCreation, model)
 }
 
 func RecordMemoryLayerSize(layerName string, chars int) {
 	DefaultMetrics.RecordMemoryLayerSize(layerName, chars)
+	RecordPrometheusMemoryLayerSize(layerName, chars)
 }
 
 func RecordToolExecution(toolName string, duration time.Duration, success bool) {
 	DefaultMetrics.RecordToolExecution(toolName, duration, success)
+	RecordPrometheusToolExecution(toolName, duration, success)
 }
