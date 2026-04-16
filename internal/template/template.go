@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Variable represents a template variable with metadata
@@ -35,6 +36,7 @@ type Template struct {
 
 // TemplateManager manages prompt templates with built-ins and persistence
 type TemplateManager struct {
+	mu         sync.RWMutex
 	templates  map[string]*Template
 	configPath string
 }
@@ -103,6 +105,8 @@ func (tm *TemplateManager) loadCustomTemplates() {
 
 // Get retrieves a template by ID
 func (tm *TemplateManager) Get(id string) (*Template, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
 	t, ok := tm.templates[id]
 	if !ok {
 		return nil, fmt.Errorf("template not found: %s", id)
@@ -112,6 +116,8 @@ func (tm *TemplateManager) Get(id string) (*Template, error) {
 
 // List returns all templates sorted by built-in first, then name
 func (tm *TemplateManager) List() []*Template {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
 	templates := make([]*Template, 0, len(tm.templates))
 	for _, t := range tm.templates {
 		templates = append(templates, t)
@@ -127,6 +133,8 @@ func (tm *TemplateManager) List() []*Template {
 
 // ListByCategory returns templates grouped by category
 func (tm *TemplateManager) ListByCategory() map[string][]*Template {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
 	result := make(map[string][]*Template)
 	for _, t := range tm.templates {
 		category := t.Category
@@ -144,6 +152,9 @@ func (tm *TemplateManager) Create(t *Template) error {
 		return fmt.Errorf("template ID cannot be empty")
 	}
 
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
 	if _, exists := tm.templates[t.ID]; exists {
 		return fmt.Errorf("template already exists: %s", t.ID)
 	}
@@ -156,6 +167,8 @@ func (tm *TemplateManager) Create(t *Template) error {
 
 // Update modifies an existing custom template
 func (tm *TemplateManager) Update(id string, t *Template) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 	existing, exists := tm.templates[id]
 	if !exists {
 		return fmt.Errorf("template not found: %s", id)
@@ -174,6 +187,8 @@ func (tm *TemplateManager) Update(id string, t *Template) error {
 
 // Delete removes a custom template
 func (tm *TemplateManager) Delete(id string) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 	t, exists := tm.templates[id]
 	if !exists {
 		return fmt.Errorf("template not found: %s", id)
@@ -229,6 +244,8 @@ func (tm *TemplateManager) GetVariables(id string) ([]Variable, error) {
 
 // Search finds templates matching a query
 func (tm *TemplateManager) Search(query string) []*Template {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
 	query = strings.ToLower(query)
 	var results []*Template
 
