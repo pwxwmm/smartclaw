@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,7 +47,7 @@ func TestUpsertAndGetSession(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
@@ -78,13 +79,13 @@ func TestUpsertSessionUpdate(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession v1: %v", err)
 	}
 
 	session.Title = "V2"
 	session.UpdatedAt = time.Now()
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession v2: %v", err)
 	}
 
@@ -104,7 +105,7 @@ func TestListSessions(t *testing.T) {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		if err := s.UpsertSession(session); err != nil {
+		if err := s.UpsertSession(context.Background(), session); err != nil {
 			t.Fatalf("UpsertSession %d: %v", i, err)
 		}
 	}
@@ -139,7 +140,7 @@ func TestInsertAndGetMessages(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
@@ -172,7 +173,7 @@ func TestFTS5Search(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
@@ -226,11 +227,11 @@ func TestDeleteSession(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
-	if err := s.DeleteSession("delete-test-session"); err != nil {
+	if err := s.DeleteSession(context.Background(), "delete-test-session"); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 
@@ -249,7 +250,7 @@ func TestGetMessageCount(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
@@ -395,7 +396,7 @@ func TestToolCallsColumn(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
