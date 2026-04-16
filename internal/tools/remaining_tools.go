@@ -15,12 +15,12 @@ type PowerShellTool struct{ BaseTool }
 
 func newPowerShellTool() *PowerShellTool {
 	return &PowerShellTool{BaseTool: NewBaseTool("powershell", "Execute PowerShell command", map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"command":	map[string]any{"type": "string"},
-			"timeout":	map[string]any{"type": "integer"},
+			"command": map[string]any{"type": "string"},
+			"timeout": map[string]any{"type": "integer"},
 		},
-		"required":	[]string{"command"},
+		"required": []string{"command"},
 	})}
 }
 
@@ -38,32 +38,36 @@ func (t *PowerShellTool) Execute(ctx context.Context, input map[string]any) (any
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 
+	if validationResult := ValidateCommandSecurity(cmdStr); !validationResult.Allowed {
+		return nil, fmt.Errorf("command rejected by security policy: %s", validationResult.Reason)
+	}
+
 	cmd := exec.CommandContext(ctx, "powershell", "-Command", cmdStr)
 	output, err := cmd.CombinedOutput()
 
 	return map[string]any{
-		"output":	string(output),
-		"exitCode":	cmd.ProcessState.ExitCode(),
+		"output":   string(output),
+		"exitCode": cmd.ProcessState.ExitCode(),
 	}, err
 }
 
 type ScheduleCronTool struct{ BaseTool }
 
-func (t *ScheduleCronTool) Name() string	{ return "schedule_cron" }
+func (t *ScheduleCronTool) Name() string { return "schedule_cron" }
 func (t *ScheduleCronTool) Description() string {
 	return "Schedule, list, or delete cron jobs. Actions: schedule, list, delete"
 }
 
 func (t *ScheduleCronTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"action":	map[string]any{"type": "string", "description": "Action: schedule, list, delete", "default": "schedule"},
-			"schedule":	map[string]any{"type": "string", "description": "Cron schedule expression (e.g. '*/5 * * * *')"},
-			"command":	map[string]any{"type": "string", "description": "Command or instruction to run"},
-			"task_id":	map[string]any{"type": "string", "description": "Task ID for delete action"},
+			"action":   map[string]any{"type": "string", "description": "Action: schedule, list, delete", "default": "schedule"},
+			"schedule": map[string]any{"type": "string", "description": "Cron schedule expression (e.g. '*/5 * * * *')"},
+			"command":  map[string]any{"type": "string", "description": "Command or instruction to run"},
+			"task_id":  map[string]any{"type": "string", "description": "Task ID for delete action"},
 		},
-		"required":	[]string{"action"},
+		"required": []string{"action"},
 	}
 }
 
@@ -106,11 +110,11 @@ func (t *ScheduleCronTool) scheduleCron(input map[string]any, cronDir string) (a
 
 	taskID := fmt.Sprintf("cron_%d", time.Now().UnixNano())
 	task := map[string]any{
-		"id":		taskID,
-		"schedule":	schedule,
-		"instruction":	command,
-		"enabled":	true,
-		"created_at":	time.Now().Format(time.RFC3339),
+		"id":          taskID,
+		"schedule":    schedule,
+		"instruction": command,
+		"enabled":     true,
+		"created_at":  time.Now().Format(time.RFC3339),
 	}
 
 	taskJSON, err := json.MarshalIndent(task, "", "  ")
@@ -124,11 +128,11 @@ func (t *ScheduleCronTool) scheduleCron(input map[string]any, cronDir string) (a
 	}
 
 	return map[string]any{
-		"id":		taskID,
-		"schedule":	schedule,
-		"command":	command,
-		"status":	"scheduled",
-		"path":		path,
+		"id":       taskID,
+		"schedule": schedule,
+		"command":  command,
+		"status":   "scheduled",
+		"path":     path,
 	}, nil
 }
 
@@ -158,8 +162,8 @@ func (t *ScheduleCronTool) listCrons(cronDir string) (any, error) {
 	}
 
 	return map[string]any{
-		"tasks":	tasks,
-		"count":	len(tasks),
+		"tasks": tasks,
+		"count": len(tasks),
 	}, nil
 }
 
@@ -175,8 +179,8 @@ func (t *ScheduleCronTool) deleteCron(input map[string]any, cronDir string) (any
 	}
 
 	return map[string]any{
-		"id":		taskID,
-		"status":	"deleted",
+		"id":     taskID,
+		"status": "deleted",
 	}, nil
 }
 
@@ -190,21 +194,21 @@ func getCronDir() (string, error) {
 
 type RemoteTriggerTool struct{ BaseTool }
 
-func (t *RemoteTriggerTool) Name() string	{ return "remote_trigger" }
+func (t *RemoteTriggerTool) Name() string { return "remote_trigger" }
 func (t *RemoteTriggerTool) Description() string {
 	return "Execute a command on a remote host via SSH. Requires SSH key or ssh-agent setup."
 }
 
 func (t *RemoteTriggerTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"host":		map[string]any{"type": "string", "description": "Remote host (user@hostname or hostname)"},
-			"command":	map[string]any{"type": "string", "description": "Command to execute on the remote host"},
-			"timeout":	map[string]any{"type": "integer", "default": 30, "description": "SSH connection timeout in seconds"},
-			"port":		map[string]any{"type": "integer", "default": 22, "description": "SSH port"},
+			"host":    map[string]any{"type": "string", "description": "Remote host (user@hostname or hostname)"},
+			"command": map[string]any{"type": "string", "description": "Command to execute on the remote host"},
+			"timeout": map[string]any{"type": "integer", "default": 30, "description": "SSH connection timeout in seconds"},
+			"port":    map[string]any{"type": "integer", "default": 22, "description": "SSH port"},
 		},
-		"required":	[]string{"host", "command"},
+		"required": []string{"host", "command"},
 	}
 }
 
@@ -253,30 +257,30 @@ func (t *RemoteTriggerTool) Execute(ctx context.Context, input map[string]any) (
 	}
 
 	return map[string]any{
-		"host":		host,
-		"stdout":	stdout.String(),
-		"stderr":	stderr.String(),
-		"exit_code":	exitCode,
-		"timed_out":	timedOut,
+		"host":      host,
+		"stdout":    stdout.String(),
+		"stderr":    stderr.String(),
+		"exit_code": exitCode,
+		"timed_out": timedOut,
 	}, nil
 }
 
 type SendMessageTool struct{ BaseTool }
 
-func (t *SendMessageTool) Name() string	{ return "send_message" }
+func (t *SendMessageTool) Name() string { return "send_message" }
 func (t *SendMessageTool) Description() string {
 	return "Send a message to a channel or user. Supports gateway delivery platforms (telegram, web, terminal)."
 }
 
 func (t *SendMessageTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"channel":	map[string]any{"type": "string", "description": "Target channel or user ID"},
-			"message":	map[string]any{"type": "string", "description": "Message content to send"},
-			"platform":	map[string]any{"type": "string", "default": "terminal", "description": "Delivery platform: terminal, web, telegram"},
+			"channel":  map[string]any{"type": "string", "description": "Target channel or user ID"},
+			"message":  map[string]any{"type": "string", "description": "Message content to send"},
+			"platform": map[string]any{"type": "string", "default": "terminal", "description": "Delivery platform: terminal, web, telegram"},
 		},
-		"required":	[]string{"channel", "message"},
+		"required": []string{"channel", "message"},
 	}
 }
 
@@ -300,11 +304,11 @@ func (t *SendMessageTool) Execute(ctx context.Context, input map[string]any) (an
 	os.MkdirAll(outboxDir, 0755)
 
 	outboxEntry := map[string]any{
-		"channel":	channel,
-		"message":	message,
-		"platform":	platform,
-		"timestamp":	time.Now().Format(time.RFC3339),
-		"status":	"queued",
+		"channel":   channel,
+		"message":   message,
+		"platform":  platform,
+		"timestamp": time.Now().Format(time.RFC3339),
+		"status":    "queued",
 	}
 
 	data, _ := json.MarshalIndent(outboxEntry, "", "  ")
@@ -313,37 +317,37 @@ func (t *SendMessageTool) Execute(ctx context.Context, input map[string]any) (an
 
 	if err := os.WriteFile(outPath, data, 0644); err != nil {
 		return map[string]any{
-			"channel":	channel,
-			"platform":	platform,
-			"status":	"failed",
-			"error":	err.Error(),
+			"channel":  channel,
+			"platform": platform,
+			"status":   "failed",
+			"error":    err.Error(),
 		}, nil
 	}
 
 	return map[string]any{
-		"channel":	channel,
-		"platform":	platform,
-		"status":	"queued",
-		"path":		outPath,
+		"channel":  channel,
+		"platform": platform,
+		"status":   "queued",
+		"path":     outPath,
 	}, nil
 }
 
 type EnterWorktreeTool struct{ BaseTool }
 
-func (t *EnterWorktreeTool) Name() string	{ return "enter_worktree" }
+func (t *EnterWorktreeTool) Name() string { return "enter_worktree" }
 func (t *EnterWorktreeTool) Description() string {
 	return "Create and enter a git worktree. Creates a new working directory linked to a branch."
 }
 
 func (t *EnterWorktreeTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"path":		map[string]any{"type": "string", "description": "Path for the new worktree"},
-			"branch":	map[string]any{"type": "string", "description": "Branch name (creates new branch if -b prefix used)"},
-			"workdir":	map[string]any{"type": "string", "description": "Working directory of the git repo"},
+			"path":    map[string]any{"type": "string", "description": "Path for the new worktree"},
+			"branch":  map[string]any{"type": "string", "description": "Branch name (creates new branch if -b prefix used)"},
+			"workdir": map[string]any{"type": "string", "description": "Working directory of the git repo"},
 		},
-		"required":	[]string{"path"},
+		"required": []string{"path"},
 	}
 }
 
@@ -374,26 +378,26 @@ func (t *EnterWorktreeTool) Execute(ctx context.Context, input map[string]any) (
 
 	absPath, _ := filepath.Abs(path)
 	return map[string]any{
-		"path":		absPath,
-		"status":	"created",
-		"message":	strings.TrimSpace(string(output)),
+		"path":    absPath,
+		"status":  "created",
+		"message": strings.TrimSpace(string(output)),
 	}, nil
 }
 
 type ExitWorktreeTool struct{ BaseTool }
 
-func (t *ExitWorktreeTool) Name() string	{ return "exit_worktree" }
+func (t *ExitWorktreeTool) Name() string { return "exit_worktree" }
 func (t *ExitWorktreeTool) Description() string {
 	return "Remove a git worktree and clean up"
 }
 
 func (t *ExitWorktreeTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"path":		map[string]any{"type": "string", "description": "Path of the worktree to remove"},
-			"workdir":	map[string]any{"type": "string", "description": "Working directory of the main git repo"},
-			"force":	map[string]any{"type": "boolean", "description": "Force removal even with uncommitted changes"},
+			"path":    map[string]any{"type": "string", "description": "Path of the worktree to remove"},
+			"workdir": map[string]any{"type": "string", "description": "Working directory of the main git repo"},
+			"force":   map[string]any{"type": "boolean", "description": "Force removal even with uncommitted changes"},
 		},
 	}
 }
@@ -424,27 +428,27 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, input map[string]any) (a
 	}
 
 	return map[string]any{
-		"path":		path,
-		"status":	"removed",
-		"message":	strings.TrimSpace(string(output)),
+		"path":    path,
+		"status":  "removed",
+		"message": strings.TrimSpace(string(output)),
 	}, nil
 }
 
 type BriefTool struct{ BaseTool }
 
-func (t *BriefTool) Name() string	{ return "brief" }
+func (t *BriefTool) Name() string { return "brief" }
 func (t *BriefTool) Description() string {
 	return "Summarize a topic or text concisely. Uses the LLM to generate a brief."
 }
 
 func (t *BriefTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"topic":	map[string]any{"type": "string", "description": "Topic or text to summarize"},
-			"length":	map[string]any{"type": "string", "default": "short", "description": "Summary length: short (1-2 sentences), medium (1 paragraph), long (multi-paragraph)"},
+			"topic":  map[string]any{"type": "string", "description": "Topic or text to summarize"},
+			"length": map[string]any{"type": "string", "default": "short", "description": "Summary length: short (1-2 sentences), medium (1 paragraph), long (multi-paragraph)"},
 		},
-		"required":	[]string{"topic"},
+		"required": []string{"topic"},
 	}
 }
 
@@ -470,25 +474,25 @@ func (t *BriefTool) Execute(ctx context.Context, input map[string]any) (any, err
 	prompt := fmt.Sprintf("Provide a brief, factual summary of the following topic in %s. Be concise and informative.\n\nTopic: %s", lengthGuide, topic)
 
 	return map[string]any{
-		"topic":	topic,
-		"prompt":	prompt,
-		"length":	length,
-		"note":		"Returns a summarization prompt that should be sent to the LLM. The runtime will auto-route this.",
+		"topic":  topic,
+		"prompt": prompt,
+		"length": length,
+		"note":   "Returns a summarization prompt that should be sent to the LLM. The runtime will auto-route this.",
 	}, nil
 }
 
 type SleepTool struct{ BaseTool }
 
-func (t *SleepTool) Name() string		{ return "sleep" }
-func (t *SleepTool) Description() string	{ return "Sleep for specified duration" }
+func (t *SleepTool) Name() string        { return "sleep" }
+func (t *SleepTool) Description() string { return "Sleep for specified duration" }
 
 func (t *SleepTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
 			"seconds": map[string]any{"type": "number"},
 		},
-		"required":	[]string{"seconds"},
+		"required": []string{"seconds"},
 	}
 }
 
@@ -504,17 +508,17 @@ func (t *SleepTool) Execute(ctx context.Context, input map[string]any) (any, err
 
 type ToolSearchTool struct{ BaseTool }
 
-func (t *ToolSearchTool) Name() string		{ return "tool_search" }
-func (t *ToolSearchTool) Description() string	{ return "Search for deferred tools by keyword" }
+func (t *ToolSearchTool) Name() string        { return "tool_search" }
+func (t *ToolSearchTool) Description() string { return "Search for deferred tools by keyword" }
 
 func (t *ToolSearchTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"query":	map[string]any{"type": "string"},
-			"max_results":	map[string]any{"type": "integer", "default": 5},
+			"query":       map[string]any{"type": "string"},
+			"max_results": map[string]any{"type": "integer", "default": 5},
 		},
-		"required":	[]string{"query"},
+		"required": []string{"query"},
 	}
 }
 
@@ -527,7 +531,7 @@ func (t *ToolSearchTool) Execute(ctx context.Context, input map[string]any) (any
 
 	// Get all deferred tools
 	allTools := GetRegistry().All()
-	deferredTools := allTools	// For now, treat all as deferred
+	deferredTools := allTools // For now, treat all as deferred
 
 	// Keyword search implementation
 	queryLower := strings.ToLower(query)
@@ -546,28 +550,28 @@ func (t *ToolSearchTool) Execute(ctx context.Context, input map[string]any) (any
 	}
 
 	return map[string]any{
-		"matches":		matched,
-		"query":		query,
-		"total_deferred_tools":	len(deferredTools),
+		"matches":              matched,
+		"query":                query,
+		"total_deferred_tools": len(deferredTools),
 	}, nil
 }
 
 type REPLTool struct{ BaseTool }
 
-func (t *REPLTool) Name() string	{ return "repl" }
+func (t *REPLTool) Name() string { return "repl" }
 func (t *REPLTool) Description() string {
 	return "Evaluate an expression in a sandboxed REPL (JavaScript via Node.js or Python)"
 }
 
 func (t *REPLTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"expression":	map[string]any{"type": "string", "description": "Expression to evaluate"},
-			"language":	map[string]any{"type": "string", "default": "javascript", "description": "Language: javascript or python"},
-			"timeout":	map[string]any{"type": "integer", "default": 10000, "description": "Timeout in milliseconds"},
+			"expression": map[string]any{"type": "string", "description": "Expression to evaluate"},
+			"language":   map[string]any{"type": "string", "default": "javascript", "description": "Language: javascript or python"},
+			"timeout":    map[string]any{"type": "integer", "default": 10000, "description": "Timeout in milliseconds"},
 		},
-		"required":	[]string{"expression"},
+		"required": []string{"expression"},
 	}
 }
 
@@ -623,29 +627,29 @@ func (t *REPLTool) Execute(ctx context.Context, input map[string]any) (any, erro
 	}
 
 	return map[string]any{
-		"expression":	expr,
-		"language":	lang,
-		"result":	strings.TrimSpace(stdout.String()),
-		"error":	strings.TrimSpace(stderr.String()),
-		"exitCode":	exitCode,
-		"timedOut":	timedOut,
+		"expression": expr,
+		"language":   lang,
+		"result":     strings.TrimSpace(stdout.String()),
+		"error":      strings.TrimSpace(stderr.String()),
+		"exitCode":   exitCode,
+		"timedOut":   timedOut,
 	}, nil
 }
 
 type EnterPlanModeTool struct{ BaseTool }
 
-func (t *EnterPlanModeTool) Name() string	{ return "enter_plan_mode" }
+func (t *EnterPlanModeTool) Name() string { return "enter_plan_mode" }
 func (t *EnterPlanModeTool) Description() string {
 	return "Enter planning mode for structured task breakdown"
 }
 
 func (t *EnterPlanModeTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
 			"goal": map[string]any{"type": "string"},
 		},
-		"required":	[]string{"goal"},
+		"required": []string{"goal"},
 	}
 }
 
@@ -653,25 +657,25 @@ func (t *EnterPlanModeTool) Execute(ctx context.Context, input map[string]any) (
 	goal, _ := input["goal"].(string)
 
 	return map[string]any{
-		"goal":		goal,
-		"mode":		"planning",
-		"activated":	true,
+		"goal":      goal,
+		"mode":      "planning",
+		"activated": true,
 	}, nil
 }
 
 type SyntheticOutputTool struct{ BaseTool }
 
-func (t *SyntheticOutputTool) Name() string		{ return "synthetic_output" }
-func (t *SyntheticOutputTool) Description() string	{ return "Generate synthetic output for testing" }
+func (t *SyntheticOutputTool) Name() string        { return "synthetic_output" }
+func (t *SyntheticOutputTool) Description() string { return "Generate synthetic output for testing" }
 
 func (t *SyntheticOutputTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
-			"type":		map[string]any{"type": "string"},
-			"count":	map[string]any{"type": "integer"},
+			"type":  map[string]any{"type": "string"},
+			"count": map[string]any{"type": "integer"},
 		},
-		"required":	[]string{"type"},
+		"required": []string{"type"},
 	}
 }
 
@@ -683,22 +687,22 @@ func (t *SyntheticOutputTool) Execute(ctx context.Context, input map[string]any)
 	}
 
 	return map[string]any{
-		"type":		typ,
-		"count":	count,
-		"data":		[]any{},
+		"type":  typ,
+		"count": count,
+		"data":  []any{},
 	}, nil
 }
 
 type ExitPlanModeTool struct{ BaseTool }
 
-func (t *ExitPlanModeTool) Name() string	{ return "exit_plan_mode" }
+func (t *ExitPlanModeTool) Name() string { return "exit_plan_mode" }
 func (t *ExitPlanModeTool) Description() string {
 	return "Exit planning mode and return to normal operation"
 }
 
 func (t *ExitPlanModeTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
 			"summary": map[string]any{"type": "string"},
 		},
@@ -709,8 +713,8 @@ func (t *ExitPlanModeTool) Execute(ctx context.Context, input map[string]any) (a
 	summary, _ := input["summary"].(string)
 
 	return map[string]any{
-		"mode":		"normal",
-		"summary":	summary,
-		"activated":	false,
+		"mode":      "normal",
+		"summary":   summary,
+		"activated": false,
 	}, nil
 }
