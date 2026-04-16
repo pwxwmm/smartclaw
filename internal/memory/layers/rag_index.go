@@ -23,6 +23,7 @@ type RAGIndex struct {
 	termDocFreq   map[string]int
 	totalDocs     int
 	sessionSearch *SessionSearch
+	codeIndexer   CodebaseIndexer
 }
 
 // RAGDocument represents an indexed document (session fragment).
@@ -301,4 +302,34 @@ func FormatRAGResults(results []RAGSearchResult, maxChars int) string {
 	}
 
 	return sb.String()
+}
+
+// CodeSearchResult represents a code search result from the codebase index.
+type CodeSearchResult struct {
+	File    string  `json:"file"`
+	Line    int     `json:"line"`
+	EndLine int     `json:"end_line"`
+	Content string  `json:"content"`
+	Kind    string  `json:"kind"`
+	Score   float64 `json:"score"`
+}
+
+// CodebaseIndexer is an interface for the codebase index backend.
+type CodebaseIndexer interface {
+	SearchCode(query string, maxResults int) []CodeSearchResult
+}
+
+// SearchCode delegates to a codebase index if available, returning code search results.
+func (ri *RAGIndex) SearchCode(query string, maxResults int) []CodeSearchResult {
+	if ri.codeIndexer != nil {
+		return ri.codeIndexer.SearchCode(query, maxResults)
+	}
+	return nil
+}
+
+// SetCodeIndexer sets the codebase index backend for code search.
+func (ri *RAGIndex) SetCodeIndexer(indexer CodebaseIndexer) {
+	ri.mu.Lock()
+	defer ri.mu.Unlock()
+	ri.codeIndexer = indexer
 }
