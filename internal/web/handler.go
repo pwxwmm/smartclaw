@@ -45,6 +45,7 @@ type Handler struct {
 	pendingApprovals map[string]chan bool
 	autoApproved     map[string]map[string]bool
 	cancelFuncs      map[string]context.CancelFunc
+	wg               sync.WaitGroup
 }
 
 func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
@@ -578,14 +579,20 @@ func (h *Handler) autoSaveSession(sess *session.Session) {
 			CreatedAt: sess.CreatedAt,
 			UpdatedAt: sess.UpdatedAt,
 		}
+		h.wg.Add(1)
 		go func() {
+			defer h.wg.Done()
 			if err := h.dataStore.UpsertSession(storeSess); err != nil {
 				slog.Warn("failed to upsert session", "error", err, "session_id", storeSess.ID)
 			}
 		}()
 	}
 	if h.sessMgr != nil {
-		go h.sessMgr.Save(sess)
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			h.sessMgr.Save(sess)
+		}()
 	}
 }
 
@@ -593,11 +600,17 @@ func (h *Handler) syncMessageToStore(sess *session.Session, role, content string
 	if h.dataStore == nil {
 		return
 	}
+	h.wg.Add(1)
 	go func() {
+		defer h.wg.Done()
 		if err := h.dataStore.InsertSessionMessage(sess.ID, role, content, tokens); err != nil {
 			slog.Warn("failed to insert session message", "error", err, "session_id", sess.ID)
 		}
 	}()
+}
+
+func (h *Handler) Wait() {
+	h.wg.Wait()
 }
 
 func (h *Handler) executeTool(ctx context.Context, name string, input map[string]any) (string, error) {
@@ -1221,4 +1234,8 @@ func (h *Handler) StartSessionCleanup(ttl time.Duration) {
 	if h.sessMgr != nil {
 		h.sessMgr.StartCleanup(ttl)
 	}
+}
+
+func (h *Handler) Close() {
+	h.wg.Wait()
 }
