@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -110,7 +111,7 @@ func (sa *SkillAuditor) RecordSkillUse(name string) {
 	if sa.store == nil {
 		return
 	}
-	if err := sa.store.IncrementSkillUseCount(name); err != nil {
+	if err := sa.store.IncrementSkillUseCount(context.Background(), name); err != nil {
 		slog.Warn("skill auditor: failed to record skill use", "name", name, "error", err)
 	}
 }
@@ -146,7 +147,7 @@ func (sa *SkillAuditor) SyncLearnedSkillsToStore() error {
 			UseCount: 0,
 		}
 
-		if err := sa.store.UpsertSkill(record); err != nil {
+		if err := sa.store.UpsertSkill(context.Background(), record); err != nil {
 			slog.Warn("skill auditor: failed to sync skill to store", "name", entry.Name(), "error", err)
 		}
 	}
