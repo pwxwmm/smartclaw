@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/pool"
 	"github.com/instructkr/smartclaw/internal/utils"
 )
 
@@ -34,7 +35,10 @@ func (p *SSEParser) Parse() <-chan SSEEvent {
 	utils.Go(func() {
 		defer close(events)
 
-		var event, data strings.Builder
+		event := pool.GetBuffer()
+		data := pool.GetBuffer()
+		defer pool.PutBuffer(event)
+		defer pool.PutBuffer(data)
 
 		for {
 			line, err := p.reader.ReadString('\n')
@@ -82,7 +86,7 @@ func (p *SSEParser) Parse() <-chan SSEEvent {
 				event.WriteString(value)
 			case "data":
 				if data.Len() > 0 {
-					data.WriteString("\n")
+					data.WriteByte('\n')
 				}
 				data.WriteString(value)
 			}

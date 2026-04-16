@@ -2,11 +2,12 @@ package store
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/pool"
 )
 
 type JSONLWriter struct {
@@ -59,13 +60,20 @@ func (w *JSONLWriter) Append(msg *Message) error {
 		Timestamp:    msg.Timestamp,
 	}
 
-	line, err := json.Marshal(entry)
-	if err != nil {
+	pe := pool.GetJSONEncoder(nil)
+	if err := pe.Encode(entry); err != nil {
+		pool.PutJSONEncoder(pe)
 		return fmt.Errorf("jsonl: marshal: %w", err)
 	}
 
 	writer := bufio.NewWriter(f)
-	if _, err := writer.WriteString(string(line) + "\n"); err != nil {
+	if _, err := writer.Write(pe.Bytes()); err != nil {
+		pool.PutJSONEncoder(pe)
+		return fmt.Errorf("jsonl: write: %w", err)
+	}
+	pool.PutJSONEncoder(pe)
+
+	if err := writer.WriteByte('\n'); err != nil {
 		return fmt.Errorf("jsonl: write: %w", err)
 	}
 

@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/instructkr/smartclaw/internal/pool"
 )
 
 type McpServer struct {
@@ -103,16 +105,19 @@ func (s *McpServer) Run(ctx context.Context) error {
 			continue
 		}
 
-		data := make([]byte, length)
-		if _, err := io.ReadFull(reader, data); err != nil {
+		data := pool.GetByteSlice(length)
+		if _, err := io.ReadFull(reader, data[:length]); err != nil {
+			pool.PutByteSlice(data)
 			continue
 		}
 
 		var request JSONRPCRequest
-		if err := json.Unmarshal(data, &request); err != nil {
+		if err := json.Unmarshal(data[:length], &request); err != nil {
+			pool.PutByteSlice(data)
 			s.sendError(nil, -32700, "Parse error")
 			continue
 		}
+		pool.PutByteSlice(data)
 
 		go s.handleRequest(ctx, &request)
 	}
@@ -209,11 +214,17 @@ func (s *McpServer) handleToolsCall(request *JSONRPCRequest) (*CallToolResult, e
 	case []ContentBlock:
 		content = v
 	case map[string]any:
-		data, _ := json.Marshal(v)
-		content = append(content, ContentBlock{Type: "text", Text: string(data)})
+		pe := pool.GetJSONEncoder(nil)
+		if pe.Encode(v) == nil {
+			content = append(content, ContentBlock{Type: "text", Text: string(pe.Bytes())})
+		}
+		pool.PutJSONEncoder(pe)
 	default:
-		data, _ := json.Marshal(result)
-		content = append(content, ContentBlock{Type: "text", Text: string(data)})
+		pe := pool.GetJSONEncoder(nil)
+		if pe.Encode(result) == nil {
+			content = append(content, ContentBlock{Type: "text", Text: string(pe.Bytes())})
+		}
+		pool.PutJSONEncoder(pe)
 	}
 
 	return &CallToolResult{
@@ -329,14 +340,16 @@ func (s *McpServer) sendError(id any, code int, message string) {
 }
 
 func (s *McpServer) sendResponse(response *JSONRPCResponse) {
-	data, err := json.Marshal(response)
-	if err != nil {
+	pe := pool.GetJSONEncoder(nil)
+	if err := pe.Encode(response); err != nil {
+		pool.PutJSONEncoder(pe)
 		return
 	}
 
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(pe.Bytes()))
 	s.stdout.Write([]byte(header))
-	s.stdout.Write(data)
+	pe.WriteTo(s.stdout)
+	pool.PutJSONEncoder(pe)
 }
 
 func (s *McpServer) SendNotification(method string, params any) {
@@ -346,14 +359,16 @@ func (s *McpServer) SendNotification(method string, params any) {
 		Params:  params,
 	}
 
-	data, err := json.Marshal(request)
-	if err != nil {
+	pe := pool.GetJSONEncoder(nil)
+	if err := pe.Encode(request); err != nil {
+		pool.PutJSONEncoder(pe)
 		return
 	}
 
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(pe.Bytes()))
 	s.stdout.Write([]byte(header))
-	s.stdout.Write(data)
+	pe.WriteTo(s.stdout)
+	pool.PutJSONEncoder(pe)
 }
 
 func (s *McpServer) NotifyToolsListChanged() {

@@ -18,6 +18,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/permissions"
+	"github.com/instructkr/smartclaw/internal/pool"
 	"github.com/instructkr/smartclaw/internal/provider"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/session"
@@ -373,7 +374,8 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		systemPrompt = h.prompt.Build()
 	}
 
-	var fullContentBuilder strings.Builder
+	fullContentBuilder := pool.GetBuffer()
+	defer pool.PutBuffer(fullContentBuilder)
 	var openaiOutputChars int
 
 	if reqClient.IsOpenAI {
@@ -425,7 +427,8 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 
 	// Anthropic SSE streaming with agentic tool loop
 	const maxIterations = 10
-	var allTextBuilder strings.Builder
+	allTextBuilder := pool.GetBuffer()
+	defer pool.PutBuffer(allTextBuilder)
 	var totalInputTokens, totalOutputTokens int
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
@@ -439,7 +442,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		}
 
 		parser := api.NewStreamMessageParser()
-		var iterTextBuilder strings.Builder
+		iterTextBuilder := pool.GetBuffer()
 
 		err := reqClient.StreamMessageSSE(ctx, req, func(event string, data []byte) error {
 			result, err := parser.HandleEvent(event, data)
@@ -464,6 +467,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		})
 
 		if err != nil {
+			pool.PutBuffer(iterTextBuilder)
 			h.sendError(client, fmt.Sprintf("API error: %v", err))
 			return
 		}
@@ -472,6 +476,7 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		totalInputTokens += resp.Usage.InputTokens
 		totalOutputTokens += resp.Usage.OutputTokens
 		allTextBuilder.WriteString(iterTextBuilder.String())
+		pool.PutBuffer(iterTextBuilder)
 
 		blocks := parser.GetContentBlocks()
 		var toolUseBlocks []api.ContentBlock
@@ -673,11 +678,14 @@ func resultToString(result any) string {
 	case []byte:
 		return string(v)
 	default:
-		data, err := json.Marshal(v)
-		if err != nil {
+		pe := pool.GetJSONEncoder(nil)
+		if pe.Encode(result) != nil {
+			pool.PutJSONEncoder(pe)
 			return fmt.Sprint(v)
 		}
-		return string(data)
+		s := string(pe.Bytes())
+		pool.PutJSONEncoder(pe)
+		return s
 	}
 }
 
@@ -1219,10 +1227,15 @@ func (h *Handler) handleSessionRename(client *Client, msg WSMessage) {
 }
 
 func (h *Handler) sendToClient(client *Client, resp WSResponse) {
-	data, err := json.Marshal(resp)
-	if err != nil {
+	pe := pool.GetJSONEncoder(nil)
+	if err := pe.Encode(resp); err != nil {
+		pool.PutJSONEncoder(pe)
 		return
 	}
+	data := make([]byte, len(pe.Bytes()))
+	copy(data, pe.Bytes())
+	pool.PutJSONEncoder(pe)
+
 	select {
 	case client.send <- data:
 	case <-time.After(5 * time.Second):
