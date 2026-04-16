@@ -22,8 +22,8 @@ type Session struct {
 	UpdatedAt       time.Time
 }
 
-func (s *Store) UpsertSession(session *Session) error {
-	return s.WriteWithRetry(context.Background(), `
+func (s *Store) UpsertSession(ctx context.Context, session *Session) error {
+	return s.WriteWithRetry(ctx, `
 		INSERT INTO sessions (id, user_id, source, model, system_prompt, parent_session_id, title, summary, tokens, cost, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -114,8 +114,8 @@ func (s *Store) ListAllSessions(limit int) ([]*Session, error) {
 }
 
 // UpdateSessionTitle updates a session's title.
-func (s *Store) UpdateSessionTitle(id string, title string) error {
-	return s.WriteWithRetry(context.Background(), `UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, title, id)
+func (s *Store) UpdateSessionTitle(ctx context.Context, id string, title string) error {
+	return s.WriteWithRetry(ctx, `UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, title, id)
 }
 
 // CleanExpiredSessions deletes sessions not updated within the TTL.
@@ -171,8 +171,8 @@ func scanSessionRows(rows *sql.Rows) ([]*Session, error) {
 	return sessions, nil
 }
 
-func (s *Store) DeleteSession(id string) error {
-	return s.WriteWithRetry(context.Background(), `DELETE FROM sessions WHERE id = ?`, id)
+func (s *Store) DeleteSession(ctx context.Context, id string) error {
+	return s.WriteWithRetry(ctx, `DELETE FROM sessions WHERE id = ?`, id)
 }
 
 func val(ns sql.NullString) string {

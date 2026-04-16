@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -95,7 +96,7 @@ func (s *Store) MigrateJSONSessions(sessionsDir string) (int, error) {
 			storeSession.UpdatedAt = time.Now()
 		}
 
-		if err := s.UpsertSession(storeSession); err != nil {
+		if err := s.UpsertSession(context.Background(), storeSession); err != nil {
 			slog.Warn("migrate: failed to upsert session", "id", sess.ID, "error", err)
 			continue
 		}

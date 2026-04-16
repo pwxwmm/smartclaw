@@ -7,9 +7,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
+
+var configMu sync.RWMutex
 
 type Config struct {
 	APIKey       string                    `yaml:"api_key"`
@@ -83,7 +86,17 @@ var defaultConfig = &Config{
 }
 
 func Default() *Config {
-	return defaultConfig
+	configMu.RLock()
+	defer configMu.RUnlock()
+	cp := *defaultConfig
+	return &cp
+}
+
+// SetDefault replaces the global default config with the provided one.
+func SetDefault(c *Config) {
+	configMu.Lock()
+	defer configMu.Unlock()
+	*defaultConfig = *c
 }
 
 func Load(path string) (*Config, error) {
@@ -136,6 +149,9 @@ func Save(config *Config, path string) error {
 }
 
 func mergeDefaults(config *Config) {
+	configMu.RLock()
+	defer configMu.RUnlock()
+
 	if config.Model == "" {
 		config.Model = defaultConfig.Model
 	}

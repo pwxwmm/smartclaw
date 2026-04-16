@@ -95,7 +95,7 @@ func (t *InvestigateIncidentTool) Execute(ctx context.Context, input map[string]
 			"evidence_queries": evidenceQueries,
 		}
 		content, _ := json.Marshal(hypothesisData)
-		_ = im.AddTimelineEvent(incidentID, layers.TimelineEvent{
+		_ = im.AddTimelineEvent(ctx, incidentID, layers.TimelineEvent{
 			Timestamp: time.Now().UTC(),
 			Type:      "hypothesis",
 			Content:   string(content),
@@ -188,7 +188,7 @@ func (t *IncidentTimelineTool) Execute(ctx context.Context, input map[string]any
 
 	im := getIncidentMemory()
 	if im != nil {
-		err := im.AddTimelineEvent(incidentID, layers.TimelineEvent{
+		err := im.AddTimelineEvent(ctx, incidentID, layers.TimelineEvent{
 			Timestamp: time.Now().UTC(),
 			Type:      action,
 			Content:   details,
