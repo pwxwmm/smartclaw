@@ -1,13 +1,14 @@
 package mcp
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/config"
 )
 
 type ServerConfig struct {
@@ -43,7 +44,7 @@ func NewMCPServerRegistry() *MCPServerRegistry {
 
 func (r *MCPServerRegistry) load() error {
 	path := filepath.Join(r.configDir, "servers.json")
-	data, err := os.ReadFile(path)
+	servers, err := config.LoadJSON[[]*ServerConfig](path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -51,12 +52,7 @@ func (r *MCPServerRegistry) load() error {
 		return err
 	}
 
-	var servers []*ServerConfig
-	if err := json.Unmarshal(data, &servers); err != nil {
-		return err
-	}
-
-	for _, s := range servers {
+	for _, s := range *servers {
 		r.servers[s.Name] = s
 	}
 
@@ -73,13 +69,8 @@ func (r *MCPServerRegistry) save() error {
 		servers = append(servers, s)
 	}
 
-	data, err := json.MarshalIndent(servers, "", "  ")
-	if err != nil {
-		return err
-	}
-
 	path := filepath.Join(r.configDir, "servers.json")
-	return os.WriteFile(path, data, 0644)
+	return config.SaveJSON(path, &servers)
 }
 
 func (r *MCPServerRegistry) AddServer(config *ServerConfig) error {

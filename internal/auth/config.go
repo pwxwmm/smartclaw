@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/instructkr/smartclaw/internal/config"
 )
 
 type Config struct {
@@ -29,20 +31,18 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	cfg, err := config.LoadJSON[Config](path)
 	if err != nil {
-		return &Config{}, nil
-	}
-
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+		if os.IsNotExist(err) {
+			return &Config{}, nil
+		}
 		return nil, err
 	}
 
-	return &config, nil
+	return cfg, nil
 }
 
-func SaveConfig(config *Config) error {
+func SaveConfig(cfg *Config) error {
 	path, err := getConfigPath()
 	if err != nil {
 		return err
@@ -53,12 +53,7 @@ func SaveConfig(config *Config) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, data, 0600)
+	return config.SaveJSON(path, cfg)
 }
 
 func GetAPIKey() string {
