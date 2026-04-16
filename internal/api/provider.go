@@ -20,6 +20,15 @@ func (c *Client) GetModel() string {
 }
 
 func (c *Client) StreamMessageCtx(ctx context.Context, req *MessageRequest, handler func(event string, data []byte) error) error {
+	if c.IsGoogle {
+		var systemStr string
+		if req.System != nil {
+			if s, ok := req.System.(string); ok {
+				systemStr = s
+			}
+		}
+		return c.StreamMessageGoogle(ctx, req.Messages, systemStr, handler)
+	}
 	if c.IsOpenAI {
 		return c.StreamMessageOpenAI(ctx, req, handler)
 	}

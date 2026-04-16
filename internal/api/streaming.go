@@ -2,12 +2,10 @@ package api
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +93,6 @@ func (p *SSEParser) Parse() <-chan SSEEvent {
 func (c *Client) StreamMessageSSE(ctx context.Context, req *MessageRequest, handler func(event string, data []byte) error) error {
 	req.Stream = true
 
-	// Convert string system to []SystemBlock with cache_control if needed
 	if req.System != nil {
 		if sysStr, ok := req.System.(string); ok && sysStr != "" {
 			req.System = []SystemBlock{
@@ -110,48 +107,11 @@ func (c *Client) StreamMessageSSE(ctx context.Context, req *MessageRequest, hand
 		}
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
+	c.ensureSDKClient()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
+	params := buildSDKMessages(req.Messages, req.System, req.Model, req.MaxTokens, req.Thinking, req.Tools)
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.APIKey)
-	httpReq.Header.Set("anthropic-version", DefaultVersion)
-	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("User-Agent", "claude-code/2.1.86")
-	httpReq.Header.Set("client-name", "claude-code")
-	httpReq.Header.Set("x-client", "Claude Code")
-	httpReq.Header.Set("x-client-version", "2.1.86")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error: %s - %s", resp.Status, string(bodyBytes))
-	}
-
-	parser := NewSSEParser(resp.Body)
-
-	for sseEvent := range parser.Parse() {
-		if handler != nil {
-			if err := handler(sseEvent.Event, []byte(sseEvent.Data)); err != nil {
-				return fmt.Errorf("handler error: %w", err)
-			}
-		}
-	}
-
-	return nil
+	return streamWithSDK(ctx, c.sdkClient, params, handler)
 }
 
 type StreamEventResult struct {
