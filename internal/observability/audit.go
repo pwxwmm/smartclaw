@@ -65,6 +65,14 @@ type AuditLogger struct {
 // DefaultAuditLogger is the global audit logger instance.
 var DefaultAuditLogger *AuditLogger
 
+var auditMu sync.RWMutex
+
+func getAuditLogger() *AuditLogger {
+	auditMu.RLock()
+	defer auditMu.RUnlock()
+	return DefaultAuditLogger
+}
+
 // NewAuditLogger creates a new AuditLogger that writes to dataDir/audit.jsonl.
 // The dataDir is typically ~/.smartclaw.
 func NewAuditLogger(dataDir string) (*AuditLogger, error) {
@@ -296,14 +304,16 @@ func InitAudit(dataDir string) error {
 	if err != nil {
 		return err
 	}
+	auditMu.Lock()
+	defer auditMu.Unlock()
 	DefaultAuditLogger = logger
 	return nil
 }
 
 // AuditLog logs an entry to the default audit logger.
 func AuditLog(entry *AuditEntry) {
-	if DefaultAuditLogger != nil {
-		DefaultAuditLogger.Log(entry)
+	if l := getAuditLogger(); l != nil {
+		l.Log(entry)
 	}
 }
 

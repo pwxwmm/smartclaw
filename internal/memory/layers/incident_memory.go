@@ -152,7 +152,7 @@ func (im *IncidentMemory) initSchema() {
 }
 
 // CreateIncident inserts a new incident into the database.
-func (im *IncidentMemory) CreateIncident(incident *Incident) error {
+func (im *IncidentMemory) CreateIncident(ctx context.Context, incident *Incident) error {
 	if im.store == nil {
 		return nil
 	}
@@ -162,7 +162,7 @@ func (im *IncidentMemory) CreateIncident(incident *Incident) error {
 		incident.StartedAt = time.Now().UTC()
 	}
 
-	return im.store.WriteWithRetry(context.Background(),
+	return im.store.WriteWithRetry(ctx,
 		`INSERT INTO incidents (id, title, severity, status, service, description, root_cause, remediation, started_at, mitigated_at, resolved_at, alert_source, affected_services)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		incident.ID, incident.Title, incident.Severity, incident.Status, incident.Service,
@@ -173,7 +173,7 @@ func (im *IncidentMemory) CreateIncident(incident *Incident) error {
 }
 
 // UpdateIncident updates specific fields of an incident.
-func (im *IncidentMemory) UpdateIncident(id string, updates map[string]any) error {
+func (im *IncidentMemory) UpdateIncident(ctx context.Context, id string, updates map[string]any) error {
 	if im.store == nil || len(updates) == 0 {
 		return nil
 	}
@@ -203,7 +203,7 @@ func (im *IncidentMemory) UpdateIncident(id string, updates map[string]any) erro
 	args = append(args, id)
 
 	query := "UPDATE incidents SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
-	return im.store.WriteWithRetry(context.Background(), query, args...)
+	return im.store.WriteWithRetry(ctx, query, args...)
 }
 
 // GetIncident retrieves a single incident by ID, including its timeline events.
@@ -302,7 +302,7 @@ func (im *IncidentMemory) ListIncidentsByService(service string) ([]*Incident, e
 }
 
 // AddTimelineEvent appends a timeline event to an incident.
-func (im *IncidentMemory) AddTimelineEvent(incidentID string, event TimelineEvent) error {
+func (im *IncidentMemory) AddTimelineEvent(ctx context.Context, incidentID string, event TimelineEvent) error {
 	if im.store == nil {
 		return nil
 	}
@@ -311,7 +311,7 @@ func (im *IncidentMemory) AddTimelineEvent(incidentID string, event TimelineEven
 		event.Timestamp = time.Now().UTC()
 	}
 
-	return im.store.WriteWithRetry(context.Background(),
+	return im.store.WriteWithRetry(ctx,
 		`INSERT INTO incident_timeline (incident_id, timestamp, type, content, source)
 		 VALUES (?, ?, ?, ?, ?)`,
 		incidentID, event.Timestamp, event.Type, event.Content, event.Source,
@@ -319,13 +319,13 @@ func (im *IncidentMemory) AddTimelineEvent(incidentID string, event TimelineEven
 }
 
 // ResolveIncident resolves an incident with root cause and remediation details.
-func (im *IncidentMemory) ResolveIncident(id string, rootCause, remediation string) error {
+func (im *IncidentMemory) ResolveIncident(ctx context.Context, id string, rootCause, remediation string) error {
 	if im.store == nil {
 		return nil
 	}
 
 	now := time.Now().UTC()
-	return im.store.WriteWithRetry(context.Background(),
+	return im.store.WriteWithRetry(ctx,
 		`UPDATE incidents SET status = 'resolved', root_cause = ?, remediation = ?, resolved_at = ?, updated_at = ?
 		 WHERE id = ?`,
 		rootCause, remediation, now, now, id,
@@ -333,7 +333,7 @@ func (im *IncidentMemory) ResolveIncident(id string, rootCause, remediation stri
 }
 
 // CreatePostmortem stores a post-incident review.
-func (im *IncidentMemory) CreatePostmortem(pm *Postmortem) error {
+func (im *IncidentMemory) CreatePostmortem(ctx context.Context, pm *Postmortem) error {
 	if im.store == nil {
 		return nil
 	}
@@ -346,7 +346,7 @@ func (im *IncidentMemory) CreatePostmortem(pm *Postmortem) error {
 		pm.CreatedAt = time.Now().UTC()
 	}
 
-	return im.store.WriteWithRetry(context.Background(),
+	return im.store.WriteWithRetry(ctx,
 		`INSERT INTO postmortems (id, incident_id, title, summary, root_cause, contributing, action_items, lessons_learned, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		pm.ID, pm.IncidentID, pm.Title, pm.Summary, pm.RootCause,
@@ -697,7 +697,7 @@ func (im *IncidentMemory) ingestAlertEvents(result map[string]any) error {
 					now := time.Now().UTC()
 					updates["resolved_at"] = now
 				}
-				if err := im.UpdateIncident(id, updates); err != nil {
+				if err := im.UpdateIncident(context.Background(), id, updates); err != nil {
 					slog.Warn("incident memory: failed to update incident from alert", "id", id, "error", err)
 				}
 			}
@@ -712,7 +712,7 @@ func (im *IncidentMemory) ingestAlertEvents(result map[string]any) error {
 				AlertSource: alertSource,
 				StartedAt:   time.Now().UTC(),
 			}
-			if err := im.CreateIncident(incident); err != nil {
+			if err := im.CreateIncident(context.Background(), incident); err != nil {
 				slog.Warn("incident memory: failed to create incident from alert", "id", id, "error", err)
 			}
 		}
@@ -802,7 +802,7 @@ func (im *IncidentMemory) ingestFaultTrackings(result map[string]any) error {
 				now := time.Now().UTC()
 				updates["resolved_at"] = now
 			}
-			if err := im.UpdateIncident(id, updates); err != nil {
+			if err := im.UpdateIncident(context.Background(), id, updates); err != nil {
 				slog.Warn("incident memory: failed to update incident from fault", "id", id, "error", err)
 			}
 		} else if status != "resolved" {
@@ -817,7 +817,7 @@ func (im *IncidentMemory) ingestFaultTrackings(result map[string]any) error {
 				Remediation: remediation,
 				StartedAt:   time.Now().UTC(),
 			}
-			if err := im.CreateIncident(incident); err != nil {
+			if err := im.CreateIncident(context.Background(), incident); err != nil {
 				slog.Warn("incident memory: failed to create incident from fault", "id", id, "error", err)
 			}
 		}

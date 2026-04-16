@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -50,7 +51,7 @@ func (sr *SessionRouter) Route(userID string) *RoutedSession {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		if err := sr.store.UpsertSession(session); err != nil {
+		if err := sr.store.UpsertSession(context.Background(), session); err != nil {
 			slog.Warn("router: failed to persist session", "error", err)
 		}
 	}

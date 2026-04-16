@@ -128,6 +128,7 @@ func (st *SkillTracker) GetDecayCandidates() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("skill tracker: list skills: %w", err)
 	}
+	defer rows.Close()
 
 	var skillIDs []string
 	for rows.Next() {
@@ -137,7 +138,6 @@ func (st *SkillTracker) GetDecayCandidates() ([]string, error) {
 		}
 		skillIDs = append(skillIDs, skillID)
 	}
-	rows.Close()
 
 	var candidates []string
 	for _, skillID := range skillIDs {
@@ -166,6 +166,7 @@ func (st *SkillTracker) GetAllScores() (map[string]EffectivenessScore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("skill tracker: list skills: %w", err)
 	}
+	defer rows.Close()
 
 	var skillIDs []string
 	for rows.Next() {
@@ -175,7 +176,6 @@ func (st *SkillTracker) GetAllScores() (map[string]EffectivenessScore, error) {
 		}
 		skillIDs = append(skillIDs, skillID)
 	}
-	rows.Close()
 
 	scores := make(map[string]EffectivenessScore)
 	for _, skillID := range skillIDs {
