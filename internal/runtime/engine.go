@@ -700,7 +700,7 @@ func (e *QueryEngine) createCompactionFunc() func(systemPrompt, userPrompt strin
 		messages := []api.Message{
 			{Role: "user", Content: userPrompt},
 		}
-		resp, err := client.CreateMessage(messages, systemPrompt)
+		resp, err := client.CreateMessage(context.Background(), messages, systemPrompt)
 		if err != nil {
 			return "", err
 		}

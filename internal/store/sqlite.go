@@ -89,8 +89,8 @@ func (s *Store) JSONLDir() string {
 	return s.jsonlDir
 }
 
-func (s *Store) WriteWithRetry(query string, args ...any) error {
-	return s.WriteWithRetryContext(context.Background(), query, args...)
+func (s *Store) WriteWithRetry(ctx context.Context, query string, args ...any) error {
+	return s.WriteWithRetryContext(ctx, query, args...)
 }
 
 func (s *Store) WriteWithRetryContext(ctx context.Context, query string, args ...any) error {
