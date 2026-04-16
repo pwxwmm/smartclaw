@@ -58,7 +58,8 @@ var dangerousVariables = []string{
 var controlCharsPattern = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)
 
 func ValidateCommandSecurity(command string) *SecurityValidationResult {
-	if command == "" {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
 		return &SecurityValidationResult{Allowed: false, Reason: "empty command", ErrorCode: "EMPTY_COMMAND"}
 	}
 
@@ -95,7 +96,7 @@ func ValidateCommandSecurity(command string) *SecurityValidationResult {
 		}
 	}
 
-	if strings.Contains(command, "&&") || strings.Contains(command, "||") {
+	if strings.Contains(command, "&&") || strings.Contains(command, "||") || strings.Contains(command, ";") {
 		result := validateCompoundCommand(command)
 		if !result.Allowed {
 			return result
@@ -137,8 +138,14 @@ func splitCommandWithOperators(command string) []string {
 	inSingleQuote := false
 	inDoubleQuote := false
 	escaped := false
+	skipNext := false
 
 	for i, ch := range command {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+
 		if escaped {
 			current.WriteRune(ch)
 			escaped = false
@@ -173,6 +180,7 @@ func splitCommandWithOperators(command string) []string {
 				}
 				if ch != ';' {
 					result = append(result, string(ch)+string(command[i+1]))
+					skipNext = true
 				} else {
 					result = append(result, string(ch))
 				}
