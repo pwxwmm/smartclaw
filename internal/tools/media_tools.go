@@ -3,31 +3,45 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+const maxMediaFileSize = 100 * 1024 * 1024 // 100MB
+
+func checkFileSize(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return &Error{Code: "PATH_ERROR", Message: err.Error()}
+	}
+	if info.Size() > maxMediaFileSize {
+		return &Error{Code: "FILE_TOO_LARGE", Message: fmt.Sprintf("file too large: %d bytes (max %d)", info.Size(), maxMediaFileSize)}
+	}
+	return nil
+}
+
 type ImageTool struct{ BaseTool }
 
-func (t *ImageTool) Name() string		{ return "image" }
-func (t *ImageTool) Description() string	{ return "Process and analyze images" }
+func (t *ImageTool) Name() string        { return "image" }
+func (t *ImageTool) Description() string { return "Process and analyze images" }
 
 func (t *ImageTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
 			"operation": map[string]any{
-				"type":	"string",
-				"enum":	[]string{"read", "encode", "analyze", "resize", "convert"},
+				"type": "string",
+				"enum": []string{"read", "encode", "analyze", "resize", "convert"},
 			},
-			"path":	map[string]any{"type": "string"},
+			"path": map[string]any{"type": "string"},
 			"format": map[string]any{
-				"type":	"string",
-				"enum":	[]string{"base64", "data_url", "bytes"},
+				"type": "string",
+				"enum": []string{"base64", "data_url", "bytes"},
 			},
 		},
-		"required":	[]string{"operation", "path"},
+		"required": []string{"operation", "path"},
 	}
 }
 
@@ -53,6 +67,9 @@ func (t *ImageTool) Execute(ctx context.Context, input map[string]any) (any, err
 }
 
 func (t *ImageTool) readImage(path string) (any, error) {
+	if err := checkFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
@@ -62,14 +79,17 @@ func (t *ImageTool) readImage(path string) (any, error) {
 	mimeType := t.getMimeType(ext)
 
 	return map[string]any{
-		"path":		path,
-		"size":		len(data),
-		"mime_type":	mimeType,
-		"extension":	ext,
+		"path":      path,
+		"size":      len(data),
+		"mime_type": mimeType,
+		"extension": ext,
 	}, nil
 }
 
 func (t *ImageTool) encodeImage(path, format string) (any, error) {
+	if err := checkFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
@@ -83,19 +103,22 @@ func (t *ImageTool) encodeImage(path, format string) (any, error) {
 	switch format {
 	case "data_url":
 		return map[string]any{
-			"data_url":	"data:" + mimeType + ";base64," + encoded,
-			"path":		path,
+			"data_url": "data:" + mimeType + ";base64," + encoded,
+			"path":     path,
 		}, nil
 	default:
 		return map[string]any{
-			"base64":	encoded,
-			"path":		path,
-			"size":		len(data),
+			"base64": encoded,
+			"path":   path,
+			"size":   len(data),
 		}, nil
 	}
 }
 
 func (t *ImageTool) analyzeImage(path string) (any, error) {
+	if err := checkFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
@@ -104,11 +127,11 @@ func (t *ImageTool) analyzeImage(path string) (any, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 
 	return map[string]any{
-		"path":		path,
-		"size":		len(data),
-		"extension":	ext,
-		"mime_type":	t.getMimeType(ext),
-		"analysis":	"Image analysis requires vision model",
+		"path":      path,
+		"size":      len(data),
+		"extension": ext,
+		"mime_type": t.getMimeType(ext),
+		"analysis":  "Image analysis requires vision model",
 	}, nil
 }
 
@@ -133,23 +156,23 @@ func (t *ImageTool) getMimeType(ext string) string {
 
 type PDFTool struct{ BaseTool }
 
-func (t *PDFTool) Name() string		{ return "pdf" }
-func (t *PDFTool) Description() string	{ return "Read and extract text from PDF files" }
+func (t *PDFTool) Name() string        { return "pdf" }
+func (t *PDFTool) Description() string { return "Read and extract text from PDF files" }
 
 func (t *PDFTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
 			"operation": map[string]any{
-				"type":	"string",
-				"enum":	[]string{"read", "extract", "info", "pages"},
+				"type": "string",
+				"enum": []string{"read", "extract", "info", "pages"},
 			},
-			"path":		map[string]any{"type": "string"},
-			"page":		map[string]any{"type": "integer"},
-			"start":	map[string]any{"type": "integer"},
-			"end":		map[string]any{"type": "integer"},
+			"path":  map[string]any{"type": "string"},
+			"page":  map[string]any{"type": "integer"},
+			"start": map[string]any{"type": "integer"},
+			"end":   map[string]any{"type": "integer"},
 		},
-		"required":	[]string{"operation", "path"},
+		"required": []string{"operation", "path"},
 	}
 }
 
@@ -174,6 +197,9 @@ func (t *PDFTool) Execute(ctx context.Context, input map[string]any) (any, error
 }
 
 func (t *PDFTool) readPDF(path string, input map[string]any) (any, error) {
+	if err := checkFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
@@ -190,51 +216,54 @@ func (t *PDFTool) readPDF(path string, input map[string]any) (any, error) {
 	}
 
 	return map[string]any{
-		"path":		path,
-		"size":		len(data),
-		"start_page":	start,
-		"end_page":	end,
-		"text":		"PDF text extraction requires external library",
-		"note":		"Install pdftotext for text extraction",
+		"path":       path,
+		"size":       len(data),
+		"start_page": start,
+		"end_page":   end,
+		"text":       "PDF text extraction requires external library",
+		"note":       "Install pdftotext for text extraction",
 	}, nil
 }
 
 func (t *PDFTool) pdfInfo(path string) (any, error) {
+	if err := checkFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
 	}
 
 	return map[string]any{
-		"path":	path,
-		"size":	len(data),
-		"info":	"PDF info extraction requires external library",
+		"path": path,
+		"size": len(data),
+		"info": "PDF info extraction requires external library",
 	}, nil
 }
 
 func (t *PDFTool) getPages(path string) (any, error) {
 	return map[string]any{
-		"path":		path,
-		"pages":	"Page count requires external library",
+		"path":  path,
+		"pages": "Page count requires external library",
 	}, nil
 }
 
 type AudioTool struct{ BaseTool }
 
-func (t *AudioTool) Name() string		{ return "audio" }
-func (t *AudioTool) Description() string	{ return "Process audio files" }
+func (t *AudioTool) Name() string        { return "audio" }
+func (t *AudioTool) Description() string { return "Process audio files" }
 
 func (t *AudioTool) InputSchema() map[string]any {
 	return map[string]any{
-		"type":	"object",
+		"type": "object",
 		"properties": map[string]any{
 			"operation": map[string]any{
-				"type":	"string",
-				"enum":	[]string{"read", "info", "transcribe"},
+				"type": "string",
+				"enum": []string{"read", "info", "transcribe"},
 			},
-			"path":	map[string]any{"type": "string"},
+			"path": map[string]any{"type": "string"},
 		},
-		"required":	[]string{"operation", "path"},
+		"required": []string{"operation", "path"},
 	}
 }
 
@@ -246,6 +275,10 @@ func (t *AudioTool) Execute(ctx context.Context, input map[string]any) (any, err
 		return nil, ErrRequiredField("path")
 	}
 
+	if err := checkFileSize(path); err != nil {
+		return nil, err
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &Error{Code: "READ_ERROR", Message: err.Error()}
@@ -254,11 +287,11 @@ func (t *AudioTool) Execute(ctx context.Context, input map[string]any) (any, err
 	ext := strings.ToLower(filepath.Ext(path))
 
 	return map[string]any{
-		"operation":	operation,
-		"path":		path,
-		"size":		len(data),
-		"extension":	ext,
-		"mime_type":	t.getMimeType(ext),
+		"operation": operation,
+		"path":      path,
+		"size":      len(data),
+		"extension": ext,
+		"mime_type": t.getMimeType(ext),
 	}, nil
 }
 

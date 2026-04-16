@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -186,9 +187,63 @@ func (cs *CodeSandbox) executePython(ctx context.Context, code string, toolHandl
 }
 
 func (cs *CodeSandbox) executeGo(ctx context.Context, code string, toolHandler func(tool string, input map[string]any) (any, error)) (*ExecuteResult, error) {
+	tmpDir, err := os.MkdirTemp("", "smartclaw-go-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	srcFile := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(srcFile, []byte(code), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write source: %w", err)
+	}
+
+	goCtx, cancel := context.WithTimeout(ctx, cs.config.Timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(goCtx, "go", "run", srcFile)
+	cmd.Dir = tmpDir
+	cmd.Env = cs.buildEnv()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	startTime := time.Now()
+	err = cmd.Run()
+	duration := time.Since(startTime)
+
+	exitCode := 0
+	timedOut := false
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			if goCtx.Err() == context.DeadlineExceeded {
+				timedOut = true
+				exitCode = -1
+			} else {
+				exitCode = 1
+			}
+		}
+	}
+
+	output := stdout.String()
+	if stderr.Len() > 0 && exitCode != 0 {
+		output = stdout.String() + "\n" + stderr.String()
+	}
+
+	truncated := len(output) > cs.config.MaxOutput
+	if truncated {
+		output = output[:cs.config.MaxOutput] + "\n... (output truncated)"
+	}
+
 	return &ExecuteResult{
-		ExitCode: 1,
-		Stdout:   "Go code execution not yet supported",
+		ExitCode:  exitCode,
+		Stdout:    output,
+		Duration:  duration,
+		TimedOut:  timedOut,
+		Truncated: truncated,
 	}, nil
 }
 
