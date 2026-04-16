@@ -924,7 +924,7 @@ func (e *QueryEngine) persistMessage(role, content string) {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
 		}
-		if _, err := e.dataStore.InsertMessage(msg); err != nil {
+		if err := e.dataStore.InsertMessage(context.Background(), msg); err != nil {
 			lastErr = err
 			slog.Warn("engine: failed to persist message", "attempt", attempt+1, "error", err)
 			continue
@@ -991,8 +991,9 @@ func (e *QueryEngine) buildResultFromResponse(ctx context.Context, resp *api.Mes
 	return result
 }
 
+var codeIndicators = []string{"func ", "func(", "import ", "package ", "class ", "def ", "fn ", "pub fn", "{", "};", "=>", "->", "==", "!=", "return "}
+
 func containsCode(s string) bool {
-	codeIndicators := []string{"func ", "func(", "import ", "package ", "class ", "def ", "fn ", "pub fn", "{", "};", "=>", "->", "==", "!=", "return "}
 	lower := strings.ToLower(s)
 	for _, indicator := range codeIndicators {
 		if strings.Contains(lower, indicator) {
