@@ -154,10 +154,6 @@ func (ct *CronTrigger) tick() {
 	}
 
 	for _, task := range tasks {
-		if !task.Enabled {
-			continue
-		}
-
 		if !ct.acquireLock(task.ID) {
 			slog.Info("cron: skipping task, another instance is running", "id", task.ID)
 			continue
@@ -239,6 +235,45 @@ func (ct *CronTrigger) loadDueTasks() ([]*CronTask, error) {
 		return nil, fmt.Errorf("read cron dir: %w", err)
 	}
 
+	now := time.Now()
+	var due []*CronTask
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		path := filepath.Join(ct.cronDir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		task := &CronTask{}
+		if err := json.Unmarshal(data, task); err != nil {
+			continue
+		}
+
+		if !task.Enabled {
+			continue
+		}
+
+		if isScheduleDue(task.Schedule, now, task.LastRunAt) {
+			due = append(due, task)
+		}
+	}
+
+	return due, nil
+}
+
+func (ct *CronTrigger) loadAllTasks() ([]*CronTask, error) {
+	entries, err := os.ReadDir(ct.cronDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read cron dir: %w", err)
+	}
+
 	var tasks []*CronTask
 	for _, entry := range entries {
 		if filepath.Ext(entry.Name()) != ".json" {
@@ -273,7 +308,7 @@ func (ct *CronTrigger) saveTask(task *CronTask) error {
 }
 
 func (ct *CronTrigger) ListTasks() ([]*CronTask, error) {
-	return ct.loadDueTasks()
+	return ct.loadAllTasks()
 }
 
 func (ct *CronTrigger) DeleteTask(taskID string) error {
@@ -286,7 +321,7 @@ func (ct *CronTrigger) DeleteTask(taskID string) error {
 }
 
 func (ct *CronTrigger) DisableTask(taskID string) error {
-	tasks, err := ct.loadDueTasks()
+	tasks, err := ct.loadAllTasks()
 	if err != nil {
 		return err
 	}
