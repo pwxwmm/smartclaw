@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"sync"
@@ -86,7 +87,8 @@ func (c *RetryConfig) CalculateDelay(attempt int) time.Duration {
 			delay = c.MaxDelay
 		}
 	}
-	return delay
+	jitter := time.Duration(rand.Int63n(int64(delay / 2)))
+	return delay - delay/4 + jitter
 }
 
 type RetryableRequest struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -138,7 +139,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	for attempt := 0; attempt <= t.maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(t.backoff * time.Duration(1<<(attempt-1)))
+			delay := t.backoff * time.Duration(1<<(attempt-1))
+			jitter := time.Duration(rand.Int63n(int64(delay / 2)))
+			time.Sleep(delay + jitter)
 		}
 
 		if bodyBytes != nil {
