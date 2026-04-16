@@ -9,8 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/config"
 	"github.com/instructkr/smartclaw/internal/security"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
+
+type hookConfigFile struct {
+	Hooks []HookConfig `json:"hooks"`
+}
 
 type HookEvent string
 
@@ -250,10 +256,10 @@ func (e *HookExecutor) executeHook(ctx context.Context, hook HookConfig, input *
 		return result
 	}
 
-	go func() {
+	utils.Go(func() {
 		defer stdinPipe.Close()
 		stdinPipe.Write(inputData)
-	}()
+	})
 
 	output, err := cmd.CombinedOutput()
 	result.Duration = time.Since(startTime)
@@ -306,17 +312,18 @@ func (e *HookExecutor) ExecuteAsync(ctx context.Context, event HookEvent, input 
 			continue
 		}
 
-		go func(h HookConfig) {
+		h := hook
+		utils.Go(func() {
 			result := e.executeHook(ctx, h, input)
 			if callback != nil {
 				callback(result)
 			}
-		}(hook)
+		})
 	}
 }
 
 func (e *HookRegistry) LoadFromConfig(configPath string) error {
-	data, err := os.ReadFile(configPath)
+	cfg, err := config.LoadJSON[hookConfigFile](configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -324,15 +331,7 @@ func (e *HookRegistry) LoadFromConfig(configPath string) error {
 		return err
 	}
 
-	var config struct {
-		Hooks []HookConfig `json:"hooks"`
-	}
-
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
-	}
-
-	for _, hook := range config.Hooks {
+	for _, hook := range cfg.Hooks {
 		if hook.Enabled {
 			e.Register(hook)
 		}
@@ -350,18 +349,11 @@ func (e *HookRegistry) SaveToConfig(configPath string) error {
 		allHooks = append(allHooks, hooks...)
 	}
 
-	config := struct {
-		Hooks []HookConfig `json:"hooks"`
-	}{
+	hookCfg := hookConfigFile{
 		Hooks: allHooks,
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(configPath, data, 0644)
+	return config.SaveJSON(configPath, &hookCfg)
 }
 
 type HookManager struct {

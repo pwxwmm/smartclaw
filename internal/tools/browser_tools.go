@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type browserContextEntry struct {
@@ -30,13 +31,13 @@ func init() {
 
 func startBrowserCtxCleanup() {
 	browserOnce.Do(func() {
-		go func() {
+		utils.Go(func() {
 			ticker := time.NewTicker(5 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
 				cleanStaleBrowserContexts()
 			}
-		}()
+		})
 	})
 }
 

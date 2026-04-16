@@ -21,6 +21,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/tools"
 
 	"github.com/instructkr/smartclaw/internal/adapters"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type QueryEngine struct {
@@ -772,10 +773,10 @@ func (e *QueryEngine) Shutdown() {
 		close(e.shutdownCh)
 
 		done := make(chan struct{})
-		go func() {
+		utils.Go(func() {
 			e.bgWg.Wait()
 			close(done)
-		}()
+		})
 
 		select {
 		case <-done:
@@ -832,7 +833,7 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 		})
 
 		e.bgWg.Add(1)
-		go func() {
+		utils.Go(func() {
 			defer e.bgWg.Done()
 			bgCtx, cancel := context.WithTimeout(context.Background(), constants.BackgroundTaskTimeout)
 			defer cancel()
@@ -848,10 +849,10 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 			if err := e.learningLoop.OnNudge(bgCtx, "auto", learningMessages); err != nil {
 				slog.Error("learning loop: OnNudge failed", "error", err)
 			}
-		}()
+		})
 
 		e.bgWg.Add(1)
-		go func() {
+		utils.Go(func() {
 			defer e.bgWg.Done()
 			bgCtx, cancel := context.WithTimeout(context.Background(), constants.BackgroundTaskTimeout)
 			defer cancel()
@@ -871,11 +872,11 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 			if err := e.learningLoop.OnTaskComplete(bgCtx, "auto", learningMessages, learningResult); err != nil {
 				slog.Error("learning loop: OnTaskComplete failed", "error", err)
 			}
-		}()
+		})
 	}
 
 	e.bgWg.Add(1)
-	go func() {
+	utils.Go(func() {
 		defer e.bgWg.Done()
 		learningResult := &learning.TaskResult{
 			StopReason: string(result.StopReason),
@@ -886,7 +887,7 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 		if err := e.learningLoop.OnTaskComplete(ctx, "auto", learningMessages, learningResult); err != nil {
 			slog.Error("learning loop: OnTaskComplete failed", "error", err)
 		}
-	}()
+	})
 }
 
 func convertToLearningMessages(messages []Message) []learning.Message {

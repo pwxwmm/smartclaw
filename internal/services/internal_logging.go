@@ -19,9 +19,9 @@ const (
 )
 
 type LogEntry struct {
-	Timestamp time.Time              `json:"timestamp"`
-	Level     LogLevel               `json:"level"`
-	Message   string                 `json:"message"`
+	Timestamp time.Time      `json:"timestamp"`
+	Level     LogLevel       `json:"level"`
+	Message   string         `json:"message"`
 	Fields    map[string]any `json:"fields,omitempty"`
 }
 
@@ -139,16 +139,19 @@ func (l *InternalLogger) Rotate() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.file != nil {
-		l.file.Close()
+	if l.file == nil {
+		return fmt.Errorf("logger not initialized")
 	}
 
-	backup := l.file.Name() + "." + time.Now().Format("20060102-150405")
-	os.Rename(l.file.Name(), backup)
+	name := l.file.Name()
+	l.file.Close()
 
-	file, err := os.OpenFile(l.file.Name(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	backup := name + "." + time.Now().Format("20060102-150405")
+	os.Rename(name, backup)
+
+	file, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to reopen log file: %w", err)
 	}
 
 	l.file = file

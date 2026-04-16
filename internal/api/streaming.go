@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type SSEEvent struct {
@@ -29,7 +31,7 @@ func NewSSEParser(reader io.Reader) *SSEParser {
 func (p *SSEParser) Parse() <-chan SSEEvent {
 	events := make(chan SSEEvent, 100)
 
-	go func() {
+	utils.Go(func() {
 		defer close(events)
 
 		var event, data strings.Builder
@@ -85,7 +87,7 @@ func (p *SSEParser) Parse() <-chan SSEEvent {
 				data.WriteString(value)
 			}
 		}
-	}()
+	})
 
 	return events
 }
@@ -377,7 +379,7 @@ func (c *Client) Stream(ctx context.Context, req *MessageRequest) (*StreamIterat
 	eventChan := make(chan StreamEventResult, 100)
 	parser := NewStreamMessageParser()
 
-	go func() {
+	utils.Go(func() {
 		defer close(eventChan)
 
 		err := c.StreamMessageSSE(ctx, req, func(event string, data []byte) error {
@@ -401,7 +403,7 @@ func (c *Client) Stream(ctx context.Context, req *MessageRequest) (*StreamIterat
 				Error: err,
 			}
 		}
-	}()
+	})
 
 	return &StreamIterator{
 		events: eventChan,

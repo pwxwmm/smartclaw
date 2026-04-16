@@ -9,6 +9,7 @@ import (
 
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/constants"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type SpeculativeResult struct {
@@ -84,7 +85,7 @@ func (se *SpeculativeExecutor) Execute(ctx context.Context, messages []api.Messa
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	go func() {
+	utils.Go(func() {
 		defer wg.Done()
 		start := time.Now()
 		select {
@@ -94,9 +95,9 @@ func (se *SpeculativeExecutor) Execute(ctx context.Context, messages []api.Messa
 			resp, err := se.secondaryClient.CreateMessageWithSystem(ctx, messages, systemPrompt)
 			fastCh <- modelResult{resp: resp, duration: time.Since(start), err: err}
 		}
-	}()
+	})
 
-	go func() {
+	utils.Go(func() {
 		defer wg.Done()
 		start := time.Now()
 		select {
@@ -106,7 +107,7 @@ func (se *SpeculativeExecutor) Execute(ctx context.Context, messages []api.Messa
 			resp, err := se.primaryClient.CreateMessageWithSystem(ctx, messages, systemPrompt)
 			slowCh <- modelResult{resp: resp, duration: time.Since(start), err: err}
 		}
-	}()
+	})
 
 	fastResult := <-fastCh
 	slowResult := <-slowCh
