@@ -1,6 +1,7 @@
 package layers
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestIncidentMemory_CreateAndGetIncident(t *testing.T) {
 		StartedAt:        time.Now().UTC().Truncate(time.Second),
 	}
 
-	err := im.CreateIncident(incident)
+	err := im.CreateIncident(context.Background(), incident)
 	if err != nil {
 		t.Fatalf("CreateIncident failed: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestIncidentMemory_CreateIncident_DefaultStartedAt(t *testing.T) {
 		Status:   "active",
 	}
 
-	err := im.CreateIncident(incident)
+	err := im.CreateIncident(context.Background(), incident)
 	if err != nil {
 		t.Fatalf("CreateIncident failed: %v", err)
 	}
@@ -129,9 +130,9 @@ func TestIncidentMemory_UpdateIncident(t *testing.T) {
 		Service:   "web",
 		StartedAt: time.Now().UTC(),
 	}
-	im.CreateIncident(incident)
+	im.CreateIncident(context.Background(), incident)
 
-	err := im.UpdateIncident("INC-010", map[string]any{
+	err := im.UpdateIncident(context.Background(), "INC-010", map[string]any{
 		"severity": "critical",
 		"status":   "investigating",
 	})
@@ -163,9 +164,9 @@ func TestIncidentMemory_UpdateIncident_IgnoresDisallowedFields(t *testing.T) {
 		Service:   "web",
 		StartedAt: time.Now().UTC(),
 	}
-	im.CreateIncident(incident)
+	im.CreateIncident(context.Background(), incident)
 
-	err := im.UpdateIncident("INC-011", map[string]any{
+	err := im.UpdateIncident(context.Background(), "INC-011", map[string]any{
 		"id": "should-not-change",
 	})
 	if err != nil {
@@ -190,9 +191,9 @@ func TestIncidentMemory_UpdateIncident_EmptyUpdates(t *testing.T) {
 		Service:   "web",
 		StartedAt: time.Now().UTC(),
 	}
-	im.CreateIncident(incident)
+	im.CreateIncident(context.Background(), incident)
 
-	err := im.UpdateIncident("INC-012", map[string]any{})
+	err := im.UpdateIncident(context.Background(), "INC-012", map[string]any{})
 	if err != nil {
 		t.Fatalf("UpdateIncident with empty updates should not fail: %v", err)
 	}
@@ -210,9 +211,9 @@ func TestIncidentMemory_ResolveIncident(t *testing.T) {
 		Service:   "api",
 		StartedAt: time.Now().UTC(),
 	}
-	im.CreateIncident(incident)
+	im.CreateIncident(context.Background(), incident)
 
-	err := im.ResolveIncident("INC-020", "config error", "fixed config")
+	err := im.ResolveIncident(context.Background(), "INC-020", "config error", "fixed config")
 	if err != nil {
 		t.Fatalf("ResolveIncident failed: %v", err)
 	}
@@ -238,10 +239,10 @@ func TestIncidentMemory_ListActiveIncidents(t *testing.T) {
 
 	now := time.Now().UTC()
 
-	im.CreateIncident(&Incident{ID: "INC-A1", Title: "Active 1", Severity: "critical", Status: "active", Service: "svc1", StartedAt: now})
-	im.CreateIncident(&Incident{ID: "INC-A2", Title: "Active 2", Severity: "high", Status: "investigating", Service: "svc2", StartedAt: now})
-	im.CreateIncident(&Incident{ID: "INC-A3", Title: "Resolved", Severity: "low", Status: "active", Service: "svc3", StartedAt: now})
-	im.ResolveIncident("INC-A3", "done", "fixed")
+	im.CreateIncident(context.Background(), &Incident{ID: "INC-A1", Title: "Active 1", Severity: "critical", Status: "active", Service: "svc1", StartedAt: now})
+	im.CreateIncident(context.Background(), &Incident{ID: "INC-A2", Title: "Active 2", Severity: "high", Status: "investigating", Service: "svc2", StartedAt: now})
+	im.CreateIncident(context.Background(), &Incident{ID: "INC-A3", Title: "Resolved", Severity: "low", Status: "active", Service: "svc3", StartedAt: now})
+	im.ResolveIncident(context.Background(), "INC-A3", "done", "fixed")
 
 	active, err := im.ListActiveIncidents()
 	if err != nil {
@@ -265,9 +266,9 @@ func TestIncidentMemory_ListIncidentsByService(t *testing.T) {
 
 	now := time.Now().UTC()
 
-	im.CreateIncident(&Incident{ID: "INC-S1", Title: "Service A incident", Severity: "high", Status: "active", Service: "service-a", StartedAt: now})
-	im.CreateIncident(&Incident{ID: "INC-S2", Title: "Service B incident", Severity: "low", Status: "active", Service: "service-b", StartedAt: now})
-	im.CreateIncident(&Incident{ID: "INC-S3", Title: "Another Service A", Severity: "medium", Status: "active", Service: "service-a", StartedAt: now})
+	im.CreateIncident(context.Background(), &Incident{ID: "INC-S1", Title: "Service A incident", Severity: "high", Status: "active", Service: "service-a", StartedAt: now})
+	im.CreateIncident(context.Background(), &Incident{ID: "INC-S2", Title: "Service B incident", Severity: "low", Status: "active", Service: "service-b", StartedAt: now})
+	im.CreateIncident(context.Background(), &Incident{ID: "INC-S3", Title: "Another Service A", Severity: "medium", Status: "active", Service: "service-a", StartedAt: now})
 
 	incidents, err := im.ListIncidentsByService("service-a")
 	if err != nil {
@@ -289,7 +290,7 @@ func TestIncidentMemory_AddTimelineEvent(t *testing.T) {
 	s := newTestStore(t)
 	im := NewIncidentMemory(s)
 
-	im.CreateIncident(&Incident{
+	im.CreateIncident(context.Background(), &Incident{
 		ID:        "INC-TL1",
 		Title:     "Timeline test",
 		Severity:  "medium",
@@ -305,7 +306,7 @@ func TestIncidentMemory_AddTimelineEvent(t *testing.T) {
 		Source:    "prometheus",
 	}
 
-	err := im.AddTimelineEvent("INC-TL1", event)
+	err := im.AddTimelineEvent(context.Background(), "INC-TL1", event)
 	if err != nil {
 		t.Fatalf("AddTimelineEvent failed: %v", err)
 	}
@@ -331,7 +332,7 @@ func TestIncidentMemory_AddTimelineEvent_DefaultTimestamp(t *testing.T) {
 	s := newTestStore(t)
 	im := NewIncidentMemory(s)
 
-	im.CreateIncident(&Incident{
+	im.CreateIncident(context.Background(), &Incident{
 		ID:        "INC-TL2",
 		Title:     "Default timestamp test",
 		Severity:  "low",
@@ -346,7 +347,7 @@ func TestIncidentMemory_AddTimelineEvent_DefaultTimestamp(t *testing.T) {
 		Source:  "engineer",
 	}
 
-	err := im.AddTimelineEvent("INC-TL2", event)
+	err := im.AddTimelineEvent(context.Background(), "INC-TL2", event)
 	if err != nil {
 		t.Fatalf("AddTimelineEvent failed: %v", err)
 	}
@@ -364,7 +365,7 @@ func TestIncidentMemory_CreateAndGetPostmortem(t *testing.T) {
 	s := newTestStore(t)
 	im := NewIncidentMemory(s)
 
-	im.CreateIncident(&Incident{
+	im.CreateIncident(context.Background(), &Incident{
 		ID:        "INC-PM1",
 		Title:     "Postmortem test",
 		Severity:  "high",
@@ -385,7 +386,7 @@ func TestIncidentMemory_CreateAndGetPostmortem(t *testing.T) {
 		CreatedAt:      time.Now().UTC().Truncate(time.Second),
 	}
 
-	err := im.CreatePostmortem(pm)
+	err := im.CreatePostmortem(context.Background(), pm)
 	if err != nil {
 		t.Fatalf("CreatePostmortem failed: %v", err)
 	}
@@ -510,7 +511,7 @@ func TestIncidentMemory_BuildIncidentPrompt(t *testing.T) {
 		t.Errorf("expected empty prompt with no data, got %q", prompt)
 	}
 
-	im.CreateIncident(&Incident{
+	im.CreateIncident(context.Background(), &Incident{
 		ID:               "INC-P1",
 		Title:            "Test incident",
 		Severity:         "critical",
@@ -559,7 +560,7 @@ func TestIncidentMemory_BuildIncidentPrompt_CharLimit(t *testing.T) {
 
 	now := time.Now().UTC()
 	for i := 0; i < 100; i++ {
-		im.CreateIncident(&Incident{
+		im.CreateIncident(context.Background(), &Incident{
 			ID:        fmt.Sprintf("INC-LIMIT-%d", i),
 			Title:     "Very long incident title that repeats to fill space and test the character limit of the prompt builder",
 			Severity:  "medium",
@@ -623,11 +624,11 @@ func TestIncidentMemory_UpdateIncidentFromToolResult_UnknownTool(t *testing.T) {
 func TestIncidentMemory_NilStore(t *testing.T) {
 	im := NewIncidentMemory(nil)
 
-	if err := im.CreateIncident(&Incident{ID: "test"}); err != nil {
+	if err := im.CreateIncident(context.Background(), &Incident{ID: "test"}); err != nil {
 		t.Errorf("CreateIncident with nil store should not error: %v", err)
 	}
 
-	if err := im.UpdateIncident("test", map[string]any{"status": "resolved"}); err != nil {
+	if err := im.UpdateIncident(context.Background(), "test", map[string]any{"status": "resolved"}); err != nil {
 		t.Errorf("UpdateIncident with nil store should not error: %v", err)
 	}
 

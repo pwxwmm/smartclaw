@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -200,7 +201,7 @@ func TestMigrateJSONLToSQLite_ValidJSONL(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
@@ -258,7 +259,7 @@ func TestMigrateJSONLToSQLite_SkipsInvalidLines(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := s.UpsertSession(session); err != nil {
+	if err := s.UpsertSession(context.Background(), session); err != nil {
 		t.Fatalf("UpsertSession: %v", err)
 	}
 
