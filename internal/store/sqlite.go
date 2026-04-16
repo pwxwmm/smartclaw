@@ -41,12 +41,14 @@ func NewStoreWithDir(dir string) (*Store, error) {
 		jsonlDir: jsonlDir,
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(4)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -62,7 +64,22 @@ func NewStoreWithDir(dir string) (*Store, error) {
 		slog.Warn("store: user_observations migration failed", "error", err)
 	}
 
+	var integrity string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		slog.Warn("SQLite integrity check failed", "result", integrity, "error", err)
+	}
+
 	s.db = db
+
+	// Start periodic WAL checkpoint to prevent unbounded WAL growth
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		}
+	}()
+
 	slog.Info("store: opened SQLite database", "path", dbPath)
 	return s, nil
 }

@@ -113,7 +113,7 @@ func (s *Store) MigrateJSONSessions(sessionsDir string) (int, error) {
 				storeMsg.Timestamp = time.Now()
 			}
 
-			if _, err := s.InsertMessage(storeMsg); err != nil {
+			if err := s.InsertMessage(context.Background(), storeMsg); err != nil {
 				slog.Warn("migrate: failed to insert message", "error", err)
 			}
 		}
@@ -181,7 +181,7 @@ func MigrateJSONLToSQLite(jsonlDir string, s *Store) error {
 				Timestamp: time.Now(),
 			}
 
-			if _, err := s.InsertMessage(msg); err != nil {
+			if err := s.InsertMessage(context.Background(), msg); err != nil {
 				continue
 			}
 			migrated++
