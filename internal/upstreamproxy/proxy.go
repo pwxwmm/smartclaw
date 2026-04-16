@@ -3,6 +3,7 @@ package upstreamproxy
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -117,7 +118,13 @@ func (p *UpstreamProxy) Forward(ctx context.Context, req *http.Request) (*http.R
 			resp.Body.Close()
 		}
 
-		time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+		delay := time.Duration(i+1) * 100 * time.Millisecond
+		jitter := time.Duration(rand.Int63n(int64(delay / 2)))
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay + jitter):
+		}
 	}
 
 	if p.breaker != nil {

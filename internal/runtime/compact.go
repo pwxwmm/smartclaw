@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/instructkr/smartclaw/internal/store"
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 const (
@@ -43,7 +44,7 @@ func DefaultCompactConfig(maxTokens int) CompactConfig {
 }
 
 func CountTokens(text string) int {
-	return len(strings.Fields(text))
+	return utils.CountTokens(text)
 }
 
 func CountMessagesTokens(messages []Message) int {

@@ -2,6 +2,8 @@ package services
 
 import (
 	"strings"
+
+	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type TokenEstimator struct {
@@ -55,8 +57,7 @@ func (c *CostCalculator) Calculate(inputTokens, outputTokens int) float64 {
 }
 
 func CountTokens(text string) int {
-	estimator := NewTokenEstimator()
-	return estimator.Estimate(text)
+	return utils.CountTokens(text)
 }
 
 func SplitByTokens(text string, maxTokens int) []string {

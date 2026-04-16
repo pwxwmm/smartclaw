@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 func HomeDir() (string, error) {
@@ -251,13 +253,17 @@ func Hostname() (string, error) {
 }
 
 func Getpid() int {
-	return os.Getppid()
+	return os.Getpid()
 }
 
 func IsTerminal(fd int) bool {
-	return false
+	return term.IsTerminal(fd)
 }
 
 func GetTerminalWidth() int {
-	return 80
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		return 80
+	}
+	return w
 }
