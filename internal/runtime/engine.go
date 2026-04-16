@@ -19,6 +19,8 @@ import (
 	"github.com/instructkr/smartclaw/internal/routing"
 	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
+
+	"github.com/instructkr/smartclaw/internal/adapters"
 )
 
 type QueryEngine struct {
@@ -143,6 +145,17 @@ func (e *QueryEngine) GetSpeculativeExecutor() *routing.SpeculativeExecutor {
 
 func (e *QueryEngine) SetCostGuard(cg *costguard.CostGuard) {
 	e.costGuard = cg
+	if cg != nil {
+		cg.OnBlock(func(snapshot costguard.CostSnapshot) {
+			slog.Warn("cost guard: blocking LLM call", "session_cost", fmt.Sprintf("$%.4f", snapshot.SessionCostUSD), "session_limit", fmt.Sprintf("$%.2f", cg.GetConfig().SessionLimitUSD))
+		})
+		cg.OnDowngrade(func(snapshot costguard.CostSnapshot) {
+			if snapshot.DowngradeModel != "" {
+				slog.Warn("cost guard: downgrading model", "from", snapshot.CurrentModel, "to", snapshot.DowngradeModel, "budget_used", fmt.Sprintf("%.0f%%", snapshot.BudgetFraction*100))
+				e.client.SetModel(snapshot.DowngradeModel)
+			}
+		})
+	}
 }
 
 func (e *QueryEngine) GetCostGuard() *costguard.CostGuard {
@@ -278,13 +291,27 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 						e.router.RecordOutcome(specResult.UsedModel, 0, success, false, duration)
 					}
 
-					return e.buildResultFromResponse(chosenResp, duration), nil
+					return e.buildResultFromResponse(ctx, chosenResp, duration), nil
 				}
 			}
 		}
 	}
 
 	startTime := time.Now()
+
+	if e.costGuard != nil && e.costGuard.IsEnabled() {
+		snapshot := e.costGuard.Snapshot(e.client.Model)
+		if snapshot.ShouldBlock {
+			return nil, fmt.Errorf("cost guard: budget exceeded ($%.4f used, $%.2f limit)", snapshot.SessionCostUSD, e.costGuard.GetConfig().SessionLimitUSD)
+		}
+		if snapshot.ShouldDowngrade {
+			recommended := e.costGuard.RecommendedModel(e.client.Model)
+			if recommended != e.client.Model {
+				slog.Warn("cost guard: pre-call model downgrade", "from", e.client.Model, "to", recommended, "budget_used", fmt.Sprintf("%.0f%%", snapshot.BudgetFraction*100))
+				e.client.SetModel(recommended)
+			}
+		}
+	}
 
 	systemPrompt := e.config.SystemPrompt
 	if e.prefetcher != nil && e.prefetcher.IsEnabled() {
@@ -317,7 +344,7 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 	if e.cacheClient != nil {
 		resp, err = e.cacheClient.CreateMessage(ctx, messages, systemPrompt)
 	} else {
-		resp, err = e.client.CreateMessage(messages, systemPrompt)
+		resp, err = e.client.CreateMessageWithSystem(ctx, messages, systemPrompt)
 	}
 	observability.EndSpan(apiSpan)
 
@@ -448,6 +475,20 @@ func (e *QueryEngine) QueryStream(ctx context.Context, input string, handler Str
 	}
 
 	startTime := time.Now()
+
+	if e.costGuard != nil && e.costGuard.IsEnabled() {
+		snapshot := e.costGuard.Snapshot(e.client.Model)
+		if snapshot.ShouldBlock {
+			return fmt.Errorf("cost guard: budget exceeded ($%.4f used, $%.2f limit)", snapshot.SessionCostUSD, e.costGuard.GetConfig().SessionLimitUSD)
+		}
+		if snapshot.ShouldDowngrade {
+			recommended := e.costGuard.RecommendedModel(e.client.Model)
+			if recommended != e.client.Model {
+				slog.Warn("cost guard: pre-call model downgrade", "from", e.client.Model, "to", recommended, "budget_used", fmt.Sprintf("%.0f%%", snapshot.BudgetFraction*100))
+				e.client.SetModel(recommended)
+			}
+		}
+	}
 
 	req := &api.MessageRequest{
 		Model:     e.client.Model,
@@ -723,6 +764,8 @@ func (e *QueryEngine) CompactIfNeeded() {
 // Safe to call multiple times.
 func (e *QueryEngine) Shutdown() {
 	e.shutdownOnce.Do(func() {
+		adapters.ShutdownInnovationPackages()
+
 		if e.cancelBg != nil {
 			e.cancelBg()
 		}
@@ -915,7 +958,7 @@ func (e *QueryEngine) assessComplexity(input string, signal routing.ComplexitySi
 	return e.router.AssessComplexity(input, signal)
 }
 
-func (e *QueryEngine) buildResultFromResponse(resp *api.MessageResponse, duration time.Duration) *QueryResult {
+func (e *QueryEngine) buildResultFromResponse(ctx context.Context, resp *api.MessageResponse, duration time.Duration) *QueryResult {
 	var content string
 	for _, block := range resp.Content {
 		if block.Type == "text" {
@@ -941,8 +984,8 @@ func (e *QueryEngine) buildResultFromResponse(resp *api.MessageResponse, duratio
 		Cost:       CalculateCost(resp.Usage),
 	}
 
-	e.triggerLearningIfNeeded(context.Background(), result)
-	e.trackUserObservations(context.Background(), content)
+	e.triggerLearningIfNeeded(ctx, result)
+	e.trackUserObservations(ctx, content)
 
 	return result
 }

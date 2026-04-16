@@ -149,7 +149,9 @@ func (l *LearningLoop) OnNudge(ctx context.Context, sessionID string, messages [
 		} else if len(auditResult.Evicted) > 0 {
 			slog.Info("learning loop: evicted stale skills", "count", len(auditResult.Evicted), "names", auditResult.Evicted)
 			if l.promptMem != nil {
-				_ = l.promptMem.EnforceLimit()
+				if err := l.promptMem.EnforceLimit(); err != nil {
+					slog.Warn("failed to enforce prompt memory limit", "error", err)
+				}
 			}
 		}
 	}
@@ -183,8 +185,10 @@ func (l *LearningLoop) OnNudge(ctx context.Context, sessionID string, messages [
 		}
 
 		if l.promptMem != nil {
-			_ = l.promptMem.AppendToSection("Learned Patterns",
-				fmt.Sprintf("- %s: %s", skill.Name, skill.Description))
+			if err := l.promptMem.AppendToSection("Learned Patterns",
+				fmt.Sprintf("- %s: %s", skill.Name, skill.Description)); err != nil {
+				slog.Warn("failed to append learned pattern to prompt memory", "error", err)
+			}
 		}
 	}
 

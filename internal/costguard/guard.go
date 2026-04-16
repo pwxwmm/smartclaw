@@ -36,7 +36,7 @@ func DefaultBudgetConfig() BudgetConfig {
 		WarningThreshold:   constants.BudgetWarningThreshold,
 		DowngradeThreshold: constants.BudgetDowngradeThreshold,
 		DowngradeModel:     "claude-3-5-haiku-20241022",
-		Enabled:            false,
+		Enabled:            true,
 	}
 }
 
@@ -216,6 +216,49 @@ func (cg *CostGuard) RecommendedModel(currentModel string) string {
 	return currentModel
 }
 
+// CostBreakdown provides a detailed per-model cost itemization.
+type CostBreakdown struct {
+	InputCost  float64 `json:"inputCost"`
+	OutputCost float64 `json:"outputCost"`
+	Model      string  `json:"model"`
+	InputRate  string  `json:"inputRate"`
+	OutputRate string  `json:"outputRate"`
+}
+
+// CalculateCost returns the cost and breakdown for a model usage without recording it.
+func (cg *CostGuard) CalculateCost(model string, inputTokens, outputTokens int) (float64, CostBreakdown) {
+	tier, ok := cg.prices[model]
+	if !ok {
+		slog.Warn("cost guard: no pricing tier for model, using default", "model", model)
+		tier = PricingTier{
+			InputPricePer1M:  3.0,
+			OutputPricePer1M: 15.0,
+			CacheReadPer1M:   0.3,
+			CacheCreatePer1M: 3.75,
+		}
+	}
+
+	inputCost := float64(inputTokens) * tier.InputPricePer1M / 1_000_000
+	outputCost := float64(outputTokens) * tier.OutputPricePer1M / 1_000_000
+	total := inputCost + outputCost
+
+	breakdown := CostBreakdown{
+		InputCost:  inputCost,
+		OutputCost: outputCost,
+		Model:      model,
+		InputRate:  fmt.Sprintf("$%.2f/1M", tier.InputPricePer1M),
+		OutputRate: fmt.Sprintf("$%.2f/1M", tier.OutputPricePer1M),
+	}
+
+	return total, breakdown
+}
+
+// GetPricingTier returns the pricing tier for a model, or false if not found.
+func (cg *CostGuard) GetPricingTier(model string) (PricingTier, bool) {
+	tier, ok := cg.prices[model]
+	return tier, ok
+}
+
 func (cg *CostGuard) addSessionCost(cost float64) {
 	cents := int64(cost * 10000)
 	cg.sessionCostUSD.Add(cents)
@@ -271,7 +314,20 @@ func (cg *CostGuard) checkDailyReset() {
 
 func (cg *CostGuard) initPricing() {
 	cg.prices = map[string]PricingTier{
+		// Claude models
+		"claude-sonnet-4-20250514": {
+			InputPricePer1M:  3.0,
+			OutputPricePer1M: 15.0,
+			CacheReadPer1M:   0.3,
+			CacheCreatePer1M: 3.75,
+		},
 		"claude-sonnet-4-5": {
+			InputPricePer1M:  3.0,
+			OutputPricePer1M: 15.0,
+			CacheReadPer1M:   0.3,
+			CacheCreatePer1M: 3.75,
+		},
+		"claude-3-5-sonnet-20241022": {
 			InputPricePer1M:  3.0,
 			OutputPricePer1M: 15.0,
 			CacheReadPer1M:   0.3,
@@ -289,12 +345,40 @@ func (cg *CostGuard) initPricing() {
 			CacheReadPer1M:   1.5,
 			CacheCreatePer1M: 18.75,
 		},
+		// GPT models
+		"gpt-4o": {
+			InputPricePer1M:  2.5,
+			OutputPricePer1M: 10.0,
+			CacheReadPer1M:   1.25,
+			CacheCreatePer1M: 2.5,
+		},
+		"gpt-4o-mini": {
+			InputPricePer1M:  0.15,
+			OutputPricePer1M: 0.6,
+			CacheReadPer1M:   0.075,
+			CacheCreatePer1M: 0.15,
+		},
+		// Gemini models
+		"gemini-2.5-pro": {
+			InputPricePer1M:  1.25,
+			OutputPricePer1M: 10.0,
+			CacheReadPer1M:   0.31,
+			CacheCreatePer1M: 1.25,
+		},
+		"gemini-2.5-flash": {
+			InputPricePer1M:  0.15,
+			OutputPricePer1M: 0.6,
+			CacheReadPer1M:   0.0375,
+			CacheCreatePer1M: 0.15,
+		},
+		// GLM models
 		"glm-4-plus": {
 			InputPricePer1M:  2.0,
 			OutputPricePer1M: 8.0,
 			CacheReadPer1M:   0.2,
 			CacheCreatePer1M: 2.5,
 		},
+		// Internal
 		"sre-model": {
 			InputPricePer1M:  0.0,
 			OutputPricePer1M: 0.0,

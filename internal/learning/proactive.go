@@ -79,6 +79,82 @@ func defaultWorkflowPatterns() []WorkflowPattern {
 			SkillID:    "deployment",
 			Confidence: 0.5,
 		},
+
+		// Incident Response Patterns
+		{
+			Name:       "alert-then-triage",
+			Sequence:   []string{"sre:alert"},
+			Suggest:    "Investigate the active faults — check severity and affected services?",
+			SkillID:    "sre-incident-triage",
+			Confidence: 0.8,
+		},
+		{
+			Name:       "triage-then-investigate",
+			Sequence:   []string{"sre:alert", "sre:triage"},
+			Suggest:    "Check node logs and recent tasks for root cause analysis?",
+			SkillID:    "sre-root-cause",
+			Confidence: 0.75,
+		},
+		{
+			Name:       "investigate-then-remediate",
+			Sequence:   []string{"sre:triage", "sre:investigate"},
+			Suggest:    "Ready to execute a remediation runbook on the affected nodes?",
+			SkillID:    "sre-remediation",
+			Confidence: 0.7,
+		},
+		{
+			Name:       "remediate-then-verify",
+			Sequence:   []string{"sre:remediate"},
+			Suggest:    "Verify the remediation — check node status and fault resolution?",
+			SkillID:    "sre-verify",
+			Confidence: 0.75,
+		},
+		{
+			Name:       "resolve-then-postmortem",
+			Sequence:   []string{"sre:alert:resolved"},
+			Suggest:    "Generate a postmortem for this incident?",
+			SkillID:    "sre-postmortem",
+			Confidence: 0.6,
+		},
+
+		// Infrastructure Management Patterns
+		{
+			Name:       "node-alert-then-inspect",
+			Sequence:   []string{"sre:inventory:alerting"},
+			Suggest:    "Inspect the alerting node — check logs and running tasks?",
+			SkillID:    "sre-node-inspect",
+			Confidence: 0.75,
+		},
+		{
+			Name:       "deploy-then-monitor",
+			Sequence:   []string{"sre:deploy"},
+			Suggest:    "Monitor the deployment — check task status and node health?",
+			SkillID:    "sre-deploy-monitor",
+			Confidence: 0.7,
+		},
+		{
+			Name:       "audit-pending-then-review",
+			Sequence:   []string{"sre:audit:pending"},
+			Suggest:    "Review the pending audit — approve or reject?",
+			SkillID:    "sre-audit-review",
+			Confidence: 0.65,
+		},
+
+		// Monitoring Patterns
+		{
+			Name:       "cluster-stats-then-capacity",
+			Sequence:   []string{"sre:capacity"},
+			Suggest:    "Review cluster capacity — any resources approaching limits?",
+			SkillID:    "sre-capacity",
+			Confidence: 0.6,
+		},
+		{
+			Name:       "fault-warranty-then-replace",
+			Sequence:   []string{"sre:hardware"},
+			Suggest:    "Check warranty status — is the hardware eligible for replacement?",
+			SkillID:    "sre-hardware",
+			Confidence: 0.55,
+		},
 	}
 }
 
@@ -175,8 +251,48 @@ func classifyAction(action Action) string {
 	case tool == "read_file" || tool == "glob" || tool == "grep":
 		return "read"
 	default:
+		if sreType := classifySREAction(tool, content); sreType != "" {
+			return sreType
+		}
 		return action.Type
 	}
+}
+
+func classifySREAction(tool, content string) string {
+	sopaToSRE := map[string]string{
+		"sopa_list_faults":           "sre:alert",
+		"sopa_get_fault":             "sre:triage",
+		"sopa_node_logs":             "sre:investigate",
+		"sopa_execute_task":          "sre:remediate",
+		"sopa_execute_orchestration": "sre:deploy",
+		"sopa_list_audits":           "sre:audit",
+		"sopa_cluster_stats":         "sre:capacity",
+		"sopa_fault_warranty":        "sre:hardware",
+		"sopa_list_nodes":            "sre:inventory",
+		"sopa_get_node":              "sre:inspect",
+	}
+
+	baseType, ok := sopaToSRE[tool]
+	if !ok {
+		return ""
+	}
+
+	switch tool {
+	case "sopa_list_faults":
+		if strings.Contains(content, "resolved") {
+			return "sre:alert:resolved"
+		}
+	case "sopa_list_nodes":
+		if strings.Contains(content, "alerting") {
+			return "sre:inventory:alerting"
+		}
+	case "sopa_list_audits":
+		if strings.Contains(content, "pending") {
+			return "sre:audit:pending"
+		}
+	}
+
+	return baseType
 }
 
 func actionMatches(actual, expected string) bool {

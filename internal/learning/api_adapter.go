@@ -32,7 +32,7 @@ func (a *APIClientAdapter) CreateMessage(ctx context.Context, systemPrompt, user
 		{Role: "user", Content: userPrompt},
 	}
 
-	resp, err := a.client.CreateMessage(messages, systemPrompt)
+	resp, err := a.client.CreateMessageWithSystem(ctx, messages, systemPrompt)
 	if err != nil {
 		return "", fmt.Errorf("learning: API call: %w", err)
 	}

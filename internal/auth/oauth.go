@@ -77,7 +77,8 @@ func ExchangeCode(config *OAuthConfig, code, verifier string) (*Token, error) {
 		"code_verifier": {verifier},
 	}
 
-	resp, err := http.PostForm(config.TokenURL, data)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.PostForm(config.TokenURL, data)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +108,8 @@ func RefreshToken(config *OAuthConfig, refreshToken string) (*Token, error) {
 		"refresh_token": {refreshToken},
 	}
 
-	resp, err := http.PostForm(config.TokenURL, data)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.PostForm(config.TokenURL, data)
 	if err != nil {
 		return nil, err
 	}

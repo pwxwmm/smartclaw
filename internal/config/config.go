@@ -12,27 +12,35 @@ import (
 )
 
 type Config struct {
-	APIKey       string               `yaml:"api_key"`
-	Model        string               `yaml:"model"`
-	BaseURL      string               `yaml:"base_url"`
-	MaxTokens    int                  `yaml:"max_tokens"`
-	Temperature  float64              `yaml:"temperature"`
-	Permission   string               `yaml:"permission"`
-	Plugins      []string             `yaml:"plugins"`
-	MCPServers   map[string]MCPServer `yaml:"mcp_servers"`
-	Hooks        map[string][]Hook    `yaml:"hooks"`
-	Custom       map[string]any       `yaml:"custom"`
-	SessionDir   string               `yaml:"session_dir"`
-	LogLevel     string               `yaml:"log_level"`
-	VoiceEnabled bool                 `yaml:"voice_enabled"`
-	ShowThinking bool                 `yaml:"show_thinking"`
-	OpenAI       bool                 `yaml:"openai"`
-	Session      string               `yaml:"session"`
-	Editor       string               `yaml:"editor"`
-	Theme        string               `yaml:"theme"`
-	Language     string               `yaml:"language"`
-	AutoSave     bool                 `yaml:"auto_save"`
-	Routing      RoutingConfig        `yaml:"routing"`
+	APIKey       string                    `yaml:"api_key"`
+	Model        string                    `yaml:"model"`
+	BaseURL      string                    `yaml:"base_url"`
+	MaxTokens    int                       `yaml:"max_tokens"`
+	Temperature  float64                   `yaml:"temperature"`
+	Permission   string                    `yaml:"permission"`
+	Plugins      []string                  `yaml:"plugins"`
+	MCPServers   map[string]MCPServer      `yaml:"mcp_servers"`
+	Hooks        map[string][]Hook         `yaml:"hooks"`
+	Custom       map[string]any            `yaml:"custom"`
+	SessionDir   string                    `yaml:"session_dir"`
+	LogLevel     string                    `yaml:"log_level"`
+	VoiceEnabled bool                      `yaml:"voice_enabled"`
+	ShowThinking bool                      `yaml:"show_thinking"`
+	OpenAI       bool                      `yaml:"openai"`
+	Session      string                    `yaml:"session"`
+	Editor       string                    `yaml:"editor"`
+	Theme        string                    `yaml:"theme"`
+	Language     string                    `yaml:"language"`
+	AutoSave     bool                      `yaml:"auto_save"`
+	Routing      RoutingConfig             `yaml:"routing"`
+	Provider     string                    `yaml:"provider,omitempty"`
+	Providers    map[string]ProviderConfig `yaml:"providers,omitempty"`
+}
+
+type ProviderConfig struct {
+	APIKey  string `yaml:"api_key" json:"apiKey"`
+	BaseURL string `yaml:"base_url,omitempty" json:"baseUrl,omitempty"`
+	Model   string `yaml:"model,omitempty" json:"model,omitempty"`
 }
 
 type RoutingConfig struct {
@@ -57,7 +65,7 @@ type Hook struct {
 
 var defaultConfig = &Config{
 	Model:        "sre-model",
-	BaseURL:      "http://10.10.190.43:8000/v1",
+	BaseURL:      "",
 	MaxTokens:    4096,
 	Temperature:  1.0,
 	Permission:   "ask",
@@ -131,9 +139,7 @@ func mergeDefaults(config *Config) {
 	if config.Model == "" {
 		config.Model = defaultConfig.Model
 	}
-	if config.BaseURL == "" {
-		config.BaseURL = defaultConfig.BaseURL
-	}
+
 	if config.MaxTokens == 0 {
 		config.MaxTokens = defaultConfig.MaxTokens
 	}
@@ -465,4 +471,22 @@ func Validate(config *Config) []string {
 	}
 
 	return errors
+}
+
+func (c *Config) ResolveProvider(name string) (apiKey, baseURL, model string, err error) {
+	if name == "" || name == "default" {
+		return c.APIKey, c.BaseURL, c.Model, nil
+	}
+
+	if c.Providers != nil {
+		if pc, ok := c.Providers[name]; ok {
+			model = pc.Model
+			if model == "" {
+				model = c.Model
+			}
+			return pc.APIKey, pc.BaseURL, model, nil
+		}
+	}
+
+	return "", "", "", fmt.Errorf("provider %q not found", name)
 }

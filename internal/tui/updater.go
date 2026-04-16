@@ -60,7 +60,8 @@ func (u *AutoUpdater) CheckForUpdate() tea.Cmd {
 	return func() tea.Msg {
 		u.status = UpdateChecking
 
-		resp, err := http.Get("https://api.github.com/repos/instructkr/smartcode/releases/latest")
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Get("https://api.github.com/repos/instructkr/smartcode/releases/latest")
 		if err != nil {
 			return UpdateMsg{Status: UpdateError, Error: err}
 		}

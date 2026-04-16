@@ -87,7 +87,7 @@ func (e *Environment) RunEpisode(ctx context.Context, taskPrompt string) (*Episo
 		default:
 		}
 
-		resp, err := e.client.CreateMessage(messages, buildTaskSystemPrompt(e.config.TaskType))
+		resp, err := e.client.CreateMessageWithSystem(epCtx, messages, buildTaskSystemPrompt(e.config.TaskType))
 		if err != nil {
 			return nil, fmt.Errorf("rl: step %d: %w", step, err)
 		}
