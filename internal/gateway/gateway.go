@@ -222,7 +222,7 @@ func (g *Gateway) persistMessage(sessionID, role, content, source string) {
 	}
 
 	if g.store != nil {
-		if _, err := g.store.InsertMessage(msg); err != nil {
+		if err := g.store.InsertMessage(context.Background(), msg); err != nil {
 			slog.Warn("gateway: failed to persist message to SQLite", "error", err)
 			g.persistToJSONL(msg)
 		}
