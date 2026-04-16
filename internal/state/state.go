@@ -17,6 +17,7 @@ type AppState struct {
 	Sessions      map[string]*types.Session
 	ActiveSession *types.Session
 	Cache         map[string]*types.CacheEntry
+	maxSessions   int
 }
 
 func NewAppState() *AppState {
@@ -25,6 +26,7 @@ func NewAppState() *AppState {
 		CurrentModel: "claude-sonnet-4-5",
 		Sessions:     make(map[string]*types.Session),
 		Cache:        make(map[string]*types.CacheEntry),
+		maxSessions:  1000,
 	}
 }
 
@@ -55,6 +57,23 @@ func (s *AppState) GetModel() string {
 func (s *AppState) CreateSession(id string) *types.Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.maxSessions > 0 && len(s.Sessions) >= s.maxSessions {
+		var oldestID string
+		var oldestTime time.Time
+		for sid, session := range s.Sessions {
+			if s.ActiveSession != nil && sid == s.ActiveSession.ID {
+				continue
+			}
+			if oldestID == "" || session.CreatedAt.Before(oldestTime) {
+				oldestID = sid
+				oldestTime = session.CreatedAt
+			}
+		}
+		if oldestID != "" {
+			delete(s.Sessions, oldestID)
+		}
+	}
 
 	session := types.NewSession(id)
 	session.Model = s.CurrentModel
@@ -205,6 +224,29 @@ func (s *AppState) ClearCache() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Cache = make(map[string]*types.CacheEntry)
+}
+
+func (s *AppState) CleanupCache() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for key, entry := range s.Cache {
+		if entry.IsExpired() {
+			delete(s.Cache, key)
+			removed++
+		}
+	}
+	return removed
+}
+
+func (s *AppState) StartCacheCleanup(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.CleanupCache()
+		}
+	}()
 }
 
 type Context struct {

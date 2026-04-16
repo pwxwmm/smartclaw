@@ -104,14 +104,13 @@ func (sm *StreamManager) Finish(executionID string) {
 	defer sm.mu.Unlock()
 	delete(sm.active, executionID)
 
-	// Keep buffer for late subscribers for a short time, then clean
-	go func() {
-		time.Sleep(5 * time.Second)
+	id := executionID
+	time.AfterFunc(5*time.Second, func() {
 		sm.mu.Lock()
-		delete(sm.chunkBuf, executionID)
-		delete(sm.subs, executionID)
+		delete(sm.chunkBuf, id)
+		delete(sm.subs, id)
 		sm.mu.Unlock()
-	}()
+	})
 }
 
 // IsActive checks if an execution is still running.

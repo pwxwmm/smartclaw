@@ -118,7 +118,7 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[strin
 	result, err := tool.Execute(ctx, input)
 	duration := time.Since(start)
 
-	go observability.AuditToolExecution(name, input, auditResultToString(result), duration, err == nil, err)
+	observability.AuditToolExecution(name, input, auditResultToString(result), duration, err == nil, err)
 
 	if err != nil {
 		return nil, err

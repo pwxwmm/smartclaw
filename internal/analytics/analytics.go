@@ -35,6 +35,7 @@ type Analytics struct {
 	sinks     []AnalyticsSink
 	mu        sync.Mutex
 	flushMu   sync.Mutex
+	flushSem  chan struct{}
 	flushTick *time.Ticker
 	stopChan  chan struct{}
 }
@@ -51,6 +52,7 @@ func NewAnalytics(config AnalyticsConfig) *Analytics {
 		config:   config,
 		events:   make([]Event, 0),
 		sinks:    make([]AnalyticsSink, 0),
+		flushSem: make(chan struct{}, 1),
 		stopChan: make(chan struct{}),
 	}
 
@@ -80,7 +82,14 @@ func (a *Analytics) Track(name string, properties map[string]any) {
 	a.mu.Unlock()
 
 	if shouldFlush {
-		go a.Flush()
+		select {
+		case a.flushSem <- struct{}{}:
+			go func() {
+				defer func() { <-a.flushSem }()
+				a.Flush()
+			}()
+		default:
+		}
 	}
 }
 
