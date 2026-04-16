@@ -2,8 +2,13 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/observability"
 )
 
 type Tool interface {
@@ -28,6 +33,7 @@ func NewBaseTool(name, description string, inputSchema map[string]any) BaseTool 
 }
 
 type ToolRegistry struct {
+	mu             sync.RWMutex
 	tools          map[string]Tool
 	cache          *ResultCache
 	chainOptimizer *ChainOptimizer
@@ -49,35 +55,47 @@ func NewRegistryWithoutCache() *ToolRegistry {
 }
 
 func (r *ToolRegistry) Register(tool Tool) {
+	r.mu.Lock()
 	r.tools[tool.Name()] = tool
+	r.mu.Unlock()
 }
 
 func (r *ToolRegistry) Unregister(name string) {
+	r.mu.Lock()
 	delete(r.tools, name)
+	r.mu.Unlock()
 }
 
 func (r *ToolRegistry) Get(name string) Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.tools[name]
 }
 
 func (r *ToolRegistry) All() []Tool {
+	r.mu.RLock()
 	result := make([]Tool, 0, len(r.tools))
 	for _, tool := range r.tools {
 		result = append(result, tool)
 	}
+	r.mu.RUnlock()
 	return result
 }
 
 func (r *ToolRegistry) Names() []string {
+	r.mu.RLock()
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
 	}
+	r.mu.RUnlock()
 	return names
 }
 
 func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[string]any) (any, error) {
-	tool := r.Get(name)
+	r.mu.RLock()
+	tool := r.tools[name]
+	r.mu.RUnlock()
 	if tool == nil {
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -96,9 +114,25 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[strin
 		}
 	}
 
+	start := time.Now()
 	result, err := tool.Execute(ctx, input)
+	duration := time.Since(start)
+
+	go observability.AuditToolExecution(name, input, auditResultToString(result), duration, err == nil, err)
+
 	if err != nil {
 		return nil, err
+	}
+
+	if strings.HasPrefix(name, "sopa_") {
+		go func() {
+			if resultMap, ok := result.(map[string]any); ok {
+				im := getIncidentMemory()
+				if im != nil {
+					_ = im.UpdateIncidentFromToolResult(sopaToolNameToIncidentName(name), resultMap)
+				}
+			}
+		}()
 	}
 
 	if r.chainOptimizer != nil {
@@ -145,6 +179,15 @@ func (r *ToolRegistry) GetBatchExecutor() *BatchExecutor {
 	return r.batchExecutor
 }
 
+func sopaToolNameToIncidentName(name string) string {
+	switch name {
+	case "sopa_list_faults":
+		return "sopa_fault_tracking_list"
+	default:
+		return name
+	}
+}
+
 func extractDepFiles(toolName string, input map[string]any) []string {
 	var files []string
 
@@ -168,6 +211,24 @@ func extractDepFiles(toolName string, input map[string]any) []string {
 	return files
 }
 
+func auditResultToString(result any) string {
+	if result == nil {
+		return ""
+	}
+	switch v := result.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(data)
+	}
+}
+
 var defaultRegistry *ToolRegistry
 
 func init() {
@@ -180,6 +241,8 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&ReadFileTool{})
 	defaultRegistry.Register(&WriteFileTool{})
 	defaultRegistry.Register(&EditFileTool{})
+	defaultRegistry.Register(&LineEditTool{})
+	defaultRegistry.Register(&PreviewFileTool{})
 	defaultRegistry.Register(&GlobTool{})
 	defaultRegistry.Register(&GrepTool{})
 	defaultRegistry.Register(&WebFetchTool{})
@@ -249,6 +312,35 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&BrowserSelectTool{})
 	defaultRegistry.Register(&BrowserFillFormTool{})
 	defaultRegistry.Register(&MemoryRecallTool{})
+	defaultRegistry.Register(&GitHubCreatePRTool{})
+	defaultRegistry.Register(&GitHubListPRsTool{})
+	defaultRegistry.Register(&GitHubMergePRTool{})
+	defaultRegistry.Register(&GitHubCreateIssueTool{})
+	defaultRegistry.Register(&GitHubListIssuesTool{})
+	defaultRegistry.Register(&WorktreeCreateTool{})
+	defaultRegistry.Register(&WorktreeRemoveTool{})
+	defaultRegistry.Register(&WorktreeListTool{})
+	defaultRegistry.Register(&WorktreeDiffTool{})
+	defaultRegistry.Register(&WorktreeMergeTool{})
+	defaultRegistry.Register(&SopaListNodesTool{})
+	defaultRegistry.Register(&SopaGetNodeTool{})
+	defaultRegistry.Register(&SopaNodeLogsTool{})
+	defaultRegistry.Register(&SopaNodeTasksTool{})
+	defaultRegistry.Register(&SopaClusterStatsTool{})
+	defaultRegistry.Register(&SopaExecuteTaskTool{})
+	defaultRegistry.Register(&SopaExecuteOrchestrationTool{})
+	defaultRegistry.Register(&SopaTaskStatusTool{})
+	defaultRegistry.Register(&SopaListFaultsTool{})
+	defaultRegistry.Register(&SopaGetFaultTool{})
+	defaultRegistry.Register(&SopaListFaultTypesTool{})
+	defaultRegistry.Register(&SopaFaultWarrantyTool{})
+	defaultRegistry.Register(&SopaListAuditsTool{})
+	defaultRegistry.Register(&SopaApproveAuditTool{})
+	defaultRegistry.Register(&SopaRejectAuditTool{})
+	defaultRegistry.Register(&AuditQueryTool{})
+	defaultRegistry.Register(&AuditStatsTool{})
+	defaultRegistry.Register(&InvestigateIncidentTool{})
+	defaultRegistry.Register(&IncidentTimelineTool{})
 }
 
 func GetRegistry() *ToolRegistry {
