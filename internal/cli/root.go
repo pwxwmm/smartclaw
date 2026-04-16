@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/instructkr/smartclaw/internal/acp"
+	"github.com/instructkr/smartclaw/internal/adapters"
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/auth"
 	"github.com/instructkr/smartclaw/internal/batch"
@@ -19,6 +20,8 @@ import (
 	"github.com/instructkr/smartclaw/internal/gateway/platform"
 	"github.com/instructkr/smartclaw/internal/hooks"
 	"github.com/instructkr/smartclaw/internal/logger"
+	"github.com/instructkr/smartclaw/internal/memory"
+	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/rl"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -184,6 +187,16 @@ func init() {
 IDEs (VS Code, Zed, JetBrains) launch 'smartclaw acp' and communicate
 over stdin/stdout using JSON-RPC with Content-Length framing.`,
 		Run: func(cmd *cobra.Command, args []string) {
+			mm, mmErr := memory.NewMemoryManager()
+			if mmErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: memory manager init failed: %v\n", mmErr)
+			} else {
+				tools.SetMemoryManagerForTools(mm)
+				tools.SetIncidentMemory(mm.GetIncidentMemory())
+			}
+
+			adapters.InitInnovationPackages(mm, nil)
+
 			registry := tools.GetRegistry()
 			server := acp.NewACPServer(registry)
 			ctx := context.Background()
@@ -316,9 +329,10 @@ Each task produces an episode with step-by-step rewards.
 		Use:   "gateway",
 		Short: "Start platform gateway for multi-platform agent access",
 		Long: `Start the SmartClaw gateway that routes messages from
-multiple platforms (Telegram, Web, Terminal) to the agent.
+multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 
-  smartclaw gateway --adapters telegram,web --telegram-token <BOT_TOKEN>`,
+  smartclaw gateway --adapters telegram,web --telegram-token <BOT_TOKEN>
+  SLACK_BOT_TOKEN=xoxb-... smartclaw gateway --adapters slack,web`,
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg, err := getClientConfig()
 			if err != nil {
@@ -329,6 +343,20 @@ multiple platforms (Telegram, Web, Terminal) to the agent.
 			client := api.NewClientWithModel(cfg.APIKey, cfg.BaseURL, cfg.Model)
 			if cfg.IsOpenAI {
 				client.SetOpenAI(true)
+			}
+
+			mm, err := memory.NewMemoryManager()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: memory manager init failed: %v\n", err)
+			} else {
+				tools.SetMemoryManagerForTools(mm)
+				tools.SetIncidentMemory(mm.GetIncidentMemory())
+			}
+
+			adapters.InitInnovationPackages(mm, client)
+
+			if shutdown, err := observability.InitOTLP(); err == nil {
+				defer shutdown(context.Background())
 			}
 
 			gw := gateway.NewGateway(
@@ -353,6 +381,18 @@ multiple platforms (Telegram, Web, Terminal) to the agent.
 							fmt.Fprintf(os.Stderr, "Telegram adapter error: %v\n", err)
 						}
 					}()
+				case "slack":
+					sa := platform.NewSlackAdapterFromEnv(gw)
+					if sa == nil {
+						fmt.Fprintln(os.Stderr, "Error: SLACK_BOT_TOKEN env var required for slack adapter")
+						os.Exit(1)
+					}
+					gw.GetDelivery().RegisterAdapter(sa)
+					go func() {
+						if err := sa.Start(context.Background()); err != nil {
+							fmt.Fprintf(os.Stderr, "Slack adapter error: %v\n", err)
+						}
+					}()
 				case "web":
 					wa := platform.NewWebAdapter(nil)
 					gw.GetDelivery().RegisterAdapter(wa)
@@ -373,7 +413,7 @@ multiple platforms (Telegram, Web, Terminal) to the agent.
 			select {}
 		},
 	}
-	gatewayCmd.Flags().StringSliceVar(&gatewayAdapters, "adapters", []string{}, "Platform adapters (telegram, web, terminal)")
+	gatewayCmd.Flags().StringSliceVar(&gatewayAdapters, "adapters", []string{}, "Platform adapters (telegram, slack, web, terminal)")
 	gatewayCmd.Flags().StringVar(&telegramToken, "telegram-token", "", "Telegram Bot API token")
 	rootCmd.AddCommand(gatewayCmd)
 

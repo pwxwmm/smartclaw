@@ -1,0 +1,60 @@
+version: 2
+builds:
+  - main: ./cmd/smartclaw
+    binary: smartclaw
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/instructkr/smartclaw/internal/cli.Version={{.Version}} -X github.com/instructkr/smartclaw/internal/cli.Commit={{.Commit}} -X github.com/instructkr/smartclaw/internal/cli.Date={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+
+brews:
+  - name: smartclaw
+    repository:
+      owner: instructkr
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://github.com/instructkr/smartclaw"
+    description: "AI-powered SRE assistant with learning loop"
+    test: |
+      system "#{bin}/smartclaw version"
+
+scoops:
+  - name: smartclaw
+    repository:
+      owner: instructkr
+      name: scoop-bucket
+    homepage: "https://github.com/instructkr/smartclaw"
+    description: "AI-powered SRE assistant with learning loop"

@@ -11,9 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/instructkr/smartclaw/internal/adapters"
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/auth"
 	"github.com/instructkr/smartclaw/internal/commands"
+	"github.com/instructkr/smartclaw/internal/memory"
+	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/tui"
@@ -102,6 +105,23 @@ func runREPL(cmd *cobra.Command, args []string) {
 	}
 
 	session.toolReg = tools.GetRegistry()
+
+	workDir, _ := os.Getwd()
+	tools.SetAllowedDirs([]string{workDir})
+
+	mm, err := memory.NewMemoryManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: memory manager init failed: %v\n", err)
+	} else {
+		tools.SetMemoryManagerForTools(mm)
+		tools.SetIncidentMemory(mm.GetIncidentMemory())
+	}
+
+	adapters.InitInnovationPackages(mm, session.apiClient)
+
+	if shutdown, err := observability.InitOTLP(); err == nil {
+		defer shutdown(context.Background())
+	}
 
 	fmt.Println("💡 SmartClaw REPL")
 	fmt.Printf("Model: %s\n", model)
@@ -435,6 +455,23 @@ func runTUI(cmd *cobra.Command, args []string) {
 
 	apiClient := api.NewClientWithModel(apiKey, baseURL, model)
 	apiClient.SetOpenAI(isOpenAI)
+
+	mm, err := memory.NewMemoryManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: memory manager init failed: %v\n", err)
+	} else {
+		tools.SetMemoryManagerForTools(mm)
+		tools.SetIncidentMemory(mm.GetIncidentMemory())
+	}
+
+	workDir, _ := os.Getwd()
+	tools.SetAllowedDirs([]string{workDir})
+
+	adapters.InitInnovationPackages(mm, apiClient)
+
+	if shutdown, err := observability.InitOTLP(); err == nil {
+		defer shutdown(context.Background())
+	}
 
 	if err := tui.StartTUIWithClient(apiClient); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

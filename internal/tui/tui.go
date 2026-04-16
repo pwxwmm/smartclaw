@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +21,9 @@ import (
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/services"
 	"github.com/instructkr/smartclaw/internal/session"
+	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/voice"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type Model struct {
@@ -123,7 +127,7 @@ func InitialModel() Model {
 
 	var currentSession *session.Session
 	if sessionManager != nil {
-		currentSession = sessionManager.NewSession("claude-sonnet-4-5")
+		currentSession = sessionManager.NewSession("claude-sonnet-4-5", "default")
 	}
 
 	workDir, err := os.Getwd()
@@ -461,11 +465,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlG:
 			m.mouseEnabled = !m.mouseEnabled
 			if m.mouseEnabled {
-				m.copyFeedback = "Mouse mode: scroll + click"
-			} else {
-				m.copyFeedback = "Mouse mode: scroll only (select/copy via keyboard c/C/b)"
+				m.copyFeedback = "Mouse: scroll enabled (Ctrl+G to select/copy)"
+				return m, tea.EnableMouseCellMotion
 			}
-			return m, nil
+			m.copyFeedback = "Mouse: select/copy enabled (Ctrl+G to scroll)"
+			return m, tea.DisableMouse
 		case tea.KeyCtrlW:
 			m.showThinking = !m.showThinking
 			if m.showThinking {
@@ -980,8 +984,17 @@ func (m Model) renderStatus() string {
 	borderStyle := lipgloss.NewStyle().
 		Foreground(m.theme.Border)
 
+	hintStyle := lipgloss.NewStyle().
+		Foreground(m.theme.TextMuted)
+
+	mouseState := "🖱scroll"
+	if !m.mouseEnabled {
+		mouseState = "✋select"
+	}
+	hints := hintStyle.Render(fmt.Sprintf(" PgUp/PgDn:scroll │ Ctrl+G:%s │ c:copy │ C:copy-msg │ b:copy-code ", mouseState))
+
 	return borderStyle.Render("╰"+strings.Repeat("─", m.width-2)+"╯\n") +
-		m.statusBar.Render()
+		m.statusBar.Render() + "\n" + hints
 }
 
 func (m Model) renderHelp() string {
@@ -1267,6 +1280,8 @@ func (m *Model) callAPI(input string) tea.Cmd {
 			Model:     m.model,
 			MaxTokens: 4096,
 			Messages:  m.messages,
+			Tools:     m.buildToolDefinitions(),
+			System:    m.buildSystemPrompt(),
 		}
 
 		m.streamState.mu.Lock()
@@ -1337,6 +1352,10 @@ func (m *Model) callAPI(input string) tea.Cmd {
 		}
 		m.messages = append(m.messages, assistantMsg)
 
+		if mcpResults := m.executeMCPCalls(finalResponse); len(mcpResults) > 0 {
+			return APIResponseMsg{text: finalResponse + mcpResults, thinkingBlock: thinkingBlock, tokens: 0}
+		}
+
 		return APIResponseMsg{text: finalResponse, thinkingBlock: thinkingBlock, tokens: 0}
 	}
 }
@@ -1351,6 +1370,191 @@ func AddOutput(m *Model, text string) {
 func AddError(m *Model, err string) {
 	m.output = append(m.output, m.formatError(err))
 	m.rawOutput = append(m.rawOutput, "Error: "+err)
+}
+
+func (m *Model) executeMCPCalls(response string) string {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile("```mcp__([a-zA-Z0-9_-]+)__([a-zA-Z0-9_-]+)\\s*([\\s\\S]*?)```"),
+		regexp.MustCompile("`mcp__([a-zA-Z0-9_-]+)__([a-zA-Z0-9_-]+)\\s*([\\s\\S]*?)`"),
+		regexp.MustCompile("mcp__([a-zA-Z0-9_-]+)__([a-zA-Z0-9_-]+)\\s*(\\{[^}]*\\})?"),
+	}
+
+	var matches [][]string
+	for _, p := range patterns {
+		matches = p.FindAllStringSubmatch(response, -1)
+		if len(matches) > 0 {
+			break
+		}
+	}
+
+	if len(matches) == 0 {
+		return ""
+	}
+
+	mcpRegistry := tools.GetMCPRegistry()
+	var resultBuilder strings.Builder
+	executed := map[string]bool{}
+
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		serverName := match[1]
+		toolName := match[2]
+
+		callKey := serverName + "__" + toolName
+		if executed[callKey] {
+			continue
+		}
+		executed[callKey] = true
+
+		var input map[string]any
+		if len(match) > 3 && strings.TrimSpace(match[3]) != "" {
+			paramStr := strings.TrimSpace(match[3])
+			if strings.HasPrefix(paramStr, "{") {
+				json.Unmarshal([]byte(paramStr), &input)
+			}
+		}
+		if input == nil {
+			input = make(map[string]any)
+		}
+
+		client, ok := mcpRegistry.Get(serverName)
+		if !ok {
+			resultBuilder.WriteString(fmt.Sprintf("\n\n❌ MCP server '%s' not connected", serverName))
+			continue
+		}
+
+		result, err := client.InvokeTool(context.Background(), toolName, input)
+		if err != nil {
+			resultBuilder.WriteString(fmt.Sprintf("\n\n❌ mcp__%s__%s error: %v", serverName, toolName, err))
+			continue
+		}
+
+		resultStr := formatMCPResult(result)
+		if len(resultStr) > 5000 {
+			resultStr = resultStr[:5000] + "\n  ... (truncated)"
+		}
+		resultBuilder.WriteString(fmt.Sprintf("\n\n📤 mcp__%s__%s result:\n%s", serverName, toolName, resultStr))
+
+		toolResultMsg := api.Message{
+			Role:    "user",
+			Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Tool mcp__%s__%s returned:\n%s\n\nPlease summarize this result for the user in a clear, readable format.", serverName, toolName, resultStr)}},
+		}
+		m.messages = append(m.messages, toolResultMsg)
+	}
+
+	return resultBuilder.String()
+}
+
+func formatMCPResult(result any) string {
+	callResult, ok := result.(*sdk.CallToolResult)
+	if !ok {
+		b, _ := json.MarshalIndent(result, "", "  ")
+		return string(b)
+	}
+
+	if callResult.IsError {
+		var texts []string
+		for _, c := range callResult.Content {
+			if tc, ok := c.(*sdk.TextContent); ok && tc.Text != "" {
+				texts = append(texts, tc.Text)
+			}
+		}
+		return "Error: " + strings.Join(texts, "\n")
+	}
+
+	var parts []string
+	for _, c := range callResult.Content {
+		switch content := c.(type) {
+		case *sdk.TextContent:
+			text := strings.TrimSpace(content.Text)
+			if text == "" {
+				continue
+			}
+
+			var parsed any
+			if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+				formatted, err := json.MarshalIndent(parsed, "", "  ")
+				if err == nil {
+					parts = append(parts, string(formatted))
+					continue
+				}
+			}
+			parts = append(parts, text)
+		case *sdk.ImageContent:
+			parts = append(parts, "[Image]")
+		default:
+			parts = append(parts, fmt.Sprintf("%v", content))
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+func (m *Model) buildSystemPrompt() string {
+	var sb strings.Builder
+	sb.WriteString("You are SmartClaw, a helpful AI assistant. You have access to various tools to help the user.")
+
+	mcpRegistry := tools.GetMCPRegistry()
+	connectedServers := mcpRegistry.ListConnected()
+	if len(connectedServers) > 0 {
+		sb.WriteString("\n\nYou have access to MCP (Model Context Protocol) servers with the following tools:")
+		for _, serverName := range connectedServers {
+			client, ok := mcpRegistry.Get(serverName)
+			if !ok || !client.IsReady() {
+				continue
+			}
+			conn := client.GetConnection()
+			if conn == nil {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("\n\n## %s Server\n", serverName))
+			for _, mcpTool := range conn.Tools {
+				sb.WriteString(fmt.Sprintf("- **mcp__%s__%s**: %s\n", serverName, mcpTool.Name, mcpTool.Description))
+			}
+		}
+		sb.WriteString("\nTo use an MCP tool, include a tool_use block with the tool name (e.g. `mcp__sopa__list_nodes`) and the required input parameters.")
+	}
+
+	return sb.String()
+}
+
+func (m *Model) buildToolDefinitions() []api.ToolDefinition {
+	toolDefs := make([]api.ToolDefinition, 0)
+
+	for _, t := range tools.All() {
+		toolDefs = append(toolDefs, api.ToolDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			InputSchema: t.InputSchema(),
+		})
+	}
+
+	mcpRegistry := tools.GetMCPRegistry()
+	for _, serverName := range mcpRegistry.ListConnected() {
+		client, ok := mcpRegistry.Get(serverName)
+		if !ok || !client.IsReady() {
+			continue
+		}
+		conn := client.GetConnection()
+		if conn == nil {
+			continue
+		}
+		for _, mcpTool := range conn.Tools {
+			inputSchema, _ := mcpTool.InputSchema.(map[string]any)
+			if inputSchema == nil {
+				inputSchema = map[string]any{"type": "object"}
+			}
+			toolDefs = append(toolDefs, api.ToolDefinition{
+				Name:        fmt.Sprintf("mcp__%s__%s", serverName, mcpTool.Name),
+				Description: mcpTool.Description,
+				InputSchema: inputSchema,
+			})
+		}
+	}
+
+	return toolDefs
 }
 
 func (m *Model) scrollToBottom() {
