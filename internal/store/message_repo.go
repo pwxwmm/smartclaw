@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -29,19 +30,13 @@ type SearchResult struct {
 	Rank      float64
 }
 
-func (s *Store) InsertMessage(msg *Message) (int64, error) {
-	result, err := s.db.Exec(`
+func (s *Store) InsertMessage(ctx context.Context, msg *Message) error {
+	return s.WriteWithRetry(ctx, `
 		INSERT INTO messages (session_id, role, content, tokens, tool_calls, tool_name, tool_input, tool_result, finish_reason, timestamp)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, msg.SessionID, msg.Role, msg.Content, msg.Tokens,
 		nullStr(msg.ToolCalls), nullStr(msg.ToolName), nullStr(msg.ToolInput), nullStr(msg.ToolResult),
 		nullStr(msg.FinishReason), msg.Timestamp)
-	if err != nil {
-		return 0, fmt.Errorf("store: insert message: %w", err)
-	}
-
-	id, _ := result.LastInsertId()
-	return id, nil
 }
 
 func (s *Store) GetSessionMessages(sessionID string) ([]*Message, error) {

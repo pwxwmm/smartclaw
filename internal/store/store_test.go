@@ -150,7 +150,7 @@ func TestInsertAndGetMessages(t *testing.T) {
 	}
 
 	for _, msg := range msgs {
-		if _, err := s.InsertMessage(msg); err != nil {
+		if err := s.InsertMessage(context.Background(), msg); err != nil {
 			t.Fatalf("InsertMessage: %v", err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestFTS5Search(t *testing.T) {
 	}
 
 	for _, msg := range msgs {
-		if _, err := s.InsertMessage(msg); err != nil {
+		if err := s.InsertMessage(context.Background(), msg); err != nil {
 			t.Fatalf("InsertMessage: %v", err)
 		}
 	}
@@ -255,7 +255,7 @@ func TestGetMessageCount(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		s.InsertMessage(&Message{SessionID: "count-test-session", Role: "user", Content: "msg", Timestamp: time.Now()})
+		s.InsertMessage(context.Background(), &Message{SessionID: "count-test-session", Role: "user", Content: "msg", Timestamp: time.Now()})
 	}
 
 	count, err := s.GetMessageCount("count-test-session")
@@ -300,7 +300,7 @@ func TestUpsertAndGetSkill(t *testing.T) {
 		UseCount:    0,
 	}
 
-	if err := s.UpsertSkill(skill); err != nil {
+	if err := s.UpsertSkill(context.Background(), skill); err != nil {
 		t.Fatalf("UpsertSkill: %v", err)
 	}
 
@@ -324,14 +324,14 @@ func TestIncrementSkillUseCount(t *testing.T) {
 		Source:  "learned",
 		Content: "test",
 	}
-	if err := s.UpsertSkill(skill); err != nil {
+	if err := s.UpsertSkill(context.Background(), skill); err != nil {
 		t.Fatalf("UpsertSkill: %v", err)
 	}
 
-	if err := s.IncrementSkillUseCount("use-count-test"); err != nil {
+	if err := s.IncrementSkillUseCount(context.Background(), "use-count-test"); err != nil {
 		t.Fatalf("IncrementSkillUseCount: %v", err)
 	}
-	if err := s.IncrementSkillUseCount("use-count-test"); err != nil {
+	if err := s.IncrementSkillUseCount(context.Background(), "use-count-test"); err != nil {
 		t.Fatalf("IncrementSkillUseCount 2: %v", err)
 	}
 
@@ -349,7 +349,7 @@ func TestGetStaleSkills(t *testing.T) {
 		Source:  "learned",
 		Content: "test",
 	}
-	if err := s.UpsertSkill(skill); err != nil {
+	if err := s.UpsertSkill(context.Background(), skill); err != nil {
 		t.Fatalf("UpsertSkill: %v", err)
 	}
 
@@ -373,7 +373,7 @@ func TestDeleteSkill(t *testing.T) {
 		Source:  "learned",
 		Content: "test",
 	}
-	if err := s.UpsertSkill(skill); err != nil {
+	if err := s.UpsertSkill(context.Background(), skill); err != nil {
 		t.Fatalf("UpsertSkill: %v", err)
 	}
 
@@ -407,7 +407,7 @@ func TestToolCallsColumn(t *testing.T) {
 		ToolCalls: `[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"ls -la"}}]`,
 		Timestamp: time.Now(),
 	}
-	if _, err := s.InsertMessage(msg); err != nil {
+	if err := s.InsertMessage(context.Background(), msg); err != nil {
 		t.Fatalf("InsertMessage with tool_calls: %v", err)
 	}
 

@@ -138,7 +138,7 @@ func (s *Store) InsertSessionMessage(sessionID, role, content string, tokens int
 		Tokens:    tokens,
 		Timestamp: time.Now(),
 	}
-	_, err := s.InsertMessage(msg)
+	err := s.InsertMessage(context.Background(), msg)
 	return err
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -17,8 +18,8 @@ type SkillRecord struct {
 	UpdatedAt   time.Time
 }
 
-func (s *Store) UpsertSkill(skill *SkillRecord) error {
-	_, err := s.db.Exec(`
+func (s *Store) UpsertSkill(ctx context.Context, skill *SkillRecord) error {
+	return s.WriteWithRetry(ctx, `
 		INSERT INTO skills (name, description, content, source, use_count, last_used_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(name) DO UPDATE SET
@@ -29,21 +30,13 @@ func (s *Store) UpsertSkill(skill *SkillRecord) error {
 			last_used_at = excluded.last_used_at,
 			updated_at = CURRENT_TIMESTAMP
 	`, skill.Name, skill.Description, skill.Content, skill.Source, skill.UseCount, nullTime(skill.LastUsedAt))
-	if err != nil {
-		return fmt.Errorf("store: upsert skill: %w", err)
-	}
-	return nil
 }
 
-func (s *Store) IncrementSkillUseCount(name string) error {
-	_, err := s.db.Exec(`
+func (s *Store) IncrementSkillUseCount(ctx context.Context, name string) error {
+	return s.WriteWithRetry(ctx, `
 		UPDATE skills SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE name = ?
 	`, name)
-	if err != nil {
-		return fmt.Errorf("store: increment skill use count: %w", err)
-	}
-	return nil
 }
 
 type StaleSkill struct {
