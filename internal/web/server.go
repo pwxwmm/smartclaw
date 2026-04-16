@@ -10,14 +10,13 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"nhooyr.io/websocket"
 
 	"github.com/instructkr/smartclaw/internal/adapters"
 	"github.com/instructkr/smartclaw/internal/api"
@@ -95,22 +94,6 @@ type WebServer struct {
 	server       *http.Server
 	otlpShutdown func(context.Context) error
 	authToken    string
-}
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true
-		}
-		u, err := url.Parse(origin)
-		if err != nil {
-			return false
-		}
-		return u.Host == r.Host
-	},
 }
 
 func NewWebServer(port int, workDir string, apiClient *api.Client) *WebServer {
@@ -248,7 +231,7 @@ func (s *WebServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
@@ -293,20 +276,18 @@ func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func (s *WebServer) readPump(client *Client, conn *websocket.Conn) {
 	defer func() {
 		s.hub.Unregister(client)
-		conn.Close()
+		conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
 	conn.SetReadLimit(65536)
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
 
 	for {
-		_, message, err := conn.ReadMessage()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		_, message, err := conn.Read(ctx)
+		cancel()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+			closeCode := websocket.CloseStatus(err)
+			if closeCode != websocket.StatusGoingAway && closeCode != -1 {
 				log.Printf("WebSocket read error: %v", err)
 			}
 			break
@@ -320,37 +301,38 @@ func (s *WebServer) writePump(client *Client, conn *websocket.Conn) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
-		conn.Close()
+		conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
 	for {
 		select {
 		case message, ok := <-client.send:
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
-				conn.WriteMessage(websocket.CloseMessage, []byte{})
+				conn.Close(websocket.StatusNormalClosure, "")
 				return
 			}
 
-			w, err := conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
+			buf := make([]byte, 0, len(message))
+			buf = append(buf, message...)
 
 			n := len(client.send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-client.send)
+				buf = append(buf, '\n')
+				buf = append(buf, <-client.send...)
 			}
 
-			if err := w.Close(); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := conn.Write(ctx, websocket.MessageText, buf)
+			cancel()
+			if err != nil {
 				return
 			}
 
 		case <-ticker.C:
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := conn.Ping(ctx)
+			cancel()
+			if err != nil {
 				return
 			}
 		}
