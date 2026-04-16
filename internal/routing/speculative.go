@@ -81,20 +81,36 @@ func (se *SpeculativeExecutor) Execute(ctx context.Context, messages []api.Messa
 	fastCh := make(chan modelResult, 1)
 	slowCh := make(chan modelResult, 1)
 
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func() {
+		defer wg.Done()
 		start := time.Now()
-		resp, err := se.secondaryClient.CreateMessage(messages, systemPrompt)
-		fastCh <- modelResult{resp: resp, duration: time.Since(start), err: err}
+		select {
+		case <-ctx.Done():
+			fastCh <- modelResult{err: ctx.Err()}
+		default:
+			resp, err := se.secondaryClient.CreateMessageWithSystem(ctx, messages, systemPrompt)
+			fastCh <- modelResult{resp: resp, duration: time.Since(start), err: err}
+		}
 	}()
 
 	go func() {
+		defer wg.Done()
 		start := time.Now()
-		resp, err := se.primaryClient.CreateMessage(messages, systemPrompt)
-		slowCh <- modelResult{resp: resp, duration: time.Since(start), err: err}
+		select {
+		case <-ctx.Done():
+			slowCh <- modelResult{err: ctx.Err()}
+		default:
+			resp, err := se.primaryClient.CreateMessageWithSystem(ctx, messages, systemPrompt)
+			slowCh <- modelResult{resp: resp, duration: time.Since(start), err: err}
+		}
 	}()
 
 	fastResult := <-fastCh
 	slowResult := <-slowCh
+	wg.Wait()
 
 	if fastResult.err != nil && slowResult.err != nil {
 		return nil, fastResult.err

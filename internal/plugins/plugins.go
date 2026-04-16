@@ -171,7 +171,8 @@ func (pm *PluginManager) Install(source string) (*Plugin, error) {
 }
 
 func (pm *PluginManager) installFromURL(url string) (*Plugin, error) {
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch plugin: %w", err)
 	}

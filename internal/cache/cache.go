@@ -11,17 +11,18 @@ import (
 )
 
 type CacheEntry struct {
-	Key       string      `json:"key"`
-	Value     any `json:"value"`
-	CreatedAt time.Time   `json:"created_at"`
-	ExpiresAt time.Time   `json:"expires_at"`
-	HitCount  int         `json:"hit_count"`
+	Key       string    `json:"key"`
+	Value     any       `json:"value"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	HitCount  int       `json:"hit_count"`
 }
 
 type Cache struct {
 	items    map[string]*CacheEntry
 	basePath string
 	maxSize  int64
+	size     int64
 	mu       sync.RWMutex
 }
 
@@ -52,6 +53,11 @@ func (c *Cache) Set(key string, value any, ttl time.Duration) error {
 	defer c.mu.Unlock()
 
 	now := time.Now()
+
+	if old, ok := c.items[key]; ok {
+		c.size -= c.entrySize(old)
+	}
+
 	entry := &CacheEntry{
 		Key:       key,
 		Value:     value,
@@ -61,8 +67,40 @@ func (c *Cache) Set(key string, value any, ttl time.Duration) error {
 	}
 
 	c.items[key] = entry
+	c.size += c.entrySize(entry)
+
+	c.enforceSizeLimit()
 
 	return c.saveToFile(entry)
+}
+
+func (c *Cache) entrySize(entry *CacheEntry) int64 {
+	data, err := json.Marshal(entry.Value)
+	if err != nil {
+		return 0
+	}
+	return int64(len(data))
+}
+
+func (c *Cache) enforceSizeLimit() {
+	for c.size > c.maxSize && len(c.items) > 0 {
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
+		for k, e := range c.items {
+			if first || e.CreatedAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = e.CreatedAt
+				first = false
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		c.size -= c.entrySize(c.items[oldestKey])
+		delete(c.items, oldestKey)
+		_ = c.deleteFile(oldestKey)
+	}
 }
 
 func (c *Cache) Get(key string) (any, bool) {
@@ -75,6 +113,7 @@ func (c *Cache) Get(key string) (any, bool) {
 	}
 
 	if time.Now().After(entry.ExpiresAt) {
+		c.size -= c.entrySize(entry)
 		delete(c.items, key)
 		_ = c.deleteFile(key)
 		return nil, false
@@ -90,6 +129,9 @@ func (c *Cache) Delete(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if entry, ok := c.items[key]; ok {
+		c.size -= c.entrySize(entry)
+	}
 	delete(c.items, key)
 
 	return c.deleteFile(key)
@@ -100,6 +142,7 @@ func (c *Cache) Clear() error {
 	defer c.mu.Unlock()
 
 	c.items = make(map[string]*CacheEntry)
+	c.size = 0
 
 	entries, err := os.ReadDir(c.basePath)
 	if err != nil {
@@ -171,6 +214,7 @@ func (c *Cache) Cleanup() error {
 	now := time.Now()
 	for key, entry := range c.items {
 		if now.After(entry.ExpiresAt) {
+			c.size -= c.entrySize(entry)
 			delete(c.items, key)
 			_ = c.deleteFile(key)
 		}
@@ -229,6 +273,7 @@ func (c *Cache) loadAll() error {
 
 		if now.Before(cacheEntry.ExpiresAt) {
 			c.items[cacheEntry.Key] = &cacheEntry
+			c.size += c.entrySize(&cacheEntry)
 		} else {
 			_ = os.Remove(path)
 		}

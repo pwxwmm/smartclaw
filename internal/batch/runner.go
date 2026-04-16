@@ -149,7 +149,7 @@ func (r *Runner) executePrompt(ctx context.Context, prompt PromptItem) *BatchRes
 		Model:  r.config.Model,
 	}
 
-	_, cancel := context.WithTimeout(ctx, r.config.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
 
 	startTime := time.Now()
@@ -163,7 +163,18 @@ func (r *Runner) executePrompt(ctx context.Context, prompt PromptItem) *BatchRes
 		{Role: "user", Content: prompt.Content},
 	}
 
-	resp, err := r.client.CreateMessage(messages, system)
+	var systemParam any
+	if system != "" {
+		systemParam = []api.SystemBlock{
+			{
+				Type:         "text",
+				Text:         system,
+				CacheControl: &api.CacheControl{Type: "ephemeral"},
+			},
+		}
+	}
+
+	resp, err := r.client.CreateMessageWithSystem(ctx, messages, systemParam)
 	result.Duration = time.Since(startTime)
 
 	if err != nil {

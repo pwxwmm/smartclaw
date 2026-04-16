@@ -2,6 +2,7 @@ package learning
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,9 @@ func (sw *SkillWriter) WriteSkill(skill *ExtractedSkill) error {
 	existingPath := filepath.Join(skillDir, "SKILL.md")
 	if _, err := os.Stat(existingPath); err == nil {
 		backupPath := filepath.Join(skillDir, "SKILL.md.bak")
-		_ = os.Rename(existingPath, backupPath)
+		if err := os.Rename(existingPath, backupPath); err != nil {
+			slog.Warn("failed to backup existing skill", "error", err, "path", existingPath)
+		}
 	}
 
 	content := formatSkillMarkdown(skill)
