@@ -69,6 +69,10 @@ func (e *Executor) executeBash(ctx context.Context, input map[string]any) (*Bash
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if validationResult := ValidateCommandSecurity(command); !validationResult.Allowed {
+		return nil, fmt.Errorf("command rejected by security policy: %s", validationResult.Reason)
+	}
+
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	cmd.Dir = e.WorkDir
 

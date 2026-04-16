@@ -1123,6 +1123,13 @@ func execHandler(args []string) error {
 		fmt.Println("Usage: /exec <command>")
 		return nil
 	}
+
+	commandStr := strings.Join(args, " ")
+	if validationResult := tools.ValidateCommandSecurity(commandStr); !validationResult.Allowed {
+		fmt.Printf("✗ Command rejected by security policy: %s\n", validationResult.Reason)
+		return nil
+	}
+
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = cmdCtx.WorkDir
 	output, err := cmd.CombinedOutput()

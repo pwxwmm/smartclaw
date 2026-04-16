@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/security"
 )
 
 type HookEvent string
@@ -49,32 +51,32 @@ type HookConfig struct {
 }
 
 type HookInput struct {
-	Event          HookEvent              `json:"event"`
-	SessionID      string                 `json:"session_id"`
-	ProjectRoot    string                 `json:"project_root"`
-	Timestamp      int64                  `json:"timestamp"`
-	ToolName       string                 `json:"tool_name,omitempty"`
+	Event          HookEvent      `json:"event"`
+	SessionID      string         `json:"session_id"`
+	ProjectRoot    string         `json:"project_root"`
+	Timestamp      int64          `json:"timestamp"`
+	ToolName       string         `json:"tool_name,omitempty"`
 	ToolInput      map[string]any `json:"tool_input,omitempty"`
 	ToolOutput     any            `json:"tool_output,omitempty"`
-	Error          string                 `json:"error,omitempty"`
-	Message        string                 `json:"message,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	Message        string         `json:"message,omitempty"`
 	AdditionalData map[string]any `json:"additional_data,omitempty"`
 }
 
 type HookOutput struct {
-	Continue           bool                   `json:"continue,omitempty"`
-	SuppressOutput     bool                   `json:"suppressOutput,omitempty"`
-	StopReason         string                 `json:"stopReason,omitempty"`
-	Decision           string                 `json:"decision,omitempty"`
-	Reason             string                 `json:"reason,omitempty"`
-	SystemMessage      string                 `json:"systemMessage,omitempty"`
-	UpdatedInput       map[string]any `json:"updatedInput,omitempty"`
-	AdditionalContext  string                 `json:"additionalContext,omitempty"`
-	PermissionDecision string                 `json:"permissionDecision,omitempty"`
-	PermissionUpdates  []PermissionUpdate     `json:"permissionUpdates,omitempty"`
-	ExitCode           int                    `json:"exitCode"`
-	Stdout             string                 `json:"stdout"`
-	Stderr             string                 `json:"stderr"`
+	Continue           bool               `json:"continue,omitempty"`
+	SuppressOutput     bool               `json:"suppressOutput,omitempty"`
+	StopReason         string             `json:"stopReason,omitempty"`
+	Decision           string             `json:"decision,omitempty"`
+	Reason             string             `json:"reason,omitempty"`
+	SystemMessage      string             `json:"systemMessage,omitempty"`
+	UpdatedInput       map[string]any     `json:"updatedInput,omitempty"`
+	AdditionalContext  string             `json:"additionalContext,omitempty"`
+	PermissionDecision string             `json:"permissionDecision,omitempty"`
+	PermissionUpdates  []PermissionUpdate `json:"permissionUpdates,omitempty"`
+	ExitCode           int                `json:"exitCode"`
+	Stdout             string             `json:"stdout"`
+	Stderr             string             `json:"stderr"`
 }
 
 type PermissionUpdate struct {
@@ -217,6 +219,12 @@ func (e *HookExecutor) executeHook(ctx context.Context, hook HookConfig, input *
 	inputData, err := json.Marshal(input)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to marshal hook input: %w", err)
+		result.Duration = time.Since(startTime)
+		return result
+	}
+
+	if validationResult := security.ValidateCommandSecurity(hook.Command); !validationResult.Allowed {
+		result.Error = fmt.Errorf("command rejected by security policy: %s", validationResult.Reason)
 		result.Duration = time.Since(startTime)
 		return result
 	}

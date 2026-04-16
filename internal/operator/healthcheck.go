@@ -3,12 +3,15 @@ package operator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/tools"
 )
 
 type TopologyProvider interface {
@@ -221,6 +224,13 @@ func (h *HealthChecker) executeTopologyCheck(_ context.Context, check HealthChec
 }
 
 func (h *HealthChecker) executeCustomCheck(ctx context.Context, check HealthCheckDef, result *HealthCheckResult) {
+	if validationResult := tools.ValidateCommandSecurity(check.Target); !validationResult.Allowed {
+		slog.Warn("healthcheck command rejected by security policy", "command", check.Target, "reason", validationResult.Reason)
+		result.Status = CheckError
+		result.Message = fmt.Sprintf("command rejected by security policy: %s", validationResult.Reason)
+		return
+	}
+
 	cmd := exec.CommandContext(ctx, "sh", "-c", check.Target)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

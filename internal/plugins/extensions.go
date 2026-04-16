@@ -25,13 +25,13 @@ const (
 )
 
 type Extension struct {
-	Name       string                 `json:"name"`
-	Type       ExtensionType          `json:"type"`
-	PluginName string                 `json:"plugin_name"`
-	Enabled    bool                   `json:"enabled"`
+	Name       string         `json:"name"`
+	Type       ExtensionType  `json:"type"`
+	PluginName string         `json:"plugin_name"`
+	Enabled    bool           `json:"enabled"`
 	Config     map[string]any `json:"config,omitempty"`
 	Handler    any            `json:"-"`
-	LoadedAt   time.Time              `json:"loaded_at"`
+	LoadedAt   time.Time      `json:"loaded_at"`
 }
 
 type HookExtension struct {
@@ -42,10 +42,10 @@ type HookExtension struct {
 }
 
 type ToolExtension struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
 	InputSchema map[string]any `json:"input_schema"`
-	Command     string                 `json:"command"`
+	Command     string         `json:"command"`
 }
 
 type CommandExtension struct {
@@ -306,6 +306,10 @@ func (t *PluginTool) Execute(ctx context.Context, input map[string]any) (any, er
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("marshal input: %w", err)
+	}
+
+	if validationResult := tools.ValidateCommandSecurity(t.command); !validationResult.Allowed {
+		return nil, fmt.Errorf("command rejected by security policy: %s", validationResult.Reason)
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", t.command)
