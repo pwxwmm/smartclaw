@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/diffengine"
 	apperrors "github.com/instructkr/smartclaw/internal/errors"
 	"github.com/instructkr/smartclaw/internal/patch"
 )
@@ -687,5 +688,99 @@ func (t *PreviewFileTool) Execute(ctx context.Context, input map[string]any) (an
 		"total_lines": totalLines,
 		"showing":     fmt.Sprintf("%d-%d", start, end),
 		"modified":    modTime,
+	}, nil
+}
+
+type DiffEditTool struct{ BaseTool }
+
+func (t *DiffEditTool) Name() string { return "diff_edit" }
+
+func (t *DiffEditTool) Description() string {
+	return "Edit files using SEARCH/REPLACE diff blocks with fuzzy matching and auto-verification"
+}
+
+func (t *DiffEditTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"file_path":     map[string]any{"type": "string", "description": "Target file path"},
+			"diff_content":  map[string]any{"type": "string", "description": "Diff content with SEARCH/REPLACE blocks"},
+			"dry_run":       map[string]any{"type": "boolean", "description": "Preview changes without applying"},
+			"fuzzy_match":   map[string]any{"type": "boolean", "description": "Enable fuzzy matching (default: true)"},
+			"auto_rollback": map[string]any{"type": "boolean", "description": "Auto-rollback on verification failure (default: true)"},
+		},
+		"required": []string{"file_path", "diff_content"},
+	}
+}
+
+func (t *DiffEditTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	filePath, _ := input["file_path"].(string)
+	diffContent, _ := input["diff_content"].(string)
+	dryRun, _ := input["dry_run"].(bool)
+	fuzzyMatch := true
+	if v, ok := input["fuzzy_match"].(bool); ok {
+		fuzzyMatch = v
+	}
+	autoRollback := true
+	if v, ok := input["auto_rollback"].(bool); ok {
+		autoRollback = v
+	}
+
+	if filePath == "" {
+		return nil, ErrRequiredField("file_path")
+	}
+	if diffContent == "" {
+		return nil, ErrRequiredField("diff_content")
+	}
+
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, &Error{Code: "PATH_ERROR", Message: err.Error()}
+	}
+
+	if !isPathAllowed(absPath) {
+		return nil, apperrors.New("PATH_DENIED", "access denied: path outside allowed directories",
+			apperrors.WithCategory(apperrors.CategorySecurity))
+	}
+
+	engine := diffengine.NewDiffEngine(
+		diffengine.WithFuzzyMatch(fuzzyMatch),
+		diffengine.WithVerifyAfterApply(true),
+		diffengine.WithAutoRollback(autoRollback),
+	)
+
+	output := "--- " + absPath + "\n" + diffContent
+
+	if dryRun {
+		results, err := engine.DryRunFromOutput(ctx, output)
+		if err != nil {
+			return nil, &Error{Code: "PARSE_ERROR", Message: err.Error()}
+		}
+		return map[string]any{
+			"dry_run":     true,
+			"file_path":   absPath,
+			"blocks":      results,
+			"block_count": len(results),
+		}, nil
+	}
+
+	results, err := engine.ApplyFromOutput(ctx, output)
+	if err != nil {
+		return nil, &Error{Code: "APPLY_ERROR", Message: err.Error()}
+	}
+
+	allSuccess := true
+	for _, r := range results {
+		if !r.Success {
+			allSuccess = false
+			break
+		}
+	}
+
+	return map[string]any{
+		"file_path":   absPath,
+		"blocks":      results,
+		"block_count": len(results),
+		"all_success": allSuccess,
 	}, nil
 }

@@ -172,7 +172,7 @@ func TestApplyDiffExactMatch(t *testing.T) {
 func TestApplyDiffStrippedMatch(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "test.go")
-	content := "package main\n\n  func old()  {\n    return\n  }\n"
+	content := "package main\n\n  func old() {\n    return\n  }\n"
 	if err := os.WriteFile(fp, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

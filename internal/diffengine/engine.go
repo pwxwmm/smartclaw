@@ -63,7 +63,7 @@ func (e *DiffEngine) Apply(ctx context.Context, filePath string, block DiffBlock
 	}
 	originalStr := string(originalContent)
 
-	result, err := ApplyDiff(filePath, block)
+	result, err := ApplyDiffWithOptions(filePath, block, e.FuzzyMatch)
 	if err != nil {
 		return nil, err
 	}

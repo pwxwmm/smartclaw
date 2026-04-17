@@ -21,6 +21,11 @@ type ApplyResult struct {
 // ApplyDiff reads the file, finds the search lines using exact then fuzzy matching,
 // replaces them with the replace lines, and writes back.
 func ApplyDiff(filePath string, block DiffBlock) (*ApplyResult, error) {
+	return ApplyDiffWithOptions(filePath, block, true)
+}
+
+// ApplyDiffWithOptions applies a diff with explicit fuzzy match control.
+func ApplyDiffWithOptions(filePath string, block DiffBlock, fuzzy bool) (*ApplyResult, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("read file %s: %w", filePath, err)
@@ -28,7 +33,7 @@ func ApplyDiff(filePath string, block DiffBlock) (*ApplyResult, error) {
 
 	originalHash := hashContent(content)
 
-	result, newContent, err := applyDiffToContent(string(content), block)
+	result, newContent, err := applyDiffToContent(string(content), block, fuzzy)
 	if err != nil {
 		return &ApplyResult{
 			FilePath:     filePath,
@@ -84,7 +89,7 @@ func ApplyDiffs(blocks []DiffBlock) ([]ApplyResult, error) {
 		originalHash := hashContent(content)
 
 		for _, block := range bs {
-			result, newContent, err := applyDiffToContent(currentContent, block)
+			result, newContent, err := applyDiffToContent(currentContent, block, true)
 			if err != nil {
 				result.FilePath = fp
 				result.OriginalHash = originalHash
@@ -122,7 +127,7 @@ func DryRun(filePath string, block DiffBlock) (*ApplyResult, error) {
 
 	originalHash := hashContent(content)
 
-	result, _, err := applyDiffToContent(string(content), block)
+	result, _, err := applyDiffToContent(string(content), block, true)
 	if err != nil {
 		return &ApplyResult{
 			FilePath:     filePath,
@@ -137,7 +142,7 @@ func DryRun(filePath string, block DiffBlock) (*ApplyResult, error) {
 	return result, nil
 }
 
-func applyDiffToContent(content string, block DiffBlock) (*ApplyResult, string, error) {
+func applyDiffToContent(content string, block DiffBlock, fuzzy bool) (*ApplyResult, string, error) {
 	fileLines := strings.Split(content, "\n")
 
 	// Remove trailing empty line from split if content ends with newline
@@ -145,7 +150,7 @@ func applyDiffToContent(content string, block DiffBlock) (*ApplyResult, string, 
 		fileLines = fileLines[:len(fileLines)-1]
 	}
 
-	matchIdx, matchType, err := findMatch(fileLines, block.SearchLines, block.LineNumber, true)
+	matchIdx, matchType, err := findMatch(fileLines, block.SearchLines, block.LineNumber, fuzzy)
 	if err != nil {
 		return &ApplyResult{
 			Success:      false,
@@ -455,12 +460,24 @@ func adjustIndentation(fileLines []string, matchIdx int, searchLines, replaceLin
 		return replaceLines
 	}
 
-	fileIndent := getIndent(fileLines[matchIdx])
-	searchIndent := getIndent(searchLines[0])
+	fileIndents := make([]string, len(searchLines))
+	for i := range searchLines {
+		if matchIdx+i < len(fileLines) {
+			fileIndents[i] = getIndent(fileLines[matchIdx+i])
+		}
+	}
 
-	indentDelta := len(fileIndent) - len(searchIndent)
-	if indentDelta == 0 {
-		return replaceLines
+	searchIndents := make([]string, len(searchLines))
+	for i := range searchLines {
+		searchIndents[i] = getIndent(searchLines[i])
+	}
+
+	baseFileIndent := fileIndents[0]
+	baseSearchIndent := searchIndents[0]
+
+	indentChar := " "
+	if strings.Contains(baseFileIndent, "\t") {
+		indentChar = "\t"
 	}
 
 	result := make([]string, len(replaceLines))
@@ -469,12 +486,20 @@ func adjustIndentation(fileLines []string, matchIdx int, searchLines, replaceLin
 			result[i] = line
 			continue
 		}
-		lineIndent := getIndent(line)
-		newIndentLen := len(lineIndent) + indentDelta
-		if newIndentLen < 0 {
-			newIndentLen = 0
+
+		replaceLineIndent := getIndent(line)
+		var targetIndentLen int
+		if i < len(fileIndents) && i < len(searchIndents) {
+			perLineDelta := len(fileIndents[i]) - len(searchIndents[i])
+			targetIndentLen = len(replaceLineIndent) + perLineDelta
+		} else {
+			baseDelta := len(baseFileIndent) - len(baseSearchIndent)
+			targetIndentLen = len(replaceLineIndent) + baseDelta
 		}
-		result[i] = strings.Repeat(" ", newIndentLen) + strings.TrimLeft(line, " \t")
+		if targetIndentLen < 0 {
+			targetIndentLen = 0
+		}
+		result[i] = strings.Repeat(indentChar, targetIndentLen) + strings.TrimLeft(line, " \t")
 	}
 	return result
 }
