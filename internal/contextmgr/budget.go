@@ -37,6 +37,7 @@ func DefaultSourcePriorities() []SourcePriority {
 		{Source: "system_prompt", Weight: 1.0, MinTokens: 500, MaxTokens: 2000},
 		{Source: "conversation", Weight: 0.9, MinTokens: 1000, MaxTokens: 8000},
 		{Source: "files", Weight: 0.7, MinTokens: 0, MaxTokens: 6000},
+		{Source: "symbols", Weight: 0.6, MinTokens: 0, MaxTokens: 4000},
 		{Source: "memory", Weight: 0.5, MinTokens: 0, MaxTokens: 3000},
 		{Source: "skills", Weight: 0.4, MinTokens: 0, MaxTokens: 2000},
 		{Source: "search", Weight: 0.3, MinTokens: 0, MaxTokens: 2000},

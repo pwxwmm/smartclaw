@@ -93,15 +93,10 @@ func (rs *RelevanceScorer) semanticScore(item ContextItem, query string) float64
 	return float64(matched) / float64(len(queryTerms))
 }
 
-// dependencyScore boosts items whose FilePath is imported or referenced by
-// already-selected items.  In the initial implementation this checks whether
-// the item's FilePath appears in the content of other high-scoring items.
 func (rs *RelevanceScorer) dependencyScore(item ContextItem) float64 {
 	if item.FilePath == "" {
 		return 0
 	}
-	// Simple heuristic: if the file path itself appears in the item content
-	// of other items, it's likely a dependency.
 	return 0.0
 }
 
