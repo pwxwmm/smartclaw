@@ -690,6 +690,11 @@ func registerAllCommands() {
 	}, templateImportHandler)
 
 	defaultRegistry.Register(Command{
+		Name:    "sre",
+		Summary: "Toggle SRE-aware coding mode (on/off/status)",
+	}, sreHandler)
+
+	defaultRegistry.Register(Command{
 		Name:    "config",
 		Summary: "Manage configuration",
 	}, configHandler)

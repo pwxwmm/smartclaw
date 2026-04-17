@@ -15,6 +15,7 @@ import (
 
 	pkgconfig "github.com/instructkr/smartclaw/internal/config"
 	"github.com/instructkr/smartclaw/internal/mcp"
+	"github.com/instructkr/smartclaw/internal/srecoder"
 	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/voice"
 )
@@ -2398,5 +2399,103 @@ func configImportHandler(args []string) error {
 		return nil
 	}
 	fmt.Printf("✓ Imported configuration from: %s\n", args[0])
+	return nil
+}
+
+func sreHandler(args []string) error {
+	mode := srecoder.GetGlobalMode()
+	if mode == nil {
+		mode = srecoder.InitGlobalMode()
+	}
+
+	if len(args) == 0 {
+		if mode.IsEnabled() {
+			fmt.Println("┌─────────────────────────────────────┐")
+			fmt.Println("│     SRE-Aware Coding Mode: ON       │")
+			fmt.Println("└─────────────────────────────────────┘")
+		} else {
+			fmt.Println("┌─────────────────────────────────────┐")
+			fmt.Println("│     SRE-Aware Coding Mode: OFF      │")
+			fmt.Println("└─────────────────────────────────────┘")
+		}
+		fmt.Println()
+		fmt.Println(mode.Status())
+		fmt.Println()
+		fmt.Println("Usage: /sre [on|off|status|patterns|suggest <file>]")
+		return nil
+	}
+
+	switch args[0] {
+	case "on":
+		mode.Enable()
+		fmt.Println("✓ SRE-aware coding mode ENABLED")
+		fmt.Println()
+		fmt.Println("  Code generation is now enriched with SRE context:")
+		fmt.Println("  • Impact analysis runs on code changes")
+		fmt.Println("  • Blast radius and risk assessment integrated")
+		fmt.Println("  • Active alerts checked for affected services")
+		fmt.Println("  • Runbooks referenced for failure-prone areas")
+		fmt.Println("  • Circuit breakers, retries, and health checks suggested")
+		fmt.Println()
+		fmt.Println("  System prompt has been augmented with SRE awareness.")
+	case "off":
+		mode.Disable()
+		fmt.Println("✓ SRE-aware coding mode DISABLED")
+		fmt.Println()
+		fmt.Println("  Code generation returns to standard mode.")
+	case "status":
+		fmt.Println(mode.Status())
+	case "patterns":
+		patterns := srecoder.GetPatterns()
+		fmt.Println("┌─────────────────────────────────────┐")
+		fmt.Println("│       Available SRE Patterns         │")
+		fmt.Println("└─────────────────────────────────────┘")
+		fmt.Println()
+		for _, p := range patterns {
+			fmt.Printf("  %-22s [%s]\n", p.Name, p.Category)
+			fmt.Printf("    %s\n\n", p.Description)
+		}
+		fmt.Printf("Total: %d patterns\n", len(patterns))
+	case "suggest":
+		if len(args) < 2 {
+			fmt.Println("Usage: /sre suggest <file-path>")
+			fmt.Println()
+			fmt.Println("Analyzes a Go file and suggests SRE improvements.")
+			return nil
+		}
+		filePath := args[1]
+		suggestions, err := mode.SuggestForFile(context.Background(), filePath)
+		if err != nil {
+			fmt.Printf("✗ Error analyzing file: %v\n", err)
+			return nil
+		}
+		if len(suggestions) == 0 {
+			fmt.Printf("No SRE improvements suggested for %s — looks good!\n", filePath)
+			return nil
+		}
+		fmt.Printf("SRE suggestions for %s:\n\n", filePath)
+		for i, s := range suggestions {
+			fmt.Printf("%d. [%s] (confidence: %.0f%%)\n", i+1, s.Type, s.Confidence*100)
+			fmt.Printf("   %s\n", s.Message)
+			if s.File != "" && s.Line > 0 {
+				fmt.Printf("   → %s:%d\n", s.File, s.Line)
+			}
+			if s.Pattern != nil {
+				fmt.Printf("   Pattern: %s\n", s.Pattern.Name)
+			}
+			fmt.Println()
+		}
+	default:
+		fmt.Printf("Unknown SRE command: %s\n", args[0])
+		fmt.Println()
+		fmt.Println("Usage: /sre [on|off|status|patterns|suggest <file>]")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  on           Enable SRE-aware coding mode")
+		fmt.Println("  off          Disable SRE-aware coding mode")
+		fmt.Println("  status       Show current SRE mode status")
+		fmt.Println("  patterns     List available SRE code patterns")
+		fmt.Println("  suggest <f>  Suggest SRE improvements for a file")
+	}
 	return nil
 }

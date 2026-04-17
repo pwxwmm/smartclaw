@@ -241,6 +241,7 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&ReadFileTool{})
 	defaultRegistry.Register(&WriteFileTool{})
 	defaultRegistry.Register(&EditFileTool{})
+	defaultRegistry.Register(&DiffEditTool{})
 	defaultRegistry.Register(&LineEditTool{})
 	defaultRegistry.Register(&PreviewFileTool{})
 	defaultRegistry.Register(&GlobTool{})
