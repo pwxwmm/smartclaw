@@ -17,15 +17,15 @@ import (
 )
 
 type ContextItem struct {
-	Source     string    // provider name
-	Type       string    // "symbol", "file", "snippet", "memory", "git_diff", "search_result"
-	Content    string    // actual text content
-	FilePath   string    // optional file path
-	StartLine  int       // optional line range start
-	EndLine    int       // optional line range end
-	Relevance  float64   // computed relevance score
-	TokenCount int       // estimated tokens
-	Timestamp  time.Time // when item was created/modified
+	Source     string
+	Type       string
+	Content    string
+	FilePath   string
+	StartLine  int
+	EndLine    int
+	Relevance  float64
+	TokenCount int
+	Timestamp  time.Time
 }
 
 type ScoredContextItem struct {
@@ -38,7 +38,6 @@ type ContextProvider interface {
 	Provide(ctx context.Context, query string, budget int) ([]ContextItem, error)
 }
 
-// FileProvider reads files mentioned in the query or recently accessed.
 type FileProvider struct {
 	WorkDir     string
 	RecentFiles []string
@@ -127,7 +126,6 @@ func isLikelyFilePath(s string) bool {
 	return hasExt || hasSlash
 }
 
-// SymbolProvider extracts relevant symbols from the codebase index.
 type SymbolProvider struct {
 	Index   *index.CodebaseIndex
 	WorkDir string
@@ -137,7 +135,7 @@ func NewSymbolProvider(idx *index.CodebaseIndex, workDir string) *SymbolProvider
 	return &SymbolProvider{Index: idx, WorkDir: workDir}
 }
 
-func (sp *SymbolProvider) Name() string { return "files" }
+func (sp *SymbolProvider) Name() string { return "symbols" }
 
 func (sp *SymbolProvider) Provide(_ context.Context, query string, budget int) ([]ContextItem, error) {
 	if sp.Index == nil {
@@ -233,7 +231,6 @@ func (sp *SymbolProvider) fallbackGrep(query string, budget int) ([]ContextItem,
 	return items, nil
 }
 
-// MemoryProvider wraps the memory manager for L1-L4 memories.
 type MemoryProvider struct {
 	MemoryManager *memory.MemoryManager
 }
@@ -274,7 +271,6 @@ func (mp *MemoryProvider) Provide(ctx context.Context, query string, budget int)
 	}, nil
 }
 
-// GitProvider provides recent git diff and branch information.
 type GitProvider struct {
 	GitContext *git.Context
 }
@@ -333,7 +329,6 @@ func (gp *GitProvider) Provide(_ context.Context, _ string, budget int) ([]Conte
 	return items, nil
 }
 
-// SearchProvider searches the codebase for relevant code snippets.
 type SearchProvider struct {
 	WorkDir    string
 	MaxResults int
