@@ -36,6 +36,10 @@ type MemoryManager struct {
 	budget             ContextBudget
 	skillInjector      *layers.SkillInjector
 	contextAwareSkills bool
+	injector           *FencedMemoryInjector
+
+	providers   map[string]MemoryProvider
+	providersMu sync.RWMutex
 }
 
 func NewMemoryManager() (*MemoryManager, error) {
@@ -80,6 +84,8 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		baseDir:      dir,
 		snapshots:    make(map[string]*MemorySnapshot),
 		budget:       DefaultContextBudget(),
+		injector:     NewFencedMemoryInjector(DefaultInjectionConfig()),
+		providers:    make(map[string]MemoryProvider),
 	}
 
 	bundledSummaries := buildBundledSkillSummaries()
@@ -99,6 +105,17 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		mm.incidentMemory = layers.NewIncidentMemory(s)
 	}
 
+	memoryStore, err := NewMemoryStore()
+	if err != nil {
+		slog.Warn("memory manager: failed to create MemoryStore for builtin provider", "error", err)
+	} else {
+		builtin := NewBuiltinProvider(memoryStore, mm.sessionSearch)
+		if initErr := builtin.Initialize(context.Background(), nil); initErr != nil {
+			slog.Warn("memory manager: failed to initialize builtin provider", "error", initErr)
+		}
+		mm.providers["builtin"] = builtin
+	}
+
 	return mm, nil
 }
 
@@ -109,10 +126,22 @@ func NewMemoryManagerWithComponents(pm *layers.PromptMemory, s *store.Store, sm 
 		skillMemory:  sm,
 		snapshots:    make(map[string]*MemorySnapshot),
 		budget:       DefaultContextBudget(),
+		providers:    make(map[string]MemoryProvider),
 	}
 
 	if s != nil {
 		mm.sessionSearch = layers.NewSessionSearch(s)
+	}
+
+	memoryStore, err := NewMemoryStore()
+	if err != nil {
+		slog.Warn("memory manager: failed to create MemoryStore for builtin provider", "error", err)
+	} else {
+		builtin := NewBuiltinProvider(memoryStore, mm.sessionSearch)
+		if initErr := builtin.Initialize(context.Background(), nil); initErr != nil {
+			slog.Warn("memory manager: failed to initialize builtin provider", "error", initErr)
+		}
+		mm.providers["builtin"] = builtin
 	}
 
 	return mm
@@ -206,6 +235,14 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 	}
 
 	allocated := mm.budget.Allocate(layerContents)
+
+	if mm.injector != nil {
+		var sections []FencedSection
+		for _, a := range allocated {
+			sections = append(sections, SectionFromLayer(a.Name, a.Content, a.Truncated))
+		}
+		return mm.injector.Inject(sections)
+	}
 
 	var parts []string
 	truncatedCount := 0
@@ -337,6 +374,14 @@ func (mm *MemoryManager) BuildSystemContextWithSnapshot(ctx context.Context, cur
 
 	allocated := mm.budget.Allocate(layerContents)
 
+	if mm.injector != nil {
+		var sections []FencedSection
+		for _, a := range allocated {
+			sections = append(sections, SectionFromLayer(a.Name, a.Content, a.Truncated))
+		}
+		return mm.injector.Inject(sections)
+	}
+
 	var parts []string
 	truncatedCount := 0
 	for _, a := range allocated {
@@ -423,6 +468,36 @@ func (mm *MemoryManager) EnableContextAwareSkills(enabled bool) {
 
 func (mm *MemoryManager) IsContextAwareSkills() bool {
 	return mm.contextAwareSkills
+}
+
+func (mm *MemoryManager) SetInjectionConfig(config InjectionConfig) {
+	mm.injector = NewFencedMemoryInjector(config)
+}
+
+func (mm *MemoryManager) GetInjector() *FencedMemoryInjector {
+	return mm.injector
+}
+
+func (mm *MemoryManager) RegisterProvider(name string, provider MemoryProvider) {
+	mm.providersMu.Lock()
+	defer mm.providersMu.Unlock()
+	mm.providers[name] = provider
+}
+
+func (mm *MemoryManager) GetProvider(name string) MemoryProvider {
+	mm.providersMu.RLock()
+	defer mm.providersMu.RUnlock()
+	return mm.providers[name]
+}
+
+func (mm *MemoryManager) ListProviderNames() []string {
+	mm.providersMu.RLock()
+	defer mm.providersMu.RUnlock()
+	names := make([]string, 0, len(mm.providers))
+	for name := range mm.providers {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (mm *MemoryManager) ForUser(userID string) *UserMemory {
@@ -553,6 +628,14 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 
 	allocated := mm.budget.Allocate(layerContents)
 
+	if mm.injector != nil {
+		var sections []FencedSection
+		for _, a := range allocated {
+			sections = append(sections, SectionFromLayer(a.Name, a.Content, a.Truncated))
+		}
+		return mm.injector.Inject(sections)
+	}
+
 	var parts []string
 	for _, a := range allocated {
 		parts = append(parts, a.Content)
@@ -562,6 +645,14 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 }
 
 func (mm *MemoryManager) Close() error {
+	mm.providersMu.RLock()
+	for _, p := range mm.providers {
+		if err := p.Close(); err != nil {
+			slog.Warn("memory manager: failed to close provider", "name", p.Name(), "error", err)
+		}
+	}
+	mm.providersMu.RUnlock()
+
 	if mm.dataStore != nil {
 		return mm.dataStore.Close()
 	}

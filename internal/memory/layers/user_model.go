@@ -30,6 +30,7 @@ type UserModelingLayer struct {
 	model     *UserModel
 	store     *store.Store
 	promptMem *PromptMemory
+	dialectic *DialecticUserModel
 	mu        sync.RWMutex
 	userID    string
 }
@@ -75,6 +76,14 @@ func (uml *UserModelingLayer) TrackPassive(ctx context.Context, messages []Obser
 			obs.Category, obs.Key, obs.Value, obs.Confidence, time.Now(), obs.SessionID, userID,
 		); err != nil {
 			slog.Warn("user modeling: failed to record observation", "error", err)
+		}
+
+		if obs.Category == "preference" || obs.Category == "knowledge" || obs.Category == "pattern" {
+			if uml.dialectic != nil {
+				if err := uml.dialectic.ProcessMessage(ctx, "user", obs.Value); err != nil {
+					slog.Warn("user modeling: dialectic process message failed", "error", err)
+				}
+			}
 		}
 	}
 
@@ -183,6 +192,29 @@ func (uml *UserModelingLayer) GetModel() *UserModel {
 	uml.mu.RLock()
 	defer uml.mu.RUnlock()
 	return uml.model
+}
+
+func (uml *UserModelingLayer) SetDialecticModel(dm *DialecticUserModel) {
+	uml.mu.Lock()
+	defer uml.mu.Unlock()
+	uml.dialectic = dm
+}
+
+func (uml *UserModelingLayer) GetDialecticModel() *DialecticUserModel {
+	uml.mu.RLock()
+	defer uml.mu.RUnlock()
+	return uml.dialectic
+}
+
+func (uml *UserModelingLayer) RunDialecticCycle(ctx context.Context) error {
+	uml.mu.RLock()
+	dm := uml.dialectic
+	uml.mu.RUnlock()
+
+	if dm == nil {
+		return fmt.Errorf("user modeling: dialectic model not configured")
+	}
+	return dm.RunDialecticCycle(ctx)
 }
 
 func (uml *UserModelingLayer) BuildStaticBlock() string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,18 @@ type SearchResult struct {
 	Content   string
 	Timestamp time.Time
 	Rank      float64
+	Snippet   string
+}
+
+// SearchOptions configures an advanced FTS5 search query.
+type SearchOptions struct {
+	UserID    string    // Filter by user via sessions.user_id
+	SessionID string    // Filter to a specific session
+	Role      string    // Filter by role ("user" or "assistant")
+	Since     time.Time // Only results at or after this time
+	Until     time.Time // Only results before or at this time
+	Limit     int       // Max results (default 20)
+	Offset    int       // Pagination offset
 }
 
 func (s *Store) InsertMessage(ctx context.Context, msg *Message) error {
@@ -223,4 +236,141 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// SearchMessagesAdvanced performs an FTS5 search with dynamic filtering.
+// Supports FTS5 advanced syntax: "exact phrase", AND, OR, NEAR, * (prefix).
+func (s *Store) SearchMessagesAdvanced(query string, opts SearchOptions) ([]*SearchResult, error) {
+	if query == "" {
+		return nil, nil
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 20
+	}
+
+	var (
+		clauses []string
+		args    []any
+	)
+
+	clauses = append(clauses, "messages_fts MATCH ?")
+	args = append(args, query)
+
+	if opts.SessionID != "" {
+		clauses = append(clauses, "m.session_id = ?")
+		args = append(args, opts.SessionID)
+	}
+
+	if opts.Role != "" {
+		clauses = append(clauses, "m.role = ?")
+		args = append(args, opts.Role)
+	}
+
+	if !opts.Since.IsZero() {
+		clauses = append(clauses, "m.timestamp >= ?")
+		args = append(args, opts.Since.Format("2006-01-02 15:04:05"))
+	}
+
+	if !opts.Until.IsZero() {
+		clauses = append(clauses, "m.timestamp <= ?")
+		args = append(args, opts.Until.Format("2006-01-02 15:04:05"))
+	}
+
+	needUserJoin := opts.UserID != "" && opts.UserID != "default"
+	if needUserJoin {
+		clauses = append(clauses, "s.user_id = ?")
+		args = append(args, opts.UserID)
+	}
+
+	where := "WHERE " + strings.Join(clauses, " AND ")
+
+	joinClause := "JOIN messages m ON m.id = f.rowid"
+	if needUserJoin {
+		joinClause += " JOIN sessions s ON m.session_id = s.id"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT m.id, m.session_id, m.role, m.content, m.timestamp, f.rank,
+		       snippet(messages_fts, 0, '>>', '<<', '...', 32) AS snippet
+		FROM messages_fts f
+		%s
+		%s
+		ORDER BY f.rank
+		LIMIT ? OFFSET ?
+	`, joinClause, where)
+
+	args = append(args, opts.Limit, opts.Offset)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: search messages advanced: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSearchResultsWithSnippet(rows)
+}
+
+// SearchMessagesByTimeRange searches within a time window.
+func (s *Store) SearchMessagesByTimeRange(query string, since, until time.Time, limit int) ([]*SearchResult, error) {
+	return s.SearchMessagesAdvanced(query, SearchOptions{
+		Since: since,
+		Until: until,
+		Limit: limit,
+	})
+}
+
+// SearchMessagesBySession searches within a single session.
+func (s *Store) SearchMessagesBySession(query string, sessionID string, limit int) ([]*SearchResult, error) {
+	return s.SearchMessagesAdvanced(query, SearchOptions{
+		SessionID: sessionID,
+		Limit:     limit,
+	})
+}
+
+// GetSearchSnippets returns a highlighted snippet around matches for a specific document.
+func (s *Store) GetSearchSnippets(query string, docID int64, maxTokens int) (string, error) {
+	if query == "" {
+		return "", nil
+	}
+
+	numTokens := 32
+	if maxTokens > 0 {
+		numTokens = maxTokens / 4
+		if numTokens < 8 {
+			numTokens = 8
+		}
+	}
+
+	var snippet string
+	err := s.db.QueryRow(`
+		SELECT snippet(messages_fts, 0, '>>', '<<', '...', ?)
+		FROM messages_fts
+		WHERE messages_fts MATCH ? AND rowid = ?
+	`, numTokens, query, docID).Scan(&snippet)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("store: get search snippet: %w", err)
+	}
+
+	return snippet, nil
+}
+
+func scanSearchResultsWithSnippet(rows *sql.Rows) ([]*SearchResult, error) {
+	var results []*SearchResult
+	for rows.Next() {
+		r := &SearchResult{}
+		var ts sql.NullString
+		var snippet sql.NullString
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Role, &r.Content, &ts, &r.Rank, &snippet); err != nil {
+			return nil, fmt.Errorf("store: scan search result with snippet: %w", err)
+		}
+		if t, err := time.Parse("2006-01-02 15:04:05", val(ts)); err == nil {
+			r.Timestamp = t
+		}
+		r.Snippet = val(snippet)
+		results = append(results, r)
+	}
+	return results, nil
 }

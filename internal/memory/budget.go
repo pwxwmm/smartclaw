@@ -11,6 +11,7 @@ const (
 	LayerSkills        LayerName = "skills"
 	LayerSessionSearch LayerName = "session_search"
 	LayerIncident      LayerName = "incident"
+	LayerMemoryRecall  LayerName = "memory_recall"
 )
 
 type BudgetLayer struct {
