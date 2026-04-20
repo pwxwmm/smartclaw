@@ -16,7 +16,7 @@ type BuildError struct {
 
 var goBuildRe = regexp.MustCompile(`^([\w./-]+\.go):(\d+)(?::(\d+))?:\s+(.+)$`) // file.go:line:col: msg or file.go:line: msg
 var goTestFailRe = regexp.MustCompile(`^--- FAIL:\s+(\S+)`)                     // --- FAIL: TestName
-var goTestFileRe = regexp.MustCompile(`^\s+([\w./-]+_test\.go):(\d+):\s+(.+)$`) // file_test.go:line: msg
+var goTestFileRe = regexp.MustCompile(`^([\w./-]+_test\.go):(\d+):\s+(.+)$`) // file_test.go:line: msg
 var lintRe = regexp.MustCompile(`^([\w./-]+\.go):(\d+):(\d+):\s+(.+)$`)         // file.go:line:col: msg
 
 func ParseGoBuildOutput(output string) []BuildError {

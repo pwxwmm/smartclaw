@@ -759,3 +759,81 @@ func TestEngineWithFuzzyDisabled(t *testing.T) {
 		t.Error("exact-only match should fail when whitespace differs")
 	}
 }
+
+func TestApplyDiffWithContextLines(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "test.go")
+	content := "package main\n\nfunc before() {\n}\n\nfunc target() {\n\treturn\n}\n\nfunc after() {\n}\n"
+	if err := os.WriteFile(fp, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	block := DiffBlock{
+		FilePath:     fp,
+		SearchLines:  []string{"func target() {", "\treturn", "}"},
+		ReplaceLines: []string{"func target() {", "\treturn nil", "}"},
+	}
+
+	result, err := ApplyDiff(fp, block)
+	if err != nil {
+		t.Fatalf("ApplyDiff error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected success, got: %v", result.Error)
+	}
+
+	got, _ := os.ReadFile(fp)
+	s := string(got)
+	if !strings.Contains(s, "return nil") {
+		t.Error("file should contain 'return nil'")
+	}
+	if !strings.Contains(s, "func before()") {
+		t.Error("file should still contain 'func before()'")
+	}
+	if !strings.Contains(s, "func after()") {
+		t.Error("file should still contain 'func after()'")
+	}
+}
+
+func TestEngineApplyBlocksWithVerification(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "test.go")
+	content := "package main\n\nfunc ok() {\n}\n"
+	os.WriteFile(fp, []byte(content), 0644)
+
+	engine := NewDiffEngine(
+		WithVerifyAfterApply(true),
+		WithAutoRollback(true),
+	)
+
+	blocks := []DiffBlock{
+		{
+			FilePath:     fp,
+			SearchLines:  []string{"func ok() {", "}"},
+			ReplaceLines: []string{"func renamed() {", "}"},
+		},
+	}
+
+	results, err := engine.ApplyBlocks(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("ApplyBlocks error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Success {
+		t.Errorf("expected success, got: %v", results[0].Error)
+	}
+
+	got, _ := os.ReadFile(fp)
+	if !strings.Contains(string(got), "func renamed()") {
+		t.Error("file should contain 'func renamed()'")
+	}
+}
+
+func TestRollbackFailure(t *testing.T) {
+	err := Rollback("/nonexistent/path/file.go", "content")
+	if err == nil {
+		t.Error("expected error for rollback to nonexistent path")
+	}
+}
