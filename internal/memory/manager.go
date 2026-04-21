@@ -20,15 +20,16 @@ type MemorySnapshot struct {
 }
 
 type MemoryManager struct {
-	promptMemory   *layers.PromptMemory
-	sessionSearch  *layers.SessionSearch
-	skillMemory    *layers.SkillProceduralMemory
-	userModel      *layers.UserModelingLayer
-	incidentMemory *layers.IncidentMemory
-	dataStore      *store.Store
-	soulMD         *layers.ManagedFile
-	agentsMD       *layers.ManagedFile
-	baseDir        string
+	promptMemory    *layers.PromptMemory
+	sessionSearch   *layers.SessionSearch
+	skillMemory     *layers.SkillProceduralMemory
+	userModel       *layers.UserModelingLayer
+	incidentMemory  *layers.IncidentMemory
+	dataStore       *store.Store
+	soulMD          *layers.ManagedFile
+	agentsMD        *layers.ManagedFile
+	contextResolver *ContextFileResolver
+	baseDir         string
 
 	snapshots map[string]*MemorySnapshot
 	snapMu    sync.RWMutex
@@ -76,16 +77,31 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		}
 	}
 
+	contextResolver := NewContextFileResolver(dir, DefaultContextFileConfig())
+
+	// Check for .cursorrules in the project CWD first, then fall back to baseDir.
+	if cwd, err := os.Getwd(); err == nil {
+		cwdRules := filepath.Join(cwd, ".cursorrules")
+		if _, statErr := os.Stat(cwdRules); statErr == nil {
+			contextResolver.SetCursorRulesPath(cwdRules)
+		}
+	}
+
+	if err := contextResolver.Load(context.Background()); err != nil {
+		slog.Warn("memory manager: failed to load context files", "error", err)
+	}
+
 	mm := &MemoryManager{
-		promptMemory: pm,
-		dataStore:    s,
-		soulMD:       soulMD,
-		agentsMD:     agentsMD,
-		baseDir:      dir,
-		snapshots:    make(map[string]*MemorySnapshot),
-		budget:       DefaultContextBudget(),
-		injector:     NewFencedMemoryInjector(DefaultInjectionConfig()),
-		providers:    make(map[string]MemoryProvider),
+		promptMemory:    pm,
+		dataStore:       s,
+		soulMD:          soulMD,
+		agentsMD:        agentsMD,
+		contextResolver: contextResolver,
+		baseDir:         dir,
+		snapshots:       make(map[string]*MemorySnapshot),
+		budget:          DefaultContextBudget(),
+		injector:        NewFencedMemoryInjector(DefaultInjectionConfig()),
+		providers:       make(map[string]MemoryProvider),
 	}
 
 	bundledSummaries := buildBundledSkillSummaries()
@@ -153,19 +169,7 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 
 	var layerContents []LayerContent
 
-	if mm.soulMD != nil && mm.soulMD.Content() != "" {
-		_, span := observability.StartSpan(ctx, "memory.layer.soul")
-		layerContents = append(layerContents, LayerContent{Name: LayerSOUL, Content: mm.soulMD.Content()})
-		observability.RecordMemoryLayerSize("soul", len(mm.soulMD.Content()))
-		observability.EndSpan(span)
-	}
-
-	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
-		_, span := observability.StartSpan(ctx, "memory.layer.agents")
-		layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: mm.agentsMD.Content()})
-		observability.RecordMemoryLayerSize("agents", len(mm.agentsMD.Content()))
-		observability.EndSpan(span)
-	}
+	layerContents = mm.appendContextFileLayers(ctx, layerContents)
 
 	memoryContent := mm.promptMemory.GetMemoryContent()
 	if memoryContent != "" {
@@ -301,15 +305,7 @@ func (mm *MemoryManager) BuildSystemContextWithSnapshot(ctx context.Context, cur
 
 	var layerContents []LayerContent
 
-	if mm.soulMD != nil && mm.soulMD.Content() != "" {
-		layerContents = append(layerContents, LayerContent{Name: LayerSOUL, Content: mm.soulMD.Content()})
-		observability.RecordMemoryLayerSize("soul", len(mm.soulMD.Content()))
-	}
-
-	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
-		layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: mm.agentsMD.Content()})
-		observability.RecordMemoryLayerSize("agents", len(mm.agentsMD.Content()))
-	}
+	layerContents = mm.appendContextFileLayers(ctx, layerContents)
 
 	mm.snapMu.RLock()
 	snapshot, hasSnapshot := mm.snapshots[sessionID]
@@ -419,6 +415,11 @@ func (mm *MemoryManager) Reload() error {
 			slog.Warn("memory manager: failed to reload AGENTS.md", "error", err)
 		}
 	}
+	if mm.contextResolver != nil {
+		if err := mm.contextResolver.Reload(context.Background()); err != nil {
+			slog.Warn("memory manager: failed to reload context files", "error", err)
+		}
+	}
 	return nil
 }
 
@@ -452,6 +453,52 @@ func (mm *MemoryManager) GetSoulMD() *layers.ManagedFile {
 
 func (mm *MemoryManager) GetAgentsMD() *layers.ManagedFile {
 	return mm.agentsMD
+}
+
+func (mm *MemoryManager) GetContextFileResolver() *ContextFileResolver {
+	return mm.contextResolver
+}
+
+// appendContextFileLayers uses the ContextFileResolver to add SOUL, AGENTS, and
+// .cursorrules as LayerContent entries. Falls back to the legacy soulMD/agentsMD
+// ManagedFile fields when the resolver is nil.
+func (mm *MemoryManager) appendContextFileLayers(ctx context.Context, layerContents []LayerContent) []LayerContent {
+	if mm.contextResolver != nil {
+		priorityToLayer := map[ContextFilePriority]LayerName{
+			PrioritySoul:        LayerSOUL,
+			PriorityAgents:      LayerAgents,
+			PriorityCursorRules: LayerCursorRules,
+		}
+		priorityToLabel := map[ContextFilePriority]string{
+			PrioritySoul:        "soul",
+			PriorityAgents:      "agents",
+			PriorityCursorRules: "cursor_rules",
+		}
+
+		for _, af := range mm.contextResolver.ResolveAll(mm.budget.MaxChars) {
+			layerName, ok := priorityToLayer[af.Priority]
+			if !ok || af.Content == "" {
+				continue
+			}
+			_, span := observability.StartSpan(ctx, "memory.layer."+string(layerName))
+			layerContents = append(layerContents, LayerContent{Name: layerName, Content: af.Content})
+			label := priorityToLabel[af.Priority]
+			observability.RecordMemoryLayerSize(label, len(af.Content))
+			observability.EndSpan(span)
+		}
+		return layerContents
+	}
+
+	// Legacy fallback when resolver is not available.
+	if mm.soulMD != nil && mm.soulMD.Content() != "" {
+		layerContents = append(layerContents, LayerContent{Name: LayerSOUL, Content: mm.soulMD.Content()})
+		observability.RecordMemoryLayerSize("soul", len(mm.soulMD.Content()))
+	}
+	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
+		layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: mm.agentsMD.Content()})
+		observability.RecordMemoryLayerSize("agents", len(mm.agentsMD.Content()))
+	}
+	return layerContents
 }
 
 func (mm *MemoryManager) SetBudget(budget ContextBudget) {
@@ -569,13 +616,7 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 
 	var layerContents []LayerContent
 
-	if mm.soulMD != nil && mm.soulMD.Content() != "" {
-		layerContents = append(layerContents, LayerContent{Name: LayerSOUL, Content: mm.soulMD.Content()})
-	}
-
-	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
-		layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: mm.agentsMD.Content()})
-	}
+	layerContents = mm.appendContextFileLayers(ctx, layerContents)
 
 	memoryContent := um.promptMemory.GetMemoryContent()
 	if memoryContent != "" {

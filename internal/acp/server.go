@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -23,13 +24,30 @@ const (
 // IDEs (VS Code, Zed, JetBrains) launch `smartclaw acp` and communicate
 // via stdin/stdout using the same Content-Length framing as MCP.
 type ACPServer struct {
-	registry *tools.ToolRegistry
+	registry    *tools.ToolRegistry
+	eventBus    *EventBus
+	permissions *PermissionModel
+	services    *ServiceRegistry
 }
 
 // NewACPServer creates an ACP server backed by the given tool registry.
 func NewACPServer(registry *tools.ToolRegistry) *ACPServer {
-	return &ACPServer{registry: registry}
+	pm := NewPermissionModel()
+	for _, r := range DefaultPermissions() {
+		pm.AddRule(r)
+	}
+
+	return &ACPServer{
+		registry:    registry,
+		eventBus:    NewEventBus(),
+		permissions: pm,
+		services:    NewServiceRegistry(),
+	}
 }
+
+func (s *ACPServer) GetEventBus() *EventBus       { return s.eventBus }
+func (s *ACPServer) GetPermissions() *PermissionModel { return s.permissions }
+func (s *ACPServer) GetServices() *ServiceRegistry    { return s.services }
 
 // Serve starts the ACP server loop, reading JSON-RPC from reader and
 // writing responses to writer. Blocks until ctx is cancelled or the
@@ -76,12 +94,23 @@ func (s *ACPServer) handleRequest(ctx context.Context, req *mcp.JSONRPCRequest) 
 	case "initialize":
 		return s.handleInitialize(req)
 	case "initialized":
-		// Notification — no response needed, but we ack it
 		return &mcp.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
 	case "tools/list":
 		return s.handleToolsList(req)
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
+	case "events/subscribe":
+		return s.handleEventsSubscribe(req)
+	case "events/publish":
+		return s.handleEventsPublish(ctx, req)
+	case "permissions/check":
+		return s.handlePermissionsCheck(req)
+	case "services/register":
+		return s.handleServicesRegister(req)
+	case "services/list":
+		return s.handleServicesList(req)
+	case "services/find":
+		return s.handleServicesFind(req)
 	case "shutdown":
 		return &mcp.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
 	default:
@@ -134,8 +163,23 @@ func (s *ACPServer) handleToolsCall(ctx context.Context, req *mcp.JSONRPCRequest
 		}
 	}
 
+	s.eventBus.PublishAsync(ctx, Event{
+		ID:        fmt.Sprintf("tc-%d", time.Now().UnixNano()),
+		Type:      EventToolCall,
+		Source:    "agent",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"tool": params.Name, "arguments": params.Arguments},
+	})
+
 	result, err := s.registry.Execute(ctx, params.Name, params.Arguments)
 	if err != nil {
+		s.eventBus.PublishAsync(ctx, Event{
+			ID:        fmt.Sprintf("tr-%d", time.Now().UnixNano()),
+			Type:      EventError,
+			Source:    "tool",
+			Timestamp: time.Now(),
+			Data:      map[string]any{"tool": params.Name, "error": err.Error()},
+		})
 		return &mcp.JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -149,6 +193,15 @@ func (s *ACPServer) handleToolsCall(ctx context.Context, req *mcp.JSONRPCRequest
 	}
 
 	text := formatResult(result)
+
+	s.eventBus.PublishAsync(ctx, Event{
+		ID:        fmt.Sprintf("tr-%d", time.Now().UnixNano()),
+		Type:      EventToolResult,
+		Source:    "tool",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"tool": params.Name},
+	})
+
 	return &mcp.JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,

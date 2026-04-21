@@ -12,6 +12,7 @@ const (
 	LayerSessionSearch LayerName = "session_search"
 	LayerIncident      LayerName = "incident"
 	LayerMemoryRecall  LayerName = "memory_recall"
+	LayerCursorRules   LayerName = "cursor_rules"
 )
 
 type BudgetLayer struct {
@@ -43,8 +44,9 @@ func DefaultContextBudget() ContextBudget {
 	return ContextBudget{
 		MaxChars: 3575,
 		Layers: []BudgetLayer{
-			{Name: LayerSOUL, Weight: 0.15, MinChars: 0, MaxChars: 1500},
-			{Name: LayerAgents, Weight: 0.10, MinChars: 0, MaxChars: 1000},
+			{Name: LayerSOUL, Weight: 0.12, MinChars: 0, MaxChars: 1500},
+			{Name: LayerAgents, Weight: 0.08, MinChars: 0, MaxChars: 1000},
+			{Name: LayerCursorRules, Weight: 0.05, MinChars: 0, MaxChars: 500},
 			{Name: LayerMemory, Weight: 0.20, MinChars: 0, MaxChars: 2000},
 			{Name: LayerUser, Weight: 0.10, MinChars: 0, MaxChars: 1000},
 			{Name: LayerUserModel, Weight: 0.05, MinChars: 0, MaxChars: 500},

@@ -27,6 +27,21 @@ type Skill struct {
 	Source      string                 `json:"source"` // "bundled", "local", "mcp"
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	LoadedAt    time.Time              `json:"loaded_at"`
+	Schema      *SkillSchema           `json:"schema,omitempty"`
+}
+
+func (s *Skill) PlatformAllowed(platform string) bool {
+	if s.Schema == nil {
+		return true
+	}
+	return IsPlatformAllowed(s.Schema, platform)
+}
+
+func (s *Skill) ResolveConfig(provided map[string]any) (map[string]any, []error) {
+	if s.Schema == nil {
+		return provided, nil
+	}
+	return ResolveConfigVars(s.Schema, provided)
 }
 
 type McpSkillBuilder struct {
@@ -243,6 +258,33 @@ func (sm *SkillManager) Load(path string) (*Skill, error) {
 }
 
 func (sm *SkillManager) parseSkillContent(name, content, source string) *Skill {
+	schema, _, err := ParseSKILLFrontmatter(content)
+	if err == nil && schema != nil {
+		commands := schema.Triggers
+		if len(schema.SlashCommands) > 0 {
+			for _, sc := range schema.SlashCommands {
+				commands = append(commands, sc.Name)
+			}
+		}
+
+		return &Skill{
+			Name:        coalesce(schema.Name, name),
+			Description: schema.Description,
+			Content:     content,
+			Tools:       schema.Tools,
+			Commands:    commands,
+			Tags:        schema.Tags,
+			Author:      schema.Author,
+			Version:     schema.Version,
+			Source:      source,
+			Enabled:     true,
+			LoadedAt:    time.Now(),
+			Metadata:    make(map[string]any),
+			Schema:      schema,
+		}
+	}
+
+	// Fallback: legacy plain-markdown parsing
 	description := extractSection(content, "Description", "Triggers")
 	if description == "" {
 		description = extractDescription(content)
@@ -264,6 +306,15 @@ func (sm *SkillManager) parseSkillContent(name, content, source string) *Skill {
 		LoadedAt:    time.Now(),
 		Metadata:    make(map[string]any),
 	}
+}
+
+func coalesce(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (sm *SkillManager) Get(name string) *Skill {

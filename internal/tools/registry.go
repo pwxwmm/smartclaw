@@ -38,6 +38,7 @@ type ToolRegistry struct {
 	cache          *ResultCache
 	chainOptimizer *ChainOptimizer
 	batchExecutor  *BatchExecutor
+	distribution   *ToolsetDistribution
 }
 
 func NewRegistry() *ToolRegistry {
@@ -177,6 +178,21 @@ func (r *ToolRegistry) SetBatchExecutor(be *BatchExecutor) {
 
 func (r *ToolRegistry) GetBatchExecutor() *BatchExecutor {
 	return r.batchExecutor
+}
+
+func (r *ToolRegistry) SetDistribution(d *ToolsetDistribution) {
+	r.distribution = d
+}
+
+func (r *ToolRegistry) GetDistribution() *ToolsetDistribution {
+	return r.distribution
+}
+
+func (r *ToolRegistry) SelectToolset(ctx context.Context, complexity float64) ([]Tool, error) {
+	if r.distribution == nil {
+		return nil, fmt.Errorf("toolset distribution not configured")
+	}
+	return r.distribution.SelectTools(ctx, complexity, r.tools)
 }
 
 func sopaToolNameToIncidentName(name string) string {
