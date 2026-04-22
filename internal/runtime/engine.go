@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/chain"
 	"github.com/instructkr/smartclaw/internal/constants"
 	"github.com/instructkr/smartclaw/internal/costguard"
 	"github.com/instructkr/smartclaw/internal/hooks"
@@ -43,6 +44,7 @@ type QueryEngine struct {
 	proactive           *learning.ProactiveEngine
 	speculativeExecutor *routing.SpeculativeExecutor
 	costGuard           *costguard.CostGuard
+	chainOptimizer      *chain.ChainOptimizer
 	thinkingManager     *ThinkingManager
 	prefetcher          *tools.PredictivePrefetcher
 	usageLearner        *tools.ToolUsageLearner
@@ -163,6 +165,14 @@ func (e *QueryEngine) SetCostGuard(cg *costguard.CostGuard) {
 
 func (e *QueryEngine) GetCostGuard() *costguard.CostGuard {
 	return e.costGuard
+}
+
+func (e *QueryEngine) SetChainOptimizer(co *chain.ChainOptimizer) {
+	e.chainOptimizer = co
+}
+
+func (e *QueryEngine) GetChainOptimizer() *chain.ChainOptimizer {
+	return e.chainOptimizer
 }
 
 func (e *QueryEngine) SetThinkingManager(tm *ThinkingManager) {
