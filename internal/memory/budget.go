@@ -14,6 +14,7 @@ const (
 	LayerConvention    LayerName = "convention"
 	LayerMemoryRecall  LayerName = "memory_recall"
 	LayerCursorRules   LayerName = "cursor_rules"
+	LayerArchaeology   LayerName = "archaeology"
 )
 
 type BudgetLayer struct {
@@ -41,6 +42,16 @@ type ContextBudget struct {
 	MaxChars int
 }
 
+// Clone returns a deep copy of the budget.
+func (cb ContextBudget) Clone() ContextBudget {
+	layers := make([]BudgetLayer, len(cb.Layers))
+	copy(layers, cb.Layers)
+	return ContextBudget{
+		Layers:   layers,
+		MaxChars: cb.MaxChars,
+	}
+}
+
 func DefaultContextBudget() ContextBudget {
 	return ContextBudget{
 		MaxChars: 3575,
@@ -52,9 +63,10 @@ func DefaultContextBudget() ContextBudget {
 			{Name: LayerUser, Weight: 0.10, MinChars: 0, MaxChars: 1000},
 			{Name: LayerUserModel, Weight: 0.05, MinChars: 0, MaxChars: 500},
 			{Name: LayerSkills, Weight: 0.10, MinChars: 0, MaxChars: 800},
-			{Name: LayerSessionSearch, Weight: 0.20, MinChars: 0, MaxChars: 2000},
+			{Name: LayerSessionSearch, Weight: 0.15, MinChars: 0, MaxChars: 2000},
 			{Name: LayerIncident, Weight: 0.05, MinChars: 0, MaxChars: 2000},
 			{Name: LayerConvention, Weight: 0.05, MinChars: 0, MaxChars: 800},
+			{Name: LayerArchaeology, Weight: 0.05, MinChars: 0, MaxChars: 800},
 		},
 	}
 }

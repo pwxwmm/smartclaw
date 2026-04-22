@@ -368,7 +368,6 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&GitDiffTool{})
 	defaultRegistry.Register(&GitLogTool{})
 	defaultRegistry.Register(&EnterPlanModeTool{})
-	defaultRegistry.Register(&SyntheticOutputTool{})
 	defaultRegistry.Register(&ExitPlanModeTool{})
 	defaultRegistry.Register(&McpAuthTool{})
 	defaultRegistry.Register(&AttachTool{})

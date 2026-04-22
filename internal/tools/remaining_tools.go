@@ -683,36 +683,6 @@ func (t *EnterPlanModeTool) Execute(ctx context.Context, input map[string]any) (
 	return result, nil
 }
 
-type SyntheticOutputTool struct{ BaseTool }
-
-func (t *SyntheticOutputTool) Name() string        { return "synthetic_output" }
-func (t *SyntheticOutputTool) Description() string { return "Generate synthetic output for testing" }
-
-func (t *SyntheticOutputTool) InputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"type":  map[string]any{"type": "string"},
-			"count": map[string]any{"type": "integer"},
-		},
-		"required": []string{"type"},
-	}
-}
-
-func (t *SyntheticOutputTool) Execute(ctx context.Context, input map[string]any) (any, error) {
-	typ, _ := input["type"].(string)
-	count := 1
-	if c, ok := input["count"].(int); ok && c > 0 {
-		count = c
-	}
-
-	return map[string]any{
-		"type":  typ,
-		"count": count,
-		"data":  []any{},
-	}, nil
-}
-
 type ExitPlanModeTool struct{ BaseTool }
 
 func (t *ExitPlanModeTool) Name() string { return "exit_plan_mode" }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -167,6 +168,125 @@ func GetLog(dir string, count int) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+// BlameInfo represents a single line's blame information
+type BlameInfo struct {
+	Commit  string // abbreviated commit hash
+	Author  string
+	Date    string
+	Line    int
+	Content string
+}
+
+// FileLogEntry represents a commit that touched a file
+type FileLogEntry struct {
+	Hash    string
+	Author  string
+	Date    string
+	Subject string
+}
+
+// GetBlame returns blame information for a specific file.
+// maxLines limits the number of lines returned (0 = no limit).
+func GetBlame(dir string, file string, maxLines int) ([]BlameInfo, error) {
+	args := []string{"blame", "--porcelain", file}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git blame failed: %w", err)
+	}
+
+	return ParseBlamePorcelain(string(output), maxLines), nil
+}
+
+// GetFileLog returns commit history for a specific file.
+// count limits the number of log entries returned.
+func GetFileLog(dir string, file string, count int) ([]FileLogEntry, error) {
+	args := []string{"log", "--follow", "--format=%h|%an|%ai|%s", fmt.Sprintf("-%d", count), "--", file}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git log failed: %w", err)
+	}
+
+	return ParseFileLog(string(output)), nil
+}
+
+// ParseBlamePorcelain parses git blame --porcelain output into structured BlameInfo.
+func ParseBlamePorcelain(output string, maxLines int) []BlameInfo {
+	var results []BlameInfo
+	lines := strings.Split(output, "\n")
+
+	var current BlameInfo
+	inChunk := false
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "\t") {
+			current.Content = strings.TrimPrefix(line, "\t")
+			if maxLines == 0 || len(results) < maxLines {
+				results = append(results, current)
+			}
+			current = BlameInfo{}
+			inChunk = false
+			continue
+		}
+
+		if !inChunk {
+			parts := strings.Fields(line)
+			if len(parts) >= 1 && len(parts[0]) >= 7 {
+				current.Commit = parts[0]
+				if len(parts) >= 3 {
+					if n, err := strconv.Atoi(parts[2]); err == nil {
+						current.Line = n
+					}
+				}
+				inChunk = true
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "author ") {
+			current.Author = strings.TrimPrefix(line, "author ")
+		} else if strings.HasPrefix(line, "author-time ") {
+			current.Date = strings.TrimPrefix(line, "author-time ")
+		}
+	}
+
+	return results
+}
+
+// ParseFileLog parses git log --format="%h|%an|%ai|%s" output into FileLogEntry slice.
+func ParseFileLog(output string) []FileLogEntry {
+	var entries []FileLogEntry
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		entries = append(entries, FileLogEntry{
+			Hash:    strings.TrimSpace(parts[0]),
+			Author:  strings.TrimSpace(parts[1]),
+			Date:    strings.TrimSpace(parts[2]),
+			Subject: strings.TrimSpace(parts[3]),
+		})
+	}
+
+	return entries
 }
 
 // String returns a human-readable context

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/archaeology"
 	"github.com/instructkr/smartclaw/internal/memory/convention"
 	"github.com/instructkr/smartclaw/internal/memory/layers"
 	"github.com/instructkr/smartclaw/internal/observability"
@@ -32,12 +33,14 @@ type MemoryManager struct {
 	agentsMD        *layers.ManagedFile
 	contextResolver *ContextFileResolver
 	conventionStore *convention.Store
+	archaeologyLayer *archaeology.ArchaeologyLayer
 	baseDir         string
 
 	snapshots map[string]*MemorySnapshot
 	snapMu    sync.RWMutex
 
 	budget             ContextBudget
+	budgetAdjuster     *SemanticBudgetAdjuster
 	skillInjector      *layers.SkillInjector
 	contextAwareSkills bool
 	injector           *FencedMemoryInjector
@@ -103,9 +106,11 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		agentsMD:        agentsMD,
 		contextResolver: contextResolver,
 		conventionStore: conventionStore,
+		archaeologyLayer: archaeology.NewArchaeologyLayer(dir),
 		baseDir:         dir,
 		snapshots:       make(map[string]*MemorySnapshot),
 		budget:          DefaultContextBudget(),
+		budgetAdjuster:  NewSemanticBudgetAdjuster(),
 		injector:        NewFencedMemoryInjector(DefaultInjectionConfig()),
 		providers:       make(map[string]MemoryProvider),
 	}
@@ -228,6 +233,16 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 		observability.EndSpan(span)
 	}
 
+	if mm.archaeologyLayer != nil {
+		_, span := observability.StartSpan(ctx, "memory.layer.archaeology")
+		archContent := mm.archaeologyLayer.BuildArchaeologyPrompt(ctx, currentQuery)
+		if archContent != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerArchaeology, Content: archContent})
+			observability.RecordMemoryLayerSize("archaeology", len(archContent))
+		}
+		observability.EndSpan(span)
+	}
+
 	if mm.skillMemory != nil {
 		_, span := observability.StartSpan(ctx, "memory.layer.skills")
 		var skillPrompt string
@@ -259,7 +274,12 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 		observability.EndSpan(span)
 	}
 
-	allocated := mm.budget.Allocate(layerContents)
+	budget := mm.budget
+	if mm.budgetAdjuster != nil && currentQuery != "" {
+		queryType := mm.budgetAdjuster.ClassifyQuery(currentQuery)
+		budget = mm.budgetAdjuster.AdjustBudget(queryType, mm.budget)
+	}
+	allocated := budget.Allocate(layerContents)
 
 	if mm.injector != nil {
 		var sections []FencedSection
@@ -383,6 +403,16 @@ func (mm *MemoryManager) BuildSystemContextWithSnapshot(ctx context.Context, cur
 		}
 	}
 
+	if mm.archaeologyLayer != nil {
+		_, span := observability.StartSpan(ctx, "memory.layer.archaeology")
+		archContent := mm.archaeologyLayer.BuildArchaeologyPrompt(ctx, currentQuery)
+		if archContent != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerArchaeology, Content: archContent})
+			observability.RecordMemoryLayerSize("archaeology", len(archContent))
+		}
+		observability.EndSpan(span)
+	}
+
 	if mm.skillMemory != nil {
 		skillPrompt := mm.skillMemory.BuildSkillPrompt()
 		if skillPrompt != "" {
@@ -402,7 +432,12 @@ func (mm *MemoryManager) BuildSystemContextWithSnapshot(ctx context.Context, cur
 		}
 	}
 
-	allocated := mm.budget.Allocate(layerContents)
+	budget := mm.budget
+	if mm.budgetAdjuster != nil && currentQuery != "" {
+		queryType := mm.budgetAdjuster.ClassifyQuery(currentQuery)
+		budget = mm.budgetAdjuster.AdjustBudget(queryType, mm.budget)
+	}
+	allocated := budget.Allocate(layerContents)
 
 	if mm.injector != nil {
 		var sections []FencedSection
@@ -741,6 +776,15 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 		}
 	}
 
+	if mm.archaeologyLayer != nil {
+		_, span := observability.StartSpan(ctx, "memory.layer.archaeology")
+		archContent := mm.archaeologyLayer.BuildArchaeologyPrompt(ctx, currentQuery)
+		if archContent != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerArchaeology, Content: archContent})
+		}
+		observability.EndSpan(span)
+	}
+
 	if mm.skillMemory != nil {
 		var skillPrompt string
 		if mm.contextAwareSkills && mm.skillInjector != nil {
@@ -766,7 +810,12 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 		}
 	}
 
-	allocated := mm.budget.Allocate(layerContents)
+	budget := mm.budget
+	if mm.budgetAdjuster != nil && currentQuery != "" {
+		queryType := mm.budgetAdjuster.ClassifyQuery(currentQuery)
+		budget = mm.budgetAdjuster.AdjustBudget(queryType, mm.budget)
+	}
+	allocated := budget.Allocate(layerContents)
 
 	if mm.injector != nil {
 		var sections []FencedSection

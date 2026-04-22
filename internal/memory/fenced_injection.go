@@ -99,6 +99,8 @@ func layerLabel(name LayerName) string {
 		return "Incident Context"
 	case LayerMemoryRecall:
 		return "Memory Recall"
+	case LayerArchaeology:
+		return "Code Archaeology"
 	default:
 		s := string(name)
 		return strings.Title(strings.ReplaceAll(s, "_", " "))

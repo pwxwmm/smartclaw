@@ -632,7 +632,6 @@ internal/
 │   └── layers/             # L1 Prompt, L2 Session Search, L3 Skill, L4 User Model
 ├── migrations/             # Database migrations
 ├── models/                 # Data models
-├── moreright/              # Extended permission capabilities
 ├── native/                 # Native platform bindings
 ├── native_ts/              # TypeScript native bindings
 ├── observability/          # Metrics, tracing, and telemetry
