@@ -22,9 +22,11 @@ import (
 	"github.com/instructkr/smartclaw/internal/provider"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/session"
+	"github.com/instructkr/smartclaw/internal/skills"
 	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/utils"
+	"github.com/instructkr/smartclaw/internal/wiki"
 )
 
 type Handler struct {
@@ -35,6 +37,7 @@ type Handler struct {
 	sessMgr       *session.Manager
 	dataStore     *store.Store
 	memMgr        *memory.MemoryManager
+	wikiClient    *wiki.WikiClient
 	showThinking  bool
 	clientSess    map[string]*session.Session
 	clientSessMu  sync.RWMutex
@@ -122,6 +125,8 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 
 	_ = h.approvalGate.LoadConfigFromDefaultPath()
 
+	h.wikiClient = newWikiClientFromConfig()
+
 	return h
 }
 
@@ -190,6 +195,32 @@ func loadShowThinking() bool {
 	return false
 }
 
+func newWikiClientFromConfig() *wiki.WikiClient {
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".smartclaw", "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return wiki.NewWikiClient(wiki.WikiConfig{})
+	}
+	var cfg struct {
+		Wiki struct {
+			BaseURL   string `json:"base_url"`
+			APIToken  string `json:"api_token"`
+			SpaceName string `json:"space_name"`
+			Enabled   bool   `json:"enabled"`
+		} `json:"wiki"`
+	}
+	if json.Unmarshal(data, &cfg) == nil {
+		return wiki.NewWikiClient(wiki.WikiConfig{
+			BaseURL:   cfg.Wiki.BaseURL,
+			APIToken:  cfg.Wiki.APIToken,
+			SpaceName: cfg.Wiki.SpaceName,
+			Enabled:   cfg.Wiki.Enabled,
+		})
+	}
+	return wiki.NewWikiClient(wiki.WikiConfig{})
+}
+
 type WSMessage struct {
 	Type    string          `json:"type"`
 	Content string          `json:"content,omitempty"`
@@ -223,6 +254,7 @@ type WSResponse struct {
 	Text          string                   `json:"text,omitempty"`
 	Messages      []MsgItem                `json:"messages,omitempty"`
 	Model         string                   `json:"model,omitempty"`
+	Data          any                      `json:"data,omitempty"`
 }
 
 type MsgItem struct {
@@ -282,6 +314,28 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleAbort(client)
 	case "tool_approval":
 		h.handleToolApproval(client, msg)
+	case "skill_list":
+		h.handleSkillListWS(client)
+	case "skill_detail":
+		h.handleSkillDetailWS(client, msg)
+	case "skill_toggle":
+		h.handleSkillToggleWS(client, msg)
+	case "skill_search":
+		h.handleSkillSearchWS(client, msg)
+	case "memory_layers":
+		h.handleMemoryLayersWS(client)
+	case "memory_search":
+		h.handleMemorySearchWS(client, msg)
+	case "memory_recall":
+		h.handleMemoryRecallWS(client, msg)
+	case "memory_store":
+		h.handleMemoryStoreWS(client, msg)
+	case "memory_stats":
+		h.handleMemoryStatsWS(client)
+	case "wiki_search":
+		h.handleWikiSearchWS(client, msg)
+	case "wiki_pages":
+		h.handleWikiPagesWS(client)
 	default:
 		h.sendError(client, fmt.Sprintf("Unknown message type: %s", msg.Type))
 	}
@@ -1226,6 +1280,106 @@ func (h *Handler) handleSessionRename(client *Client, msg WSMessage) {
 	h.handleSessionList(client)
 }
 
+func (h *Handler) handleMemoryLayersWS(client *Client) {
+	if h.memMgr == nil {
+		h.sendError(client, "Memory manager not available")
+		return
+	}
+	pm := h.memMgr.GetPromptMemory()
+	layers := map[string]any{
+		"memory": pm.GetMemoryContent(),
+		"user":   pm.GetUserContent(),
+	}
+	h.sendToClient(client, WSResponse{Type: "memory_layers", Data: layers})
+}
+
+func (h *Handler) handleMemorySearchWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid memory search request")
+		return
+	}
+	query, _ := data["query"].(string)
+	limit := 5
+	if l, ok := data["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+	if h.memMgr == nil {
+		h.sendError(client, "Memory manager not available")
+		return
+	}
+	ctx := context.Background()
+	results, err := h.memMgr.Search(ctx, query, limit)
+	if err != nil {
+		h.sendError(client, "Search failed: "+err.Error())
+		return
+	}
+	h.sendToClient(client, WSResponse{Type: "memory_search", Data: results})
+}
+
+func (h *Handler) handleMemoryRecallWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid memory recall request")
+		return
+	}
+	query, _ := data["query"].(string)
+	if h.memMgr == nil {
+		h.sendError(client, "Memory manager not available")
+		return
+	}
+	ctx := context.Background()
+	contextStr := h.memMgr.BuildSystemContext(ctx, query)
+	h.sendToClient(client, WSResponse{Type: "memory_recall", Data: map[string]any{
+		"query":   query,
+		"context": contextStr,
+	}})
+}
+
+func (h *Handler) handleMemoryStoreWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid memory store request")
+		return
+	}
+	content, _ := data["content"].(string)
+	if content == "" {
+		h.sendError(client, "Content is required for store")
+		return
+	}
+	if h.memMgr == nil {
+		h.sendError(client, "Memory manager not available")
+		return
+	}
+	pm := h.memMgr.GetPromptMemory()
+	key, _ := data["key"].(string)
+	if key == "" {
+		key = "fact"
+	}
+	entry := fmt.Sprintf("- **%s**: %s (stored %s)", key, content, time.Now().Format("2006-01-02"))
+	if err := pm.AppendToSection("## Stored Facts", entry); err != nil {
+		h.sendError(client, "Store failed: "+err.Error())
+		return
+	}
+	h.sendToClient(client, WSResponse{Type: "memory_store", Data: map[string]any{
+		"stored": true,
+		"key":    key,
+	}})
+}
+
+func (h *Handler) handleMemoryStatsWS(client *Client) {
+	if h.memMgr == nil {
+		h.sendError(client, "Memory manager not available")
+		return
+	}
+	pm := h.memMgr.GetPromptMemory()
+	stats := map[string]any{
+		"memory_chars": len(pm.GetMemoryContent()),
+		"user_chars":   len(pm.GetUserContent()),
+	}
+	h.sendToClient(client, WSResponse{Type: "memory_stats", Data: stats})
+}
+
 func (h *Handler) sendToClient(client *Client, resp WSResponse) {
 	pe := pool.GetJSONEncoder(nil)
 	if err := pe.Encode(resp); err != nil {
@@ -1243,8 +1397,141 @@ func (h *Handler) sendToClient(client *Client, resp WSResponse) {
 	}
 }
 
+func (h *Handler) handleWikiSearchWS(client *Client, msg WSMessage) {
+	if h.wikiClient == nil || !h.wikiClient.IsEnabled() {
+		h.sendToClient(client, WSResponse{Type: "wiki_search", Data: map[string]any{
+			"enabled": false,
+			"results": []any{},
+		}})
+		return
+	}
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid wiki search request")
+		return
+	}
+	query, _ := data["query"].(string)
+	limit := 5
+	if l, ok := data["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+	result, err := h.wikiClient.Search(context.Background(), query, limit)
+	if err != nil {
+		h.sendError(client, "Wiki search failed: "+err.Error())
+		return
+	}
+	h.sendToClient(client, WSResponse{Type: "wiki_search", Data: result})
+}
+
+func (h *Handler) handleWikiPagesWS(client *Client) {
+	if h.wikiClient == nil || !h.wikiClient.IsEnabled() {
+		h.sendToClient(client, WSResponse{Type: "wiki_pages", Data: map[string]any{
+			"enabled": false,
+			"pages":   []any{},
+		}})
+		return
+	}
+	pages, err := h.wikiClient.ListPages(context.Background(), 50)
+	if err != nil {
+		h.sendError(client, "Wiki list failed: "+err.Error())
+		return
+	}
+	h.sendToClient(client, WSResponse{Type: "wiki_pages", Data: map[string]any{
+		"enabled": true,
+		"pages":   pages,
+	}})
+}
+
 func (h *Handler) sendError(client *Client, message string) {
 	h.sendToClient(client, WSResponse{Type: "error", Message: message})
+}
+
+func (h *Handler) sendJSON(client *Client, v any) {
+	pe := pool.GetJSONEncoder(nil)
+	if err := pe.Encode(v); err != nil {
+		pool.PutJSONEncoder(pe)
+		return
+	}
+	data := make([]byte, len(pe.Bytes()))
+	copy(data, pe.Bytes())
+	pool.PutJSONEncoder(pe)
+
+	select {
+	case client.send <- data:
+	case <-time.After(5 * time.Second):
+		slog.Warn("websocket send timeout, client may be slow", "client_id", client.ID)
+	}
+}
+
+func (h *Handler) handleSkillListWS(client *Client) {
+	sm := skills.GetSkillManager()
+	if sm == nil {
+		h.sendError(client, "Skill manager not available")
+		return
+	}
+	skillList := sm.List()
+	h.sendToClient(client, WSResponse{Type: "skill_list", Data: skillList})
+}
+
+func (h *Handler) handleSkillDetailWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid skill detail request")
+		return
+	}
+	name, _ := data["name"].(string)
+	sm := skills.GetSkillManager()
+	if sm == nil {
+		h.sendError(client, "Skill manager not available")
+		return
+	}
+	skill := sm.Get(name)
+	if skill == nil {
+		h.sendError(client, "Skill not found: "+name)
+		return
+	}
+	h.sendToClient(client, WSResponse{Type: "skill_detail", Data: skill})
+}
+
+func (h *Handler) handleSkillToggleWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid skill toggle request")
+		return
+	}
+	name, _ := data["name"].(string)
+	action, _ := data["action"].(string)
+	sm := skills.GetSkillManager()
+	if sm == nil {
+		h.sendError(client, "Skill manager not available")
+		return
+	}
+	switch action {
+	case "enable":
+		sm.Enable(name)
+		h.sendToClient(client, WSResponse{Type: "skill_toggle", Data: map[string]string{"name": name, "status": "enabled"}})
+	case "disable":
+		sm.Disable(name)
+		h.sendToClient(client, WSResponse{Type: "skill_toggle", Data: map[string]string{"name": name, "status": "disabled"}})
+	default:
+		h.sendError(client, "Invalid action: "+action)
+	}
+}
+
+func (h *Handler) handleSkillSearchWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid skill search request")
+		return
+	}
+	query, _ := data["query"].(string)
+	sm := skills.GetSkillManager()
+	if sm == nil {
+		h.sendError(client, "Skill manager not available")
+		return
+	}
+	results := sm.Search(query)
+	h.sendToClient(client, WSResponse{Type: "skill_search", Data: results})
 }
 
 type StatsResponse struct {

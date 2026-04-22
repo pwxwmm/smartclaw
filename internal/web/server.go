@@ -24,6 +24,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/lifecycle"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/skills"
 	"github.com/instructkr/smartclaw/internal/tools"
 )
 
@@ -169,6 +170,11 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/api/config", rl.Middleware(s.authMiddleware(s.handleConfig)))
 	mux.HandleFunc("/api/stats", rl.Middleware(s.authMiddleware(s.handleStats)))
 	mux.HandleFunc("/api/telemetry", rl.Middleware(s.authMiddleware(s.handleTelemetry)))
+	mux.HandleFunc("/api/skills", rl.Middleware(s.authMiddleware(s.handleSkills)))
+	mux.HandleFunc("/api/skills/", rl.Middleware(s.authMiddleware(s.handleSkillDetail)))
+	mux.HandleFunc("/api/memory", rl.Middleware(s.authMiddleware(s.handleMemoryAPI)))
+	mux.HandleFunc("/api/memory/search", rl.Middleware(s.authMiddleware(s.handleMemorySearch)))
+	mux.HandleFunc("/api/wiki", rl.Middleware(s.authMiddleware(s.handleWikiAPI)))
 	mux.Handle("/metrics", observability.PrometheusHandler())
 
 	s.server = &http.Server{
@@ -529,6 +535,61 @@ func (s *WebServer) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *WebServer) handleSkills(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sm := skills.GetSkillManager()
+	if sm == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	skillList := sm.List()
+	writeJSON(w, http.StatusOK, skillList)
+}
+
+func (s *WebServer) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/api/skills/")
+	sm := skills.GetSkillManager()
+	if sm == nil {
+		http.Error(w, "Skill manager not available", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		skill := sm.Get(name)
+		if skill == nil {
+			http.Error(w, "Skill not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, skill)
+	case http.MethodDelete:
+		sm.Disable(name)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+	case http.MethodPost:
+		var req struct {
+			Action string `json:"action"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		switch req.Action {
+		case "enable":
+			sm.Enable(name)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "enabled"})
+		case "disable":
+			sm.Disable(name)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+		default:
+			http.Error(w, "Invalid action", http.StatusBadRequest)
+		}
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func cacheHitRate(hits, misses int64) float64 {
 	total := hits + misses
 	if total == 0 {
@@ -548,6 +609,100 @@ func estimateCost(snapshot observability.MetricsSnapshot) float64 {
 	cg := costguard.NewCostGuard(costguard.DefaultBudgetConfig())
 	cost, _ := cg.CalculateCost(model, int(snapshot.TotalInputTokens), int(snapshot.TotalOutputTokens))
 	return cost
+}
+
+func (s *WebServer) handleMemoryAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.handler.memMgr == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"error": "Memory manager not available"})
+		return
+	}
+	mm := s.handler.memMgr
+	pm := mm.GetPromptMemory()
+
+	layers := map[string]any{
+		"memory_content": pm.GetMemoryContent(),
+		"user_content":   pm.GetUserContent(),
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"layers": layers,
+		"budget": mm.GetBudget(),
+	})
+}
+
+func (s *WebServer) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Limit <= 0 {
+		req.Limit = 5
+	}
+	if s.handler.memMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	results, err := s.handler.memMgr.Search(r.Context(), req.Query, req.Limit)
+	if err != nil {
+		http.Error(w, "Search failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *WebServer) handleWikiAPI(w http.ResponseWriter, r *http.Request) {
+	if s.handler.wikiClient == nil || !s.handler.wikiClient.IsEnabled() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"message": "Wiki not configured. Set wiki.base_url in config.",
+		})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		pages, err := s.handler.wikiClient.ListPages(r.Context(), 50)
+		if err != nil {
+			http.Error(w, "Wiki list failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": true,
+			"pages":   pages,
+		})
+	case http.MethodPost:
+		var req struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Limit <= 0 {
+			req.Limit = 5
+		}
+		result, err := s.handler.wikiClient.Search(r.Context(), req.Query, req.Limit)
+		if err != nil {
+			http.Error(w, "Wiki search failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *WebServer) reloadAPIClient(config map[string]any) {
