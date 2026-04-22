@@ -134,6 +134,9 @@ func (s *WebServer) initSubsystems() {
 	tools.SetAllowedDirs([]string{s.workDir})
 
 	adapters.InitInnovationPackages(mm, s.apiClient)
+	if mm != nil && s.apiClient != nil {
+		mm.SetLLMClient(s.apiClient)
+	}
 	lifecycle.Register(adapters.NewInnovationShutdown())
 
 	otlpShutdown, err := observability.InitOTLP()

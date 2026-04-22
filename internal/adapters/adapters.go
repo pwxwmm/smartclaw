@@ -5,18 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/instructkr/smartclaw/internal/alertengine"
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/autonomous"
 	"github.com/instructkr/smartclaw/internal/autoremediation"
 	"github.com/instructkr/smartclaw/internal/changerisk"
 	"github.com/instructkr/smartclaw/internal/fingerprint"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/memory/layers"
 	"github.com/instructkr/smartclaw/internal/operator"
+	"github.com/instructkr/smartclaw/internal/playbook"
+	"github.com/instructkr/smartclaw/internal/plugins"
 	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/timetravel"
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -129,32 +136,137 @@ func (a SLOProviderAdapter) GetSLOStatus(service string) (*autoremediation.SLOIn
 	return nil, nil
 }
 
-type CommanderAdapter struct{}
-
-func (a CommanderAdapter) ExecuteCommand(_ context.Context, command string, _ time.Duration) (string, error) {
-	return fmt.Sprintf("command queued: %s", command), nil
+type CommanderAdapter struct {
+	registry *tools.ToolRegistry
 }
 
-func (a CommanderAdapter) ExecuteTool(_ context.Context, toolName string, params map[string]any) (any, error) {
-	return fmt.Sprintf("tool %s queued with params: %v", toolName, params), nil
+func NewCommanderAdapter(registry *tools.ToolRegistry) *CommanderAdapter {
+	return &CommanderAdapter{registry: registry}
+}
+
+func (a *CommanderAdapter) ExecuteCommand(ctx context.Context, command string, timeout time.Duration) (string, error) {
+	if a.registry != nil {
+		bashTool := a.registry.Get("bash")
+		if bashTool != nil {
+			input := map[string]any{
+				"command": command,
+			}
+			if timeout > 0 {
+				input["timeout"] = int(timeout.Seconds())
+			}
+			result, err := bashTool.Execute(ctx, input)
+			if err != nil {
+				return "", err
+			}
+			if m, ok := result.(map[string]any); ok {
+				if output, ok := m["output"].(string); ok {
+					return output, nil
+				}
+			}
+			return fmt.Sprintf("%v", result), nil
+		}
+	}
+	// Fallback to direct exec
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func (a *CommanderAdapter) ExecuteTool(ctx context.Context, toolName string, params map[string]any) (any, error) {
+	if a.registry == nil {
+		return nil, fmt.Errorf("tool registry not available")
+	}
+	tool := a.registry.Get(toolName)
+	if tool == nil {
+		return nil, fmt.Errorf("tool %q not found", toolName)
+	}
+	return tool.Execute(ctx, params)
 }
 
 type CronSchedulerAdapter struct {
-	entries map[string]func()
+	mu      sync.RWMutex
+	entries map[string]*cronEntry
+}
+
+type cronEntry struct {
+	fn   func()
+	ticker *time.Ticker
+	done chan struct{}
 }
 
 func NewCronSchedulerAdapter() *CronSchedulerAdapter {
-	return &CronSchedulerAdapter{entries: make(map[string]func())}
+	return &CronSchedulerAdapter{entries: make(map[string]*cronEntry)}
 }
 
-func (a *CronSchedulerAdapter) ScheduleCron(id string, _ string, fn func()) error {
-	a.entries[id] = fn
+func (a *CronSchedulerAdapter) ScheduleCron(id string, schedule string, fn func()) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if entry, ok := a.entries[id]; ok {
+		entry.stop()
+	}
+
+	interval := parseInterval(schedule)
+
+	entry := &cronEntry{
+		fn:   fn,
+		done: make(chan struct{}),
+	}
+
+	if interval > 0 {
+		entry.ticker = time.NewTicker(interval)
+		go func() {
+			for {
+				select {
+				case <-entry.ticker.C:
+					fn()
+				case <-entry.done:
+					return
+				}
+			}
+		}()
+	}
+
+	a.entries[id] = entry
 	return nil
 }
 
 func (a *CronSchedulerAdapter) UnscheduleCron(id string) error {
-	delete(a.entries, id)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if entry, ok := a.entries[id]; ok {
+		entry.stop()
+		delete(a.entries, id)
+	}
 	return nil
+}
+
+func (e *cronEntry) stop() {
+	if e.ticker != nil {
+		e.ticker.Stop()
+	}
+	close(e.done)
+}
+
+func parseInterval(schedule string) time.Duration {
+	if schedule == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(schedule)
+	if err == nil {
+		return d
+	}
+	d, err = time.ParseDuration(schedule + "s")
+	if err == nil {
+		return d
+	}
+	return 5 * time.Minute
 }
 
 type AlertProviderAdapter struct {
@@ -353,8 +465,48 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 
 		home, _ := os.UserHomeDir()
 		runbookDir := filepath.Join(home, ".smartclaw", "runbooks")
-		remediationEngine := autoremediation.InitRemediationEngine(runbookDir, SLOProviderAdapter{IM: mm.GetIncidentMemory()}, CommanderAdapter{})
+		remediationEngine := autoremediation.InitRemediationEngine(runbookDir, SLOProviderAdapter{IM: mm.GetIncidentMemory()}, NewCommanderAdapter(tools.GetRegistry()))
 		autoremediation.SetRemediationEngine(remediationEngine)
+
+		// Wire RCA pipeline: alertengine → incident_memory → autoremediation
+		alertEngine.OnAlert(func(ctx context.Context, alert alertengine.Alert) {
+			if mm.GetIncidentMemory() == nil {
+				return
+			}
+			severity := alert.Severity
+			if severity == "" {
+				severity = "medium"
+			}
+			incidentID := alert.ID
+			if incidentID == "" {
+				incidentID = "ALERT-" + uuid.New().String()[:8]
+			}
+			title := alert.Name
+			if title == "" {
+				title = "Alert from " + alert.Source
+			}
+			incident := &layers.Incident{
+				ID:          incidentID,
+				Title:       title,
+				Severity:    severity,
+				Service:     alert.Service,
+				AlertSource: alert.Source,
+				Status:      "active",
+				StartedAt:   time.Now().UTC(),
+			}
+			if err := mm.GetIncidentMemory().CreateIncident(ctx, incident); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create incident from alert: %v\n", err)
+			}
+
+			// Trigger remediation suggestion for high/critical alerts
+			if severity == "high" || severity == "critical" {
+				if re := autoremediation.DefaultRemediationEngine(); re != nil {
+					if _, err := re.SuggestRemediation(alert.Service, "slo_burn"); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: remediation suggestion failed: %v\n", err)
+					}
+				}
+			}
+		})
 
 		ttEngine := timetravel.InitTimeTravelEngine(RecordingStoreAdapter{Store: mm.GetStore()}, TTIncidentStoreAdapter{IM: mm.GetIncidentMemory()})
 		timetravel.SetTimeTravelEngine(ttEngine)
@@ -364,7 +516,7 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 
 		home, _ := os.UserHomeDir()
 		runbookDir := filepath.Join(home, ".smartclaw", "runbooks")
-		remediationEngine := autoremediation.InitRemediationEngine(runbookDir, nil, nil)
+		remediationEngine := autoremediation.InitRemediationEngine(runbookDir, nil, NewCommanderAdapter(tools.GetRegistry()))
 		autoremediation.SetRemediationEngine(remediationEngine)
 
 		healthChecker = operator.NewHealthChecker()
@@ -376,6 +528,34 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 	opManager := operator.InitOperatorManager(healthChecker, NewCronSchedulerAdapter())
 	operator.SetOperatorManager(opManager)
 
+	// Initialize ToolsetDistribution
+	dist := tools.NewToolsetDistribution(0)
+	for _, ts := range tools.DefaultToolsets() {
+		dist.RegisterSetWithCondition(ts.Name, ts.Tools, ts.Weight, ts.Condition)
+	}
+	tools.GetRegistry().SetDistribution(dist)
+
+	// Initialize Playbook Manager
+	home, _ := os.UserHomeDir()
+	pbDir := filepath.Join(home, ".smartclaw", "playbooks")
+	pbManager := playbook.NewManager(pbDir)
+	for _, bp := range playbook.BuiltinPlaybooks() {
+		if _, err := pbManager.Load(bp.Name); err != nil {
+			_ = pbManager.Save(bp)
+		}
+	}
+	playbook.SetManager(pbManager)
+	autonomous.SetAPIClient(apiClient)
+	playbook.SetAPIClient(apiClient)
+
+	// Initialize Convention Plugin Loader
+	pluginDir := filepath.Join(home, ".smartclaw", "plugins")
+	pluginLoader := plugins.NewConventionPluginLoader(pluginDir)
+	if err := pluginLoader.LoadAll(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: plugin loader init failed: %v\n", err)
+	}
+	_ = pluginLoader
+
 	topology.RegisterAllTools()
 	alertengine.RegisterAllTools()
 	changerisk.RegisterTools(tools.GetRegistry())
@@ -384,6 +564,8 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 	warroom.RegisterAllTools()
 	autoremediation.RegisterAllTools()
 	timetravel.RegisterAllTools()
+	autonomous.RegisterAllTools()
+	playbook.RegisterAllTools()
 }
 
 func ShutdownInnovationPackages() {
@@ -395,6 +577,7 @@ func ShutdownInnovationPackages() {
 	autoremediation.Shutdown()
 	timetravel.Shutdown()
 	fingerprint.Shutdown()
+	// Playbook and autonomous don't need explicit shutdown
 }
 
 type innovationShutdown struct{}

@@ -45,6 +45,7 @@ type QueryEngine struct {
 	costGuard           *costguard.CostGuard
 	thinkingManager     *ThinkingManager
 	prefetcher          *tools.PredictivePrefetcher
+	usageLearner        *tools.ToolUsageLearner
 	shutdownCh          chan struct{}
 	shutdownOnce        sync.Once
 	bgWg                sync.WaitGroup     // tracks background goroutines
@@ -178,6 +179,14 @@ func (e *QueryEngine) SetPrefetcher(pp *tools.PredictivePrefetcher) {
 
 func (e *QueryEngine) GetPrefetcher() *tools.PredictivePrefetcher {
 	return e.prefetcher
+}
+
+func (e *QueryEngine) SetUsageLearner(learner *tools.ToolUsageLearner) {
+	e.usageLearner = learner
+}
+
+func (e *QueryEngine) GetUsageLearner() *tools.ToolUsageLearner {
+	return e.usageLearner
 }
 
 func (e *QueryEngine) EnableConversationTree() {
@@ -608,6 +617,11 @@ func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input ma
 		e.hookManager.ExecuteSessionStart(ctx)
 	}
 
+	if e.usageLearner != nil {
+		complexity := e.assessComplexityFromState()
+		e.usageLearner.RecordUsage(toolName, complexity)
+	}
+
 	startTime := time.Now()
 	result, err := e.hookExecutor.ExecuteWithHooks(ctx, toolName, input)
 	duration := time.Since(startTime)
@@ -663,7 +677,8 @@ func (e *QueryEngine) prepareMessages() []api.Message {
 }
 
 func (e *QueryEngine) prepareToolSpecs() []api.ToolDefinition {
-	toolList := e.tools.All()
+	complexity := e.assessComplexityFromState()
+	toolList := e.tools.SelectToolset(context.Background(), complexity)
 	specs := make([]api.ToolDefinition, 0, len(toolList))
 
 	for _, t := range toolList {
@@ -675,6 +690,25 @@ func (e *QueryEngine) prepareToolSpecs() []api.ToolDefinition {
 	}
 
 	return specs
+}
+
+func (e *QueryEngine) assessComplexityFromState() float64 {
+	if e.router != nil && e.router.IsEnabled() {
+		msgs := e.state.GetMessages()
+		if len(msgs) > 0 {
+			lastMsg := msgs[len(msgs)-1]
+			if content, ok := lastMsg.Content.(string); ok {
+				signal := routing.ComplexitySignal{
+					MessageLength:    len(content),
+					ToolCallCount:    0,
+					HistoryTurnCount: e.state.GetTurnCount(),
+					HasCodeContent:   containsCode(content),
+				}
+				return e.router.AssessComplexity(content, signal)
+			}
+		}
+	}
+	return 0
 }
 
 func (e *QueryEngine) GetState() *QueryState {

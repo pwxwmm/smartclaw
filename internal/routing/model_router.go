@@ -56,11 +56,40 @@ type RoutingRecord struct {
 	RecordedAt time.Time
 }
 
+type bucketStats struct {
+	successWeight float64
+	failWeight    float64
+}
+
+func (bs *bucketStats) successRate() float64 {
+	total := bs.successWeight + bs.failWeight
+	if total == 0 {
+		return 0.5
+	}
+	return bs.successWeight / total
+}
+
+func (bs *bucketStats) record(success bool) {
+	alpha := 0.3
+	if success {
+		bs.successWeight = (1-alpha)*bs.successWeight + alpha*1
+		bs.failWeight = (1 - alpha) * bs.failWeight
+	} else {
+		bs.failWeight = (1-alpha)*bs.failWeight + alpha*1
+		bs.successWeight = (1 - alpha) * bs.successWeight
+	}
+}
+
+func (bs *bucketStats) observations() float64 {
+	return bs.successWeight + bs.failWeight
+}
+
 type ModelRouter struct {
-	config  RoutingConfig
-	models  map[ModelTier]ModelEntry
-	history []RoutingRecord
-	mu      sync.RWMutex
+	config        RoutingConfig
+	models        map[ModelTier]ModelEntry
+	history       []RoutingRecord
+	mu            sync.RWMutex
+	bayesianStats map[string]map[int]*bucketStats
 }
 
 func DefaultRoutingConfig() RoutingConfig {
@@ -93,7 +122,8 @@ func NewModelRouter(cfg RoutingConfig) *ModelRouter {
 				Aliases: []string{"opus", "heavy", "quality"},
 			},
 		},
-		history: make([]RoutingRecord, 0, 100),
+		history:       make([]RoutingRecord, 0, 100),
+		bayesianStats: make(map[string]map[int]*bucketStats),
 	}
 
 	return r
@@ -109,6 +139,11 @@ func (mr *ModelRouter) Route(query string, signal ComplexitySignal) string {
 	tier := mr.complexityToTier(score)
 
 	model := mr.models[tier].ID
+
+	betterModel := mr.bayesianAdjust(tier, score)
+	if betterModel != "" {
+		model = betterModel
+	}
 
 	slog.Debug("routing: model selected",
 		"complexity", fmt.Sprintf("%.2f", score),
@@ -237,6 +272,15 @@ func (mr *ModelRouter) RecordOutcome(model string, complexity float64, success b
 	if len(mr.history) > 100 {
 		mr.history = mr.history[len(mr.history)-100:]
 	}
+
+	bucket := mr.complexityBucket(complexity)
+	if mr.bayesianStats[model] == nil {
+		mr.bayesianStats[model] = make(map[int]*bucketStats)
+	}
+	if mr.bayesianStats[model][bucket] == nil {
+		mr.bayesianStats[model][bucket] = &bucketStats{}
+	}
+	mr.bayesianStats[model][bucket].record(success)
 }
 
 func (mr *ModelRouter) GetStats() RoutingStats {
@@ -302,4 +346,53 @@ type ModelStats struct {
 
 type RoutingStats struct {
 	ByModel map[string]ModelStats
+}
+
+func (mr *ModelRouter) complexityBucket(complexity float64) int {
+	return int(complexity * 10)
+}
+
+const minObservations = 5
+
+func (mr *ModelRouter) bayesianAdjust(defaultTier ModelTier, complexity float64) string {
+	bucket := mr.complexityBucket(complexity)
+
+	mr.mu.RLock()
+	defer mr.mu.RUnlock()
+
+	var bestModel string
+	bestRate := -1.0
+
+	for _, entry := range mr.models {
+		modelBuckets, ok := mr.bayesianStats[entry.ID]
+		if !ok {
+			continue
+		}
+		bs, ok := modelBuckets[bucket]
+		if !ok || bs.observations() < minObservations {
+			continue
+		}
+		rate := bs.successRate()
+		if rate > bestRate {
+			bestRate = rate
+			bestModel = entry.ID
+		}
+	}
+
+	if bestModel == "" {
+		return ""
+	}
+
+	defaultRate := 0.5
+	if modelBuckets, ok := mr.bayesianStats[mr.models[defaultTier].ID]; ok {
+		if bs, ok := modelBuckets[bucket]; ok && bs.observations() >= minObservations {
+			defaultRate = bs.successRate()
+		}
+	}
+
+	if bestRate-defaultRate > 0.1 {
+		return bestModel
+	}
+
+	return ""
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/plans"
 )
 
 type PowerShellTool struct{ BaseTool }
@@ -656,11 +658,29 @@ func (t *EnterPlanModeTool) InputSchema() map[string]any {
 func (t *EnterPlanModeTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	goal, _ := input["goal"].(string)
 
-	return map[string]any{
+	planID := ""
+	cwd, _ := os.Getwd()
+	if cwd != "" && goal != "" {
+		ps, err := plans.NewPlanStore(cwd)
+		if err == nil {
+			plan, createErr := ps.Create(goal, "", cwd)
+			if createErr == nil {
+				planID = plan.ID
+				ps.SetStatus(plan.ID, "active")
+			}
+		}
+	}
+
+	result := map[string]any{
 		"goal":      goal,
 		"mode":      "planning",
 		"activated": true,
-	}, nil
+		"message":   "Plan mode activated. Changes will be tracked. Use exit_plan_mode to finalize.",
+	}
+	if planID != "" {
+		result["plan_id"] = planID
+	}
+	return result, nil
 }
 
 type SyntheticOutputTool struct{ BaseTool }
@@ -705,16 +725,32 @@ func (t *ExitPlanModeTool) InputSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"summary": map[string]any{"type": "string"},
+			"plan_id": map[string]any{"type": "string", "description": "ID of the plan to mark as completed"},
 		},
 	}
 }
 
 func (t *ExitPlanModeTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	summary, _ := input["summary"].(string)
+	planID, _ := input["plan_id"].(string)
+
+	if planID != "" {
+		cwd, _ := os.Getwd()
+		if cwd != "" {
+			ps, err := plans.NewPlanStore(cwd)
+			if err == nil {
+				if summary != "" {
+					ps.Update(planID, summary)
+				}
+				ps.SetStatus(planID, "completed")
+			}
+		}
+	}
 
 	return map[string]any{
 		"mode":      "normal",
 		"summary":   summary,
 		"activated": false,
+		"message":   "Plan mode deactivated. Summary saved.",
 	}, nil
 }

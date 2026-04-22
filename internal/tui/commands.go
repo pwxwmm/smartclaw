@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/mcp"
+	"github.com/instructkr/smartclaw/internal/plans"
 	"github.com/instructkr/smartclaw/internal/services"
 	"github.com/instructkr/smartclaw/internal/tools"
 )
@@ -813,6 +815,201 @@ func cmdDialog(m *Model, args []string) tea.Cmd {
 	return nil
 }
 
+func cmdAutonomous(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput("Usage: /autonomous <task_description>\nOptions: --max-steps N, --no-verify, --create-pr"))
+		return nil
+	}
+	maxSteps := 20
+	verify := true
+	createPR := false
+
+	filteredArgs := args[:0]
+	for _, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "--max-steps="):
+			if n, err := strconv.Atoi(strings.TrimPrefix(arg, "--max-steps=")); err == nil {
+				maxSteps = n
+			}
+		case arg == "--no-verify":
+			verify = false
+		case arg == "--create-pr":
+			createPR = true
+		default:
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+	taskDesc := strings.Join(filteredArgs, " ")
+	_ = maxSteps
+	_ = verify
+	_ = createPR
+
+	AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Autonomous task started: %s\nNote: Full autonomous execution requires the runtime engine. Use the autonomous_execute tool for integrated execution.", taskDesc)))
+	return nil
+}
+
+func cmdPlaybook(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		AddOutput(m, m.formatAssistantOutput("Usage: /playbook <list|execute|create> [name] [params...]\n  /playbook list - List available playbooks\n  /playbook execute <name> [key=value...] - Execute a playbook\n  /playbook create <name> - Create a new playbook"))
+		return nil
+	}
+	subCmd := args[0]
+	switch subCmd {
+	case "list":
+		AddOutput(m, m.formatAssistantOutput("Playbooks: Use the playbook_list tool to see available playbooks."))
+	case "execute":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /playbook execute <name> [key=value...]"))
+			return nil
+		}
+		name := args[1]
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Executing playbook: %s\nNote: Use the playbook_execute tool for integrated execution.", name)))
+	case "create":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /playbook create <name>"))
+			return nil
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Creating playbook: %s\nNote: Use the playbook_create tool with YAML content.", args[1])))
+	default:
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Unknown playbook subcommand: %s. Use list, execute, or create.", subCmd)))
+	}
+	return nil
+}
+
+func cmdPlanPersistent(m *Model, args []string) tea.Cmd {
+	if len(args) == 0 {
+		ps := m.GetPlanStore()
+		if ps == nil {
+			AddOutput(m, m.formatError("Plan store not available"))
+			return nil
+		}
+		planList, err := ps.List()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error listing plans: %v", err)))
+			return nil
+		}
+		if len(planList) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No plans found. Use /plan create <title> to create one."))
+			return nil
+		}
+		var lines []string
+		for _, p := range planList {
+			lines = append(lines, fmt.Sprintf("  %s [%s] %s - %s", p.ID[:16], p.Status, p.Title, p.UpdatedAt.Format("2006-01-02 15:04")))
+		}
+		AddOutput(m, m.formatAssistantOutput("Plans:\n"+strings.Join(lines, "\n")))
+		return nil
+	}
+
+	subCmd := args[0]
+	ps := m.GetPlanStore()
+	if ps == nil {
+		AddOutput(m, m.formatError("Plan store not available"))
+		return nil
+	}
+
+	switch subCmd {
+	case "list":
+		planList, err := ps.List()
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error listing plans: %v", err)))
+			return nil
+		}
+		if len(planList) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No plans found."))
+			return nil
+		}
+		var lines []string
+		for _, p := range planList {
+			lines = append(lines, fmt.Sprintf("  %s [%s] %s - %s", p.ID[:16], p.Status, p.Title, p.UpdatedAt.Format("2006-01-02 15:04")))
+		}
+		AddOutput(m, m.formatAssistantOutput("Plans:\n"+strings.Join(lines, "\n")))
+
+	case "create":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /plan create <title>"))
+			return nil
+		}
+		title := strings.Join(args[1:], " ")
+		cwd := m.workDir
+		if cwd == "" {
+			cwd, _ = os.Getwd()
+		}
+		plan, err := ps.Create(title, "", cwd)
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error creating plan: %v", err)))
+			return nil
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Created plan: %s (status: %s)", plan.ID, plan.Status)))
+
+	case "show", "get":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /plan show <id>"))
+			return nil
+		}
+		plan, err := ps.Get(args[1])
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error: %v", err)))
+			return nil
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Plan: %s\nTitle: %s\nStatus: %s\nCreated: %s\nUpdated: %s\n\n%s",
+			plan.ID, plan.Title, plan.Status,
+			plan.CreatedAt.Format("2006-01-02 15:04"),
+			plan.UpdatedAt.Format("2006-01-02 15:04"),
+			plan.Content)))
+
+	case "status":
+		if len(args) < 3 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /plan status <id> <draft|active|completed|abandoned>"))
+			return nil
+		}
+		validStatuses := map[string]bool{plans.StatusDraft: true, plans.StatusActive: true, plans.StatusCompleted: true, plans.StatusAbandoned: true}
+		if !validStatuses[args[2]] {
+			AddOutput(m, m.formatError(fmt.Sprintf("Invalid status: %s. Valid: draft, active, completed, abandoned", args[2])))
+			return nil
+		}
+		if err := ps.SetStatus(args[1], args[2]); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error: %v", err)))
+			return nil
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Plan %s status set to %s", args[1], args[2])))
+
+	case "delete":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /plan delete <id>"))
+			return nil
+		}
+		if err := ps.Delete(args[1]); err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error: %v", err)))
+			return nil
+		}
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Deleted plan: %s", args[1])))
+
+	case "search":
+		if len(args) < 2 {
+			AddOutput(m, m.formatAssistantOutput("Usage: /plan search <query>"))
+			return nil
+		}
+		results, err := ps.Search(strings.Join(args[1:], " "))
+		if err != nil {
+			AddOutput(m, m.formatError(fmt.Sprintf("Error: %v", err)))
+			return nil
+		}
+		if len(results) == 0 {
+			AddOutput(m, m.formatAssistantOutput("No matching plans found."))
+			return nil
+		}
+		var lines []string
+		for _, p := range results {
+			lines = append(lines, fmt.Sprintf("  %s [%s] %s", p.ID[:16], p.Status, p.Title))
+		}
+		AddOutput(m, m.formatAssistantOutput("Search results:\n"+strings.Join(lines, "\n")))
+
+	default:
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("Unknown plan subcommand: %s\nUse: list, create, show, status, delete, search", subCmd)))
+	}
+	return nil
+}
+
 func init() {
 	registerSlashCommand("help", cmdHelp, "h")
 	registerSlashCommand("status", cmdStatus)
@@ -845,6 +1042,9 @@ func init() {
 	registerSlashCommand("tabs", cmdTabs)
 	registerSlashCommand("loading", cmdLoading)
 	registerSlashCommand("dialog", cmdDialog)
+	registerSlashCommand("autonomous", cmdAutonomous, "auto")
+	registerSlashCommand("playbook", cmdPlaybook, "pb")
+	registerSlashCommand("plan", cmdPlanPersistent)
 }
 
 func ProcessSlashCommand(cmd string, m *Model) tea.Cmd {

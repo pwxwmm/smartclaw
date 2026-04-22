@@ -11,8 +11,8 @@ func TestDefaultContextBudget(t *testing.T) {
 	if cb.MaxChars <= 0 {
 		t.Error("expected positive max chars")
 	}
-	if len(cb.Layers) != 9 {
-		t.Errorf("expected 9 budget layers, got %d", len(cb.Layers))
+	if len(cb.Layers) != 10 {
+		t.Errorf("expected 10 budget layers, got %d", len(cb.Layers))
 	}
 }
 

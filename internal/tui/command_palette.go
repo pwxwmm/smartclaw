@@ -128,6 +128,10 @@ func getDefaultCommands() []CommandPaletteItem {
 		{ID: "mcp", Name: "/mcp", Description: "MCP 服务器", Category: "MCP"},
 		{ID: "hooks", Name: "/hooks", Description: "钩子管理", Category: "MCP"},
 		{ID: "skills", Name: "/skills", Description: "技能管理", Category: "MCP"},
+
+		{ID: "autonomous", Name: "/autonomous", Description: "Start Autonomous Task", Category: "Workflow"},
+		{ID: "playbook", Name: "/playbook", Description: "Manage Playbooks", Category: "Workflow"},
+		{ID: "plan", Name: "/plan", Description: "Manage Plans", Category: "Planning"},
 	}
 }
 

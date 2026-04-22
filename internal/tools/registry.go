@@ -188,11 +188,74 @@ func (r *ToolRegistry) GetDistribution() *ToolsetDistribution {
 	return r.distribution
 }
 
-func (r *ToolRegistry) SelectToolset(ctx context.Context, complexity float64) ([]Tool, error) {
+// SelectToolset returns tools filtered by complexity using the distribution.
+// Falls back to All() if no distribution is configured or distribution returns empty.
+// Always includes core tools (bash, read_file, write_file, edit_file, think, todowrite).
+func (r *ToolRegistry) SelectToolset(ctx context.Context, complexity float64) []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	if r.distribution == nil {
-		return nil, fmt.Errorf("toolset distribution not configured")
+		result := make([]Tool, 0, len(r.tools))
+		for _, tool := range r.tools {
+			result = append(result, tool)
+		}
+		return result
 	}
-	return r.distribution.SelectTools(ctx, complexity, r.tools)
+
+	selected, err := r.distribution.SelectTools(ctx, complexity, r.tools)
+	if err != nil || len(selected) == 0 {
+		result := make([]Tool, 0, len(r.tools))
+		for _, tool := range r.tools {
+			result = append(result, tool)
+		}
+		return result
+	}
+
+	resultSet := make(map[string]bool, len(selected))
+	result := make([]Tool, 0, len(selected)+6)
+	for _, t := range selected {
+		resultSet[t.Name()] = true
+		result = append(result, t)
+	}
+
+	coreTools := []string{"bash", "read_file", "write_file", "edit_file", "think", "todowrite"}
+	for _, name := range coreTools {
+		if tool, exists := r.tools[name]; exists && !resultSet[name] {
+			result = append(result, tool)
+		}
+	}
+
+	return result
+}
+
+// AssessQueryComplexity computes a simple complexity score from a query string.
+// Score ranges from 0.0 to 1.0.
+func AssessQueryComplexity(input string) float64 {
+	score := 0.0
+	words := len(strings.Fields(input))
+	if words > 50 {
+		score += 0.2
+	}
+	if words > 100 {
+		score += 0.2
+	}
+	if strings.Contains(input, "refactor") || strings.Contains(input, "architect") {
+		score += 0.2
+	}
+	if strings.Contains(input, "debug") || strings.Contains(input, "fix") || strings.Contains(input, "error") {
+		score += 0.1
+	}
+	if strings.Contains(input, "deploy") || strings.Contains(input, "production") {
+		score += 0.15
+	}
+	if strings.Contains(input, "browser") || strings.Contains(input, "scrape") {
+		score += 0.15
+	}
+	if score > 1.0 {
+		score = 1.0
+	}
+	return score
 }
 
 func sopaToolNameToIncidentName(name string) string {
@@ -378,4 +441,8 @@ func All() []Tool {
 
 func Execute(ctx context.Context, name string, input map[string]any) (any, error) {
 	return defaultRegistry.Execute(ctx, name, input)
+}
+
+func SelectToolset(ctx context.Context, complexity float64) []Tool {
+	return GetRegistry().SelectToolset(ctx, complexity)
 }

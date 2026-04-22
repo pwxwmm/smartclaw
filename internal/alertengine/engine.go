@@ -1,6 +1,7 @@
 package alertengine
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -15,6 +16,7 @@ type AlertEngine struct {
 	deduped       map[string]*DedupedAlert
 	groups        []AlertGroup
 	topology      TopologyProvider
+	callbacks     []AlertCallback
 
 	dedupWindow           time.Duration
 	corrWindow            time.Duration
@@ -55,6 +57,16 @@ func (e *AlertEngine) SetTopologyProvider(tp TopologyProvider) {
 	e.topology = tp
 }
 
+// AlertCallback is invoked when an alert is ingested and processed.
+type AlertCallback func(ctx context.Context, alert Alert)
+
+// OnAlert registers a callback to be invoked when an alert is ingested.
+func (e *AlertEngine) OnAlert(fn AlertCallback) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.callbacks = append(e.callbacks, fn)
+}
+
 // Ingest processes a single alert, computes its fingerprint, and merges
 // it into the deduped index. Returns the resulting DedupedAlert.
 func (e *AlertEngine) Ingest(alert Alert) *DedupedAlert {
@@ -65,6 +77,8 @@ func (e *AlertEngine) Ingest(alert Alert) *DedupedAlert {
 
 	e.pushRaw(alert)
 	metricAlertsIngested.Inc()
+
+	callbacks := e.callbacks
 
 	existing, ok := e.deduped[alert.Fingerprint]
 	if !ok {
@@ -81,6 +95,11 @@ func (e *AlertEngine) Ingest(alert Alert) *DedupedAlert {
 			Status:       alert.Status,
 		}
 		e.deduped[alert.Fingerprint] = da
+
+		for _, cb := range callbacks {
+			go cb(context.Background(), alert)
+		}
+
 		return &DedupedAlert{
 			Fingerprint:  da.Fingerprint,
 			Name:         da.Name,
@@ -118,6 +137,11 @@ func (e *AlertEngine) Ingest(alert Alert) *DedupedAlert {
 				delete(e.deduped, fp)
 			}
 		}
+	}
+
+	// Deduped alerts may have escalated severity, so callbacks fire again
+	for _, cb := range callbacks {
+		go cb(context.Background(), alert)
 	}
 
 	return &DedupedAlert{

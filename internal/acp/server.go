@@ -137,7 +137,7 @@ func (s *ACPServer) handleInitialize(req *mcp.JSONRPCRequest) *mcp.JSONRPCRespon
 }
 
 func (s *ACPServer) handleToolsList(req *mcp.JSONRPCRequest) *mcp.JSONRPCResponse {
-	toolList := s.registry.All()
+	toolList := s.registry.SelectToolset(context.Background(), tools.AssessQueryComplexity(""))
 	mcpTools := make([]mcp.McpTool, 0, len(toolList))
 	for _, t := range toolList {
 		mcpTools = append(mcpTools, mcp.McpTool{

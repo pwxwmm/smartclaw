@@ -383,9 +383,9 @@ func TestRegistrySetDistribution(t *testing.T) {
 
 func TestRegistrySelectToolsetNoDistribution(t *testing.T) {
 	r := NewRegistryWithoutCache()
-	_, err := r.SelectToolset(context.Background(), 0.5)
-	if err == nil {
-		t.Fatal("expected error when distribution not configured")
+	tools := r.SelectToolset(context.Background(), 0.5)
+	if len(tools) != 0 {
+		t.Fatalf("expected empty tools when no tools registered and no distribution, got %d", len(tools))
 	}
 }
 
@@ -399,9 +399,9 @@ func TestRegistrySelectToolset(t *testing.T) {
 	d.RegisterSet("core", []string{"bash", "read_file"}, 1.0)
 	r.SetDistribution(d)
 
-	tools, err := r.SelectToolset(context.Background(), 0.5)
-	if err != nil {
-		t.Fatalf("SelectToolset failed: %v", err)
+	tools := r.SelectToolset(context.Background(), 0.5)
+	if len(tools) == 0 {
+		t.Fatalf("SelectToolset returned no tools")
 	}
 
 	names := map[string]bool{}

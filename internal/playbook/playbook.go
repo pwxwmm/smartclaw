@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -343,9 +345,12 @@ func (m *Manager) Execute(ctx context.Context, name string, params map[string]st
 			result = executeCondition(&step, execCtx, render)
 		case "run_command":
 			result = executeRunCommand(&step)
-		case "create_file", "edit_file", "prompt":
-			result.Success = true
-			result.Output = fmt.Sprintf("action %q executed for step %q", step.Action, step.ID)
+		case "create_file":
+			result = executeCreateFile(&step)
+		case "edit_file":
+			result = executeEditFile(&step)
+		case "prompt":
+			result = executePrompt(&step)
 		default:
 			result.Success = true
 			result.Output = fmt.Sprintf("step %q completed", step.ID)
@@ -379,6 +384,12 @@ func (m *Manager) Execute(ctx context.Context, name string, params map[string]st
 						retryResult = executeCondition(&step, execCtx, render)
 					} else if step.Action == "run_command" {
 						retryResult = executeRunCommand(&step)
+					} else if step.Action == "create_file" {
+						retryResult = executeCreateFile(&step)
+					} else if step.Action == "edit_file" {
+						retryResult = executeEditFile(&step)
+					} else if step.Action == "prompt" {
+						retryResult = executePrompt(&step)
 					} else {
 						retryResult.Success = true
 						retryResult.Output = fmt.Sprintf("action %q retried for step %q", step.Action, step.ID)
@@ -506,7 +517,132 @@ func executeRunCommand(step *Step) *StepResult {
 		result.Error = "no command specified"
 		return result
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", step.Command)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		result.Error = fmt.Sprintf("%s: %s", err, string(output))
+		result.Success = false
+		return result
+	}
+
 	result.Success = true
-	result.Output = fmt.Sprintf("simulated command: %q", step.Command)
+	result.Output = string(output)
+	return result
+}
+
+var defaultAPIClient *api.Client
+
+// SetAPIClient sets the API client for prompt-type playbook steps.
+func SetAPIClient(client *api.Client) {
+	defaultAPIClient = client
+}
+
+func executeCreateFile(step *Step) *StepResult {
+	result := &StepResult{StepID: step.ID}
+	if step.Template == "" && step.Append == "" {
+		result.Error = "no template or append content specified"
+		return result
+	}
+
+	filePath := step.Find
+	if filePath == "" {
+		result.Error = "no file path specified in 'find' field"
+		return result
+	}
+
+	content := step.Template
+	if content == "" {
+		content = step.Append
+	}
+
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		result.Error = fmt.Sprintf("create directory: %v", err)
+		return result
+	}
+
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		result.Error = fmt.Sprintf("write file: %v", err)
+		return result
+	}
+
+	result.Success = true
+	result.Output = fmt.Sprintf("created file: %s (%d bytes)", filePath, len(content))
+	return result
+}
+
+func executeEditFile(step *Step) *StepResult {
+	result := &StepResult{StepID: step.ID}
+	if step.Find == "" {
+		result.Error = "no 'find' pattern specified for edit"
+		return result
+	}
+
+	filePath := step.Find
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		result.Error = fmt.Sprintf("read file: %v", err)
+		return result
+	}
+
+	content := string(data)
+	if step.Append != "" && step.Template != "" {
+		newContent := strings.Replace(content, step.Append, step.Template, 1)
+		if newContent == content && step.Append != "" {
+			result.Error = fmt.Sprintf("search string not found in %s", filePath)
+			return result
+		}
+		content = newContent
+	} else if step.Template != "" {
+		content = step.Template
+	}
+
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		result.Error = fmt.Sprintf("write file: %v", err)
+		return result
+	}
+
+	result.Success = true
+	result.Output = fmt.Sprintf("edited file: %s (%d bytes)", filePath, len(content))
+	return result
+}
+
+func executePrompt(step *Step) *StepResult {
+	result := &StepResult{StepID: step.ID}
+	if step.Prompt == "" {
+		result.Error = "no prompt specified"
+		return result
+	}
+
+	if defaultAPIClient == nil {
+		result.Error = "no API client configured for prompt action"
+		return result
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	messages := []api.MessageParam{
+		{Role: "user", Content: step.Prompt},
+	}
+
+	resp, err := defaultAPIClient.CreateMessageCtx(ctx, messages, "You are a helpful coding assistant. Respond concisely.")
+	if err != nil {
+		result.Error = fmt.Sprintf("LLM call failed: %v", err)
+		return result
+	}
+
+	if len(resp.Content) > 0 && resp.Content[0].Text != "" {
+		result.Success = true
+		result.Output = resp.Content[0].Text
+		return result
+	}
+
+	result.Error = "empty response from LLM"
 	return result
 }

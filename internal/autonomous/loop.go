@@ -2,10 +2,22 @@ package autonomous
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
+
+	"github.com/instructkr/smartclaw/internal/api"
 )
+
+// defaultAPIClient is the API client used for LLM-driven planning.
+var defaultAPIClient *api.Client
+
+// SetAPIClient sets the API client for LLM-driven planning.
+func SetAPIClient(client *api.Client) {
+	defaultAPIClient = client
+}
 
 // LoopConfig configures the autonomous agent loop.
 type LoopConfig struct {
@@ -127,8 +139,14 @@ func (l *Loop) Run(ctx context.Context) (*LoopResult, error) {
 			step.Status = "in_progress"
 			l.notify(i+1, "implementing")
 
-			step.Result = "implementation placeholder"
-			step.Status = "done"
+			stepResult, implErr := l.implementStep(ctx, step)
+			if implErr != nil {
+				step.Result = fmt.Sprintf("implementation error: %v", implErr)
+				step.Status = "failed"
+			} else {
+				step.Result = stepResult
+				step.Status = "done"
+			}
 			l.notify(i+1, "implemented")
 
 			// Verify
@@ -186,16 +204,107 @@ func (l *Loop) plan(ctx context.Context) error {
 	default:
 	}
 
-	// Placeholder: create a single step from the task description.
-	// In production, this would call an LLM to decompose the task.
-	l.state.Plan = []Step{
-		{
-			Description: l.config.TaskDescription,
+	if defaultAPIClient == nil {
+		l.state.Plan = []Step{
+			{Description: l.config.TaskDescription, Status: "pending", Files: []string{}},
+		}
+		return nil
+	}
+
+	systemPrompt := `You are a task decomposition expert. Given a coding task, break it down into concrete, sequential steps.
+Each step should be specific enough to execute with file operations or shell commands.
+Return a JSON array of steps, where each step has:
+- "description": what to do
+- "files": list of files that will likely be modified (empty array if unknown)
+
+Return ONLY the JSON array, no other text.`
+
+	messages := []api.MessageParam{
+		{Role: "user", Content: fmt.Sprintf("Task: %s\n\nWorking directory: %s\n\nDecompose this task into steps:", l.config.TaskDescription, l.config.WorkingDir)},
+	}
+
+	resp, err := defaultAPIClient.CreateMessageCtx(ctx, messages, systemPrompt)
+	if err != nil {
+		l.state.Plan = []Step{
+			{Description: l.config.TaskDescription, Status: "pending", Files: []string{}},
+		}
+		return nil
+	}
+
+	if len(resp.Content) == 0 || resp.Content[0].Text == "" {
+		l.state.Plan = []Step{
+			{Description: l.config.TaskDescription, Status: "pending", Files: []string{}},
+		}
+		return nil
+	}
+
+	text := resp.Content[0].Text
+	text = strings.TrimPrefix(text, "```json\n")
+	text = strings.TrimPrefix(text, "```\n")
+	text = strings.TrimSuffix(text, "\n```")
+	text = strings.TrimSpace(text)
+
+	var planSteps []struct {
+		Description string   `json:"description"`
+		Files       []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(text), &planSteps); err != nil || len(planSteps) == 0 {
+		l.state.Plan = []Step{
+			{Description: l.config.TaskDescription, Status: "pending", Files: []string{}},
+		}
+		return nil
+	}
+
+	l.state.Plan = make([]Step, len(planSteps))
+	for i, ps := range planSteps {
+		l.state.Plan[i] = Step{
+			Description: ps.Description,
 			Status:      "pending",
-			Files:       []string{},
-		},
+			Files:       ps.Files,
+		}
+		if l.state.Plan[i].Files == nil {
+			l.state.Plan[i].Files = []string{}
+		}
 	}
 	return nil
+}
+
+func (l *Loop) implementStep(ctx context.Context, step *Step) (string, error) {
+	if defaultAPIClient == nil {
+		return "skipped: no API client configured", nil
+	}
+
+	systemPrompt := fmt.Sprintf(`You are a coding assistant executing step %q of a larger task.
+Working directory: %s
+Files that may be modified: %v
+
+Execute this step by calling the appropriate tools. Respond with a brief summary of what you did.`,
+		step.Description, l.config.WorkingDir, step.Files)
+
+	var prevContext []string
+	for _, s := range l.state.Plan {
+		if s.Status == "done" && s.Result != "" {
+			prevContext = append(prevContext, fmt.Sprintf("- %s: %s", s.Description, s.Result))
+		}
+	}
+	contextStr := ""
+	if len(prevContext) > 0 {
+		contextStr = fmt.Sprintf("\n\nPrevious steps completed:\n%s", strings.Join(prevContext, "\n"))
+	}
+
+	messages := []api.MessageParam{
+		{Role: "user", Content: fmt.Sprintf("Execute this step: %s%s", step.Description, contextStr)},
+	}
+
+	resp, err := defaultAPIClient.CreateMessageCtx(ctx, messages, systemPrompt)
+	if err != nil {
+		return "", fmt.Errorf("LLM call failed: %w", err)
+	}
+
+	if len(resp.Content) > 0 {
+		return resp.Content[0].Text, nil
+	}
+	return "no response from LLM", nil
 }
 
 func (l *Loop) verify(ctx context.Context) error {

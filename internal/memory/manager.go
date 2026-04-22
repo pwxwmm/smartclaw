@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/memory/convention"
 	"github.com/instructkr/smartclaw/internal/memory/layers"
 	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/store"
@@ -29,6 +31,7 @@ type MemoryManager struct {
 	soulMD          *layers.ManagedFile
 	agentsMD        *layers.ManagedFile
 	contextResolver *ContextFileResolver
+	conventionStore *convention.Store
 	baseDir         string
 
 	snapshots map[string]*MemorySnapshot
@@ -91,12 +94,15 @@ func NewMemoryManagerWithDir(dir string) (*MemoryManager, error) {
 		slog.Warn("memory manager: failed to load context files", "error", err)
 	}
 
+	conventionStore := convention.NewStore(filepath.Join(dir, "conventions"))
+
 	mm := &MemoryManager{
 		promptMemory:    pm,
 		dataStore:       s,
 		soulMD:          soulMD,
 		agentsMD:        agentsMD,
 		contextResolver: contextResolver,
+		conventionStore: conventionStore,
 		baseDir:         dir,
 		snapshots:       make(map[string]*MemorySnapshot),
 		budget:          DefaultContextBudget(),
@@ -203,6 +209,21 @@ func (mm *MemoryManager) BuildSystemContext(ctx context.Context, currentQuery st
 		if incidentPrompt != "" {
 			layerContents = append(layerContents, LayerContent{Name: LayerIncident, Content: incidentPrompt})
 			observability.RecordMemoryLayerSize("incident", len(incidentPrompt))
+		}
+		observability.EndSpan(span)
+	}
+
+	if mm.conventionStore != nil {
+		_, span := observability.StartSpan(ctx, "memory.layer.convention")
+		conventions := mm.conventionStore.List(convention.Filter{})
+		if len(conventions) > 0 {
+			var convParts []string
+			for _, c := range conventions {
+				convParts = append(convParts, fmt.Sprintf("- %s: %s", c.Title, c.Description))
+			}
+			convContent := "Active conventions:\n" + strings.Join(convParts, "\n")
+			layerContents = append(layerContents, LayerContent{Name: LayerConvention, Content: convContent})
+			observability.RecordMemoryLayerSize("convention", len(convContent))
 		}
 		observability.EndSpan(span)
 	}
@@ -349,6 +370,19 @@ func (mm *MemoryManager) BuildSystemContextWithSnapshot(ctx context.Context, cur
 		}
 	}
 
+	if mm.conventionStore != nil {
+		conventions := mm.conventionStore.List(convention.Filter{})
+		if len(conventions) > 0 {
+			var convParts []string
+			for _, c := range conventions {
+				convParts = append(convParts, fmt.Sprintf("- %s: %s", c.Title, c.Description))
+			}
+			convContent := "Active conventions:\n" + strings.Join(convParts, "\n")
+			layerContents = append(layerContents, LayerContent{Name: LayerConvention, Content: convContent})
+			observability.RecordMemoryLayerSize("convention", len(convContent))
+		}
+	}
+
 	if mm.skillMemory != nil {
 		skillPrompt := mm.skillMemory.BuildSkillPrompt()
 		if skillPrompt != "" {
@@ -459,6 +493,10 @@ func (mm *MemoryManager) GetContextFileResolver() *ContextFileResolver {
 	return mm.contextResolver
 }
 
+func (mm *MemoryManager) GetConventionStore() *convention.Store {
+	return mm.conventionStore
+}
+
 // appendContextFileLayers uses the ContextFileResolver to add SOUL, AGENTS, and
 // .cursorrules as LayerContent entries. Falls back to the legacy soulMD/agentsMD
 // ManagedFile fields when the resolver is nil.
@@ -519,6 +557,55 @@ func (mm *MemoryManager) IsContextAwareSkills() bool {
 
 func (mm *MemoryManager) SetInjectionConfig(config InjectionConfig) {
 	mm.injector = NewFencedMemoryInjector(config)
+}
+
+// SetLLMClient wires the DialecticUserModel and EnhancedSessionSearch
+// into the memory subsystem using the given API client for LLM calls.
+func (mm *MemoryManager) SetLLMClient(client *api.Client) {
+	if client == nil {
+		return
+	}
+
+	if mm.userModel != nil && mm.dataStore != nil {
+		dialecticLLM := func(ctx context.Context, prompt string, maxTokens int) (string, error) {
+			messages := []api.MessageParam{{Role: "user", Content: prompt}}
+			resp, err := client.CreateMessageCtx(ctx, messages, []api.SystemBlock{
+				{Type: "text", Text: "You are a user modeling analyst. Analyze the given observation and extract structured insights about the user's preferences, knowledge, and patterns."},
+			})
+			if err != nil {
+				return "", err
+			}
+			if len(resp.Content) > 0 {
+				return resp.Content[0].Text, nil
+			}
+			return "", nil
+		}
+		dm := layers.NewDialecticUserModel(mm.dataStore, mm.promptMemory, layers.DefaultDialecticConfig(), dialecticLLM)
+		mm.userModel.SetDialecticModel(dm)
+	}
+
+	if mm.sessionSearch != nil && mm.dataStore != nil {
+		summarizeFunc := func(ctx context.Context, fragments []layers.SessionFragment, query string, maxTokens int) (string, error) {
+			var fragmentTexts []string
+			for _, f := range fragments {
+				fragmentTexts = append(fragmentTexts, f.Content)
+			}
+			prompt := fmt.Sprintf("Summarize these search results for query %q:\n%s", query, strings.Join(fragmentTexts, "\n---\n"))
+			messages := []api.MessageParam{{Role: "user", Content: prompt}}
+			resp, err := client.CreateMessageCtx(ctx, messages, []api.SystemBlock{
+				{Type: "text", Text: "You are a search result summarizer. Provide a concise summary of the relevant information found."},
+			})
+			if err != nil {
+				return "", err
+			}
+			if len(resp.Content) > 0 {
+				return resp.Content[0].Text, nil
+			}
+			return "", nil
+		}
+		ess := layers.NewEnhancedSessionSearch(mm.dataStore, mm.sessionSearch, summarizeFunc)
+		mm.sessionSearch.SetEnhancedSearch(ess)
+	}
 }
 
 func (mm *MemoryManager) GetInjector() *FencedMemoryInjector {
@@ -639,6 +726,18 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 		incidentPrompt := mm.incidentMemory.BuildIncidentPrompt()
 		if incidentPrompt != "" {
 			layerContents = append(layerContents, LayerContent{Name: LayerIncident, Content: incidentPrompt})
+		}
+	}
+
+	if mm.conventionStore != nil {
+		conventions := mm.conventionStore.List(convention.Filter{})
+		if len(conventions) > 0 {
+			var convParts []string
+			for _, c := range conventions {
+				convParts = append(convParts, fmt.Sprintf("- %s: %s", c.Title, c.Description))
+			}
+			convContent := "Active conventions:\n" + strings.Join(convParts, "\n")
+			layerContents = append(layerContents, LayerContent{Name: LayerConvention, Content: convContent})
 		}
 	}
 

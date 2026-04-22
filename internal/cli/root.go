@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -316,6 +318,37 @@ Each task produces an episode with step-by-step rewards.
 				if err := exporter.Export(episode, taskID); err != nil {
 					fmt.Fprintf(os.Stderr, "Error exporting task %s: %v\n", taskID, err)
 				}
+
+				compressor := rl.NewTrajectoryCompressor()
+				outcome := "completed"
+				if !episode.Success {
+					outcome = "incomplete"
+				}
+				traj := &rl.Trajectory{
+					ID:          fmt.Sprintf("episode-%s", taskID),
+					Task:        content,
+					Outcome:     outcome,
+					TotalReward: episode.TotalReward,
+				}
+				for _, step := range episode.Steps {
+					role := "assistant"
+					if step.Step == 0 {
+						role = "assistant"
+					}
+					traj.Steps = append(traj.Steps, rl.TrajectoryStep{
+						Role:      role,
+						Content:   step.Action,
+						Reward:    step.Reward,
+						Timestamp: time.Now(),
+					})
+				}
+				compressed, compErr := compressor.Compress(traj)
+				if compErr == nil {
+					compPath := filepath.Join(outputDir, fmt.Sprintf("compressed_%s.json", taskID))
+					compData, _ := json.MarshalIndent(compressed, "", "  ")
+					os.WriteFile(compPath, compData, 0o644)
+				}
+
 				fmt.Fprintf(os.Stderr, "Task %s: reward=%.2f success=%v steps=%d\n", taskID, episode.TotalReward, episode.Success, len(episode.Steps))
 			}
 		},
@@ -357,6 +390,9 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 			}
 
 			adapters.InitInnovationPackages(mm, client)
+			if mm != nil && client != nil {
+				mm.SetLLMClient(client)
+			}
 			lifecycle.Register(adapters.NewInnovationShutdown())
 
 			if shutdown, err := observability.InitOTLP(); err == nil {

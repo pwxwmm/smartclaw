@@ -2,6 +2,8 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,36 +46,6 @@ func TestEmailAdapterName(t *testing.T) {
 	if got := ea.Name(); got != "email" {
 		t.Errorf("EmailAdapter.Name() = %q, want %q", got, "email")
 	}
-}
-
-func TestDiscordMessageTruncation(t *testing.T) {
-	longText := strings.Repeat("a", 3000)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	da := NewDiscordAdapter("test-token", nil)
-	da.client = server.Client()
-	da.SetAPIURL(server.URL)
-
-	resp := &gateway.GatewayResponse{Content: longText, SessionID: "s1"}
-
-	err := da.Send("123456789", resp)
-	if err != nil {
-		t.Errorf("Send() error: %v", err)
-	}
-}
-
-func TestWhatsAppMessageTruncation(t *testing.T) {
-	longText := strings.Repeat("b", 5000)
-
-	wa := NewWhatsAppAdapter("phone-id", "test-token", nil)
-	resp := &gateway.GatewayResponse{Content: longText, SessionID: "s1"}
-
-	_ = wa
-	_ = resp
 }
 
 func TestDiscordTruncateHelper(t *testing.T) {
@@ -202,6 +174,22 @@ func TestSignalAdapterStartAlreadyRunning(t *testing.T) {
 	sa.mu.Unlock()
 }
 
+func TestEmailAdapterStartAlreadyRunning(t *testing.T) {
+	ea := NewEmailAdapter("smtp.test.com", "587", "u@t.com", "p", "", "", nil)
+	ea.mu.Lock()
+	ea.running = true
+	ea.mu.Unlock()
+
+	err := ea.Start(context.Background())
+	if err == nil {
+		t.Error("expected error when adapter already running")
+	}
+
+	ea.mu.Lock()
+	ea.running = false
+	ea.mu.Unlock()
+}
+
 func TestEmailAdapterSendInvalidAddress(t *testing.T) {
 	ea := NewEmailAdapter("smtp.test.com", "587", "u@t.com", "p", "", "", nil)
 	resp := &gateway.GatewayResponse{Content: "hello", SessionID: "s1"}
@@ -212,45 +200,128 @@ func TestEmailAdapterSendInvalidAddress(t *testing.T) {
 }
 
 func TestDiscordSendWithMockServer(t *testing.T) {
+	var receivedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"id":"123"}`))
 	}))
 	defer server.Close()
 
 	da := NewDiscordAdapter("test-token", nil)
+	da.apiURL = server.URL
 	da.client = server.Client()
-	da.SetAPIURL(server.URL)
 
 	resp := &gateway.GatewayResponse{Content: "Hello Discord!", SessionID: "s1"}
-
 	err := da.Send("channel-123", resp)
 	if err != nil {
-		t.Errorf("Send() error: %v", err)
+		t.Fatalf("Send() error: %v", err)
+	}
+	if receivedBody["content"] != "Hello Discord!" {
+		t.Errorf("content = %v, want %q", receivedBody["content"], "Hello Discord!")
+	}
+}
+
+func TestDiscordSendTruncationWithMockServer(t *testing.T) {
+	longText := strings.Repeat("a", 3000)
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"123"}`))
+	}))
+	defer server.Close()
+
+	da := NewDiscordAdapter("test-token", nil)
+	da.apiURL = server.URL
+	da.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: longText, SessionID: "s1"}
+	err := da.Send("channel-123", resp)
+	if err != nil {
+		t.Fatalf("Send() error: %v", err)
+	}
+
+	sent, ok := receivedBody["content"].(string)
+	if !ok {
+		t.Fatal("content is not a string")
+	}
+	if len(sent) != discordMaxMessageLen {
+		t.Errorf("sent message length = %d, want %d", len(sent), discordMaxMessageLen)
+	}
+	if !strings.HasSuffix(sent, "[...truncated]") {
+		t.Error("truncated message should end with [...truncated]")
 	}
 }
 
 func TestWhatsAppSendWithMockServer(t *testing.T) {
+	var receivedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"messages":[{"id":"wamid123"}]}`))
 	}))
 	defer server.Close()
 
 	wa := NewWhatsAppAdapter("phone-id", "test-token", nil)
+	wa.apiURL = server.URL
 	wa.client = server.Client()
-	wa.SetAPIURL(server.URL)
 
 	resp := &gateway.GatewayResponse{Content: "Hello WhatsApp!", SessionID: "s1"}
-
 	err := wa.Send("+1234567890", resp)
 	if err != nil {
-		t.Errorf("Send() error: %v", err)
+		t.Fatalf("Send() error: %v", err)
+	}
+	if receivedBody["to"] != "+1234567890" {
+		t.Errorf("to = %v, want %q", receivedBody["to"], "+1234567890")
+	}
+}
+
+func TestWhatsAppSendTruncationWithMockServer(t *testing.T) {
+	longText := strings.Repeat("b", 5000)
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"messages":[{"id":"wamid123"}]}`))
+	}))
+	defer server.Close()
+
+	wa := NewWhatsAppAdapter("phone-id", "test-token", nil)
+	wa.apiURL = server.URL
+	wa.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: longText, SessionID: "s1"}
+	err := wa.Send("+1234567890", resp)
+	if err != nil {
+		t.Fatalf("Send() error: %v", err)
+	}
+
+	textMap, ok := receivedBody["text"].(map[string]any)
+	if !ok {
+		t.Fatal("text is not a map")
+	}
+	sent, ok := textMap["body"].(string)
+	if !ok {
+		t.Fatal("body is not a string")
+	}
+	if len(sent) != whatsappMaxMessageLen {
+		t.Errorf("sent message length = %d, want %d", len(sent), whatsappMaxMessageLen)
+	}
+	if !strings.HasSuffix(sent, "[...truncated]") {
+		t.Error("truncated message should end with [...truncated]")
 	}
 }
 
 func TestSignalSendWithMockServer(t *testing.T) {
+	var receivedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer server.Close()
@@ -259,10 +330,43 @@ func TestSignalSendWithMockServer(t *testing.T) {
 	sa.client = server.Client()
 
 	resp := &gateway.GatewayResponse{Content: "Hello Signal!", SessionID: "s1"}
-
 	err := sa.Send("+0987654321", resp)
 	if err != nil {
-		t.Errorf("Send() error: %v", err)
+		t.Fatalf("Send() error: %v", err)
+	}
+	if receivedBody["message"] != "Hello Signal!" {
+		t.Errorf("message = %v, want %q", receivedBody["message"], "Hello Signal!")
+	}
+}
+
+func TestSignalSendTruncationWithMockServer(t *testing.T) {
+	longText := strings.Repeat("c", 5000)
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	sa := NewSignalAdapter(server.URL, "+1234567890", nil)
+	sa.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: longText, SessionID: "s1"}
+	err := sa.Send("+0987654321", resp)
+	if err != nil {
+		t.Fatalf("Send() error: %v", err)
+	}
+
+	sent, ok := receivedBody["message"].(string)
+	if !ok {
+		t.Fatal("message is not a string")
+	}
+	if len(sent) != signalMaxMessageLen {
+		t.Errorf("sent message length = %d, want %d", len(sent), signalMaxMessageLen)
+	}
+	if !strings.HasSuffix(sent, "[...truncated]") {
+		t.Error("truncated message should end with [...truncated]")
 	}
 }
 
@@ -293,5 +397,118 @@ func TestWhatsAppWithWebhook(t *testing.T) {
 	}
 	if wa.verifyToken != "my-verify-token" {
 		t.Errorf("verifyToken = %q, want %q", wa.verifyToken, "my-verify-token")
+	}
+}
+
+func TestWhatsAppWebhookVerify(t *testing.T) {
+	wa := NewWhatsAppAdapter("phone-id", "token", nil)
+	wa.verifyToken = "test-verify"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/webhook/whatsapp/verify", wa.handleVerify)
+
+	req := httptest.NewRequest("GET", "/webhook/whatsapp/verify?hub.mode=subscribe&hub.verify_token=test-verify&hub.challenge=challenge123", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("verify status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if w.Body.String() != "challenge123" {
+		t.Errorf("verify body = %q, want %q", w.Body.String(), "challenge123")
+	}
+}
+
+func TestWhatsAppWebhookVerifyBadToken(t *testing.T) {
+	wa := NewWhatsAppAdapter("phone-id", "token", nil)
+	wa.verifyToken = "test-verify"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/webhook/whatsapp/verify", wa.handleVerify)
+
+	req := httptest.NewRequest("GET", "/webhook/whatsapp/verify?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=challenge123", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("verify status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestDiscordRateLimitHandling(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"retry_after":0.01}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"123"}`))
+	}))
+	defer server.Close()
+
+	da := NewDiscordAdapter("test-token", nil)
+	da.apiURL = server.URL
+	da.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: "test", SessionID: "s1"}
+	err := da.Send("channel-123", resp)
+	if err == nil {
+		t.Error("expected rate limit error on first attempt")
+	}
+}
+
+func TestDiscordNonOKResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message": "Missing Access"}`))
+	}))
+	defer server.Close()
+
+	da := NewDiscordAdapter("test-token", nil)
+	da.apiURL = server.URL
+	da.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: "test", SessionID: "s1"}
+	err := da.Send("channel-123", resp)
+	if err == nil {
+		t.Error("expected error for non-OK response")
+	}
+}
+
+func TestWhatsAppNonOKResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":{"message":"Invalid token"}}`))
+	}))
+	defer server.Close()
+
+	wa := NewWhatsAppAdapter("phone-id", "bad-token", nil)
+	wa.apiURL = server.URL
+	wa.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: "test", SessionID: "s1"}
+	err := wa.Send("+1234567890", resp)
+	if err == nil {
+		t.Error("expected error for non-OK response")
+	}
+}
+
+func TestSignalNonOKResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal"}`))
+	}))
+	defer server.Close()
+
+	sa := NewSignalAdapter(server.URL, "+1234567890", nil)
+	sa.client = server.Client()
+
+	resp := &gateway.GatewayResponse{Content: "test", SessionID: "s1"}
+	err := sa.Send("+0987654321", resp)
+	if err == nil {
+		t.Error("expected error for non-OK response")
 	}
 }

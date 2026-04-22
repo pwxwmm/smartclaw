@@ -119,6 +119,9 @@ func runREPL(cmd *cobra.Command, args []string) {
 	}
 
 	adapters.InitInnovationPackages(mm, session.apiClient)
+	if mm != nil && session.apiClient != nil {
+		mm.SetLLMClient(session.apiClient)
+	}
 	lifecycle.Register(adapters.NewInnovationShutdown())
 
 	if shutdown, err := observability.InitOTLP(); err == nil {
@@ -335,7 +338,8 @@ func (s *REPLSession) buildAPIMessages() []api.Message {
 }
 
 func (s *REPLSession) buildToolSchemas() []api.ToolDefinition {
-	toolList := s.toolReg.All()
+	complexity := tools.AssessQueryComplexity(s.lastUserInput())
+	toolList := s.toolReg.SelectToolset(context.Background(), complexity)
 	schemas := make([]api.ToolDefinition, 0, len(toolList))
 	for _, t := range toolList {
 		schemas = append(schemas, api.ToolDefinition{
@@ -345,6 +349,17 @@ func (s *REPLSession) buildToolSchemas() []api.ToolDefinition {
 		})
 	}
 	return schemas
+}
+
+func (s *REPLSession) lastUserInput() string {
+	for i := len(s.session.Messages) - 1; i >= 0; i-- {
+		if s.session.Messages[i].Role == "user" {
+			if str, ok := s.session.Messages[i].Content.(string); ok {
+				return str
+			}
+		}
+	}
+	return ""
 }
 
 func (s *REPLSession) printHelp() {
@@ -470,6 +485,9 @@ func runTUI(cmd *cobra.Command, args []string) {
 	tools.SetAllowedDirs([]string{workDir})
 
 	adapters.InitInnovationPackages(mm, apiClient)
+	if mm != nil && apiClient != nil {
+		mm.SetLLMClient(apiClient)
+	}
 	lifecycle.Register(adapters.NewInnovationShutdown())
 
 	if shutdown, err := observability.InitOTLP(); err == nil {

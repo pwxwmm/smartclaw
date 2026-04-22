@@ -19,6 +19,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/compact"
 	"github.com/instructkr/smartclaw/internal/memory"
+	"github.com/instructkr/smartclaw/internal/plans"
 	"github.com/instructkr/smartclaw/internal/services"
 	"github.com/instructkr/smartclaw/internal/session"
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -95,6 +96,7 @@ type Model struct {
 	compactService     *compact.CompactService
 	autoCompactEnabled bool
 	sessionRecorder    *services.SessionRecorder
+	planStore          *plans.PlanStore
 }
 
 func InitialModel() Model {
@@ -229,6 +231,22 @@ func InitialModelWithClient(client *api.Client) Model {
 		m.model = client.Model
 	}
 	return m
+}
+
+// GetPlanStore returns the PlanStore, creating it lazily on first use.
+func (m *Model) GetPlanStore() *plans.PlanStore {
+	if m.planStore == nil {
+		cwd := m.workDir
+		if cwd == "" {
+			cwd, _ = os.Getwd()
+		}
+		ps, err := plans.NewPlanStore(cwd)
+		if err != nil {
+			return nil
+		}
+		m.planStore = ps
+	}
+	return m.planStore
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1521,9 +1539,10 @@ func (m *Model) buildSystemPrompt() string {
 }
 
 func (m *Model) buildToolDefinitions() []api.ToolDefinition {
+	complexity := tools.AssessQueryComplexity(m.lastInput)
 	toolDefs := make([]api.ToolDefinition, 0)
 
-	for _, t := range tools.All() {
+	for _, t := range tools.SelectToolset(context.Background(), complexity) {
 		toolDefs = append(toolDefs, api.ToolDefinition{
 			Name:        t.Name(),
 			Description: t.Description(),

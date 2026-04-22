@@ -291,7 +291,8 @@ func registerAllCommands() {
 
 	defaultRegistry.Register(Command{
 		Name:    "plan",
-		Summary: "Plan mode",
+		Summary: "Manage persistent plans",
+		Usage:   "plan <list|create|show|status|delete> [args]",
 	}, planHandler)
 
 	defaultRegistry.Register(Command{
@@ -728,4 +729,18 @@ func registerAllCommands() {
 		Name:    "config-import",
 		Summary: "Import configuration",
 	}, configImportHandler)
+
+	defaultRegistry.Register(Command{
+		Name:    "autonomous",
+		Summary: "Execute autonomous task loop",
+		Usage:   "autonomous <task> [--max-steps N] [--no-verify] [--create-pr]",
+		Aliases: []string{"auto"},
+	}, autonomousCmdHandler)
+
+	defaultRegistry.Register(Command{
+		Name:    "playbook",
+		Summary: "Manage playbooks",
+		Usage:   "playbook <list|execute|create> [name] [params]",
+		Aliases: []string{"pb"},
+	}, playbookCmdHandler)
 }

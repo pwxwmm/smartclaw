@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/rl"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/utils"
 )
@@ -254,7 +255,11 @@ func (r *Runner) writeResults(ch chan *BatchResult) {
 	resultsWriter := bufio.NewWriter(resultsFile)
 	sharegptWriter := bufio.NewWriter(sharegptFile)
 
+	var allResults []*BatchResult
+
 	for result := range ch {
+		allResults = append(allResults, result)
+
 		data, err := json.Marshal(result)
 		if err != nil {
 			slog.Warn("batch: failed to marshal result", "id", result.ID, "error", err)
@@ -278,6 +283,41 @@ func (r *Runner) writeResults(ch chan *BatchResult) {
 
 	resultsWriter.Flush()
 	sharegptWriter.Flush()
+
+	// Also export using TrajectoryCompressor for compressed output
+	compressor := rl.NewTrajectoryCompressor()
+	compressedPath := filepath.Join(r.config.OutputDir, "compressed_sharegpt.jsonl")
+	cf, err := os.Create(compressedPath)
+	if err != nil {
+		slog.Warn("batch: failed to create compressed sharegpt file", "error", err)
+		return
+	}
+	defer cf.Close()
+
+	var trajectories []*rl.Trajectory
+	for _, result := range allResults {
+		outcome := "completed"
+		if result.Error != "" {
+			outcome = "failed"
+		}
+		steps := []rl.TrajectoryStep{
+			{Role: "user", Content: result.Prompt, Timestamp: time.Now()},
+			{Role: "assistant", Content: result.Response, Timestamp: time.Now()},
+		}
+		traj := &rl.Trajectory{
+			ID:     result.ID,
+			Task:   result.Prompt,
+			Steps:  steps,
+			Outcome: outcome,
+		}
+		compressed, compErr := compressor.Compress(traj)
+		if compErr == nil {
+			trajectories = append(trajectories, compressed)
+		}
+	}
+	if err := compressor.ExportJSONL(trajectories, cf); err != nil {
+		slog.Warn("batch: failed to export compressed trajectories", "error", err)
+	}
 }
 
 type ShareGPTFormat struct {

@@ -11,6 +11,7 @@ const (
 	LayerSkills        LayerName = "skills"
 	LayerSessionSearch LayerName = "session_search"
 	LayerIncident      LayerName = "incident"
+	LayerConvention    LayerName = "convention"
 	LayerMemoryRecall  LayerName = "memory_recall"
 	LayerCursorRules   LayerName = "cursor_rules"
 )
@@ -51,8 +52,9 @@ func DefaultContextBudget() ContextBudget {
 			{Name: LayerUser, Weight: 0.10, MinChars: 0, MaxChars: 1000},
 			{Name: LayerUserModel, Weight: 0.05, MinChars: 0, MaxChars: 500},
 			{Name: LayerSkills, Weight: 0.10, MinChars: 0, MaxChars: 800},
-			{Name: LayerSessionSearch, Weight: 0.25, MinChars: 0, MaxChars: 2000},
+			{Name: LayerSessionSearch, Weight: 0.20, MinChars: 0, MaxChars: 2000},
 			{Name: LayerIncident, Weight: 0.05, MinChars: 0, MaxChars: 2000},
+			{Name: LayerConvention, Weight: 0.05, MinChars: 0, MaxChars: 800},
 		},
 	}
 }
