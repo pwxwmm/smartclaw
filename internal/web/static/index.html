@@ -50,6 +50,18 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
           <span>Settings</span>
         </button>
+        <button class="nav-btn" data-section="skills">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>Skills</span>
+        </button>
+        <button class="nav-btn" data-section="memory">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="8" rx="9" ry="6"/><path d="M3 8v8a9 6 0 0018 0V8"/></svg>
+          <span>Memory</span>
+        </button>
+        <button class="nav-btn" data-section="wiki">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          <span>Wiki</span>
+        </button>
       </nav>
 
       <div class="sidebar-body">
@@ -83,6 +95,26 @@
             <div class="setting-row"><button id="open-theme-editor" class="btn-ghost">Theme Editor</button></div>
             <div class="setting-row"><button id="open-dashboard" class="btn-ghost">Dashboard</button></div>
           </div>
+        </div>
+        <div id="section-skills" class="section">
+          <div class="section-head"><span>Skills</span></div>
+          <input type="text" id="skill-search" class="session-search" placeholder="Search skills..." autocomplete="off">
+          <div id="skill-list" class="skill-list"></div>
+        </div>
+        <div id="section-memory" class="section">
+          <div class="section-head"><span>Memory</span></div>
+          <div id="memory-stats" class="memory-stats"></div>
+          <input type="text" id="memory-search" class="session-search" placeholder="Search memory..." autocomplete="off">
+          <div id="memory-layers" class="memory-layers">
+            <details class="memory-layer"><summary>L1: MEMORY.md</summary><pre id="memory-content" class="memory-content"></pre></details>
+            <details class="memory-layer"><summary>L1: USER.md</summary><pre id="user-content" class="memory-content"></pre></details>
+          </div>
+          <div id="memory-search-results" class="memory-search-results"></div>
+        </div>
+        <div id="section-wiki" class="section">
+          <div class="section-head"><span>Wiki</span><span id="wiki-status" class="wiki-status"></span></div>
+          <input type="text" id="wiki-search" class="session-search" placeholder="Search wiki..." autocomplete="off">
+          <div id="wiki-pages" class="wiki-pages"></div>
         </div>
       </div>
     </aside>

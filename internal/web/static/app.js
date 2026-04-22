@@ -30,6 +30,11 @@
     flatFiles: [],
     mentionIndex: -1,
     mentionStart: -1,
+    skills: [],
+    memoryLayers: { memory: '', user: '' },
+    memoryStats: { memory_chars: 0, user_chars: 0 },
+    wikiPages: [],
+    wikiEnabled: false,
   };
 
   const subscribers = {};
@@ -198,6 +203,48 @@
         break;
       case 'cmd_result':
         addCmdResult(msg.content);
+        break;
+      case 'skill_list':
+        state.skills = msg.data || [];
+        renderSkillList();
+        break;
+      case 'skill_detail':
+        showSkillDetail(msg.data);
+        break;
+      case 'skill_toggle':
+        const toggled = (state.skills || []).find(s => s.name === msg.data?.name);
+        if (toggled) { toggled.enabled = msg.data?.status === 'enabled'; renderSkillList(); }
+        toast(`Skill ${msg.data?.name} ${msg.data?.status}`, 'success');
+        break;
+      case 'skill_search':
+        state.skills = msg.data || [];
+        renderSkillList();
+        break;
+      case 'memory_layers':
+        state.memoryLayers = msg.data || {};
+        document.getElementById('memory-content').textContent = state.memoryLayers.memory || '(empty)';
+        document.getElementById('user-content').textContent = state.memoryLayers.user || '(empty)';
+        break;
+      case 'memory_search':
+        renderMemorySearchResults(msg.data || []);
+        break;
+      case 'memory_recall':
+        renderMemoryRecall(msg.data);
+        break;
+      case 'memory_store':
+        toast('Memory stored', 'success');
+        break;
+      case 'memory_stats':
+        state.memoryStats = msg.data || {};
+        renderMemoryStats();
+        break;
+      case 'wiki_search':
+        renderWikiResults(msg.data);
+        break;
+      case 'wiki_pages':
+        state.wikiEnabled = msg.data?.enabled || false;
+        state.wikiPages = msg.data?.pages || [];
+        renderWikiPages();
         break;
     }
   }
@@ -1579,6 +1626,158 @@
     if (searchInput) setTimeout(() => searchInput.focus(), 100);
   }
 
+  function renderSkillList() {
+    const list = $('#skill-list');
+    list.innerHTML = '';
+    if (!state.skills || state.skills.length === 0) {
+      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No skills found</div>';
+      return;
+    }
+    state.skills.forEach(skill => {
+      const el = document.createElement('div');
+      el.className = 'skill-item';
+      const desc = skill.description || '';
+      const truncated = desc.length > 60 ? desc.slice(0, 60) + '...' : desc;
+      const isOn = skill.enabled !== false;
+      el.innerHTML = `
+        <div class="skill-info">
+          <div class="skill-name">${escapeHtml(skill.name)}</div>
+          ${truncated ? `<div class="skill-desc" title="${escapeHtml(desc)}">${escapeHtml(truncated)}</div>` : ''}
+        </div>
+        <div class="skill-toggle ${isOn ? 'on' : ''}" data-skill="${escapeHtml(skill.name)}" data-enabled="${isOn}"></div>
+      `;
+      el.querySelector('.skill-name').addEventListener('click', (e) => {
+        e.stopPropagation();
+        wsSend('skill_detail', { name: skill.name });
+      });
+      el.querySelector('.skill-toggle').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = isOn ? 'disable' : 'enable';
+        wsSend('skill_toggle', { name: skill.name, action: action });
+      });
+      list.appendChild(el);
+    });
+  }
+
+  function showSkillDetail(skill) {
+    if (!skill) return;
+    const el = document.createElement('div');
+    el.className = 'message cmd-result';
+    const now = new Date();
+    const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const content = skill.content || skill.description || 'No content available';
+    el.innerHTML = `<div class="msg-role" style="color:var(--accent)">Skill: ${escapeHtml(skill.name)}</div><div class="msg-bubble" style="font-family:var(--font-d);background:var(--bg-2);border:1px solid var(--bd);border-radius:8px;white-space:pre-wrap;word-break:break-word;padding:10px 14px">${escapeHtml(content)}</div><div class="msg-ts">${ts}</div>`;
+    $('#messages').appendChild(el);
+    scrollChat();
+  }
+
+  function renderMemoryStats() {
+    const el = $('#memory-stats');
+    if (!el) return;
+    const s = state.memoryStats || {};
+    el.textContent = `${s.memory_chars || 0} chars / MEMORY.md · ${s.user_chars || 0} chars / USER.md`;
+  }
+
+  function renderMemorySearchResults(results) {
+    const container = $('#memory-search-results');
+    container.innerHTML = '';
+    if (!results || results.length === 0) {
+      container.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No results</div>';
+      return;
+    }
+    results.forEach(frag => {
+      const el = document.createElement('div');
+      el.className = 'memory-frag';
+      const title = frag.source || frag.key || frag.title || 'Memory';
+      const text = frag.content || frag.text || frag.snippet || '';
+      el.innerHTML = `
+        <div class="memory-frag-title">${escapeHtml(title)}</div>
+        <div class="memory-frag-text">${escapeHtml(text.slice(0, 300))}</div>
+      `;
+      container.appendChild(el);
+    });
+  }
+
+  function renderMemoryRecall(data) {
+    if (!data) return;
+    const el = document.createElement('div');
+    el.className = 'message cmd-result';
+    const now = new Date();
+    const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const query = data.query || '';
+    const context = data.context || 'No context found';
+    el.innerHTML = `<div class="msg-role" style="color:var(--accent)">Memory Recall</div><div class="msg-bubble" style="font-family:var(--font-d);background:var(--bg-2);border:1px solid var(--bd);border-radius:8px;white-space:pre-wrap;word-break:break-word;padding:10px 14px">${escapeHtml(context)}</div><div class="msg-ts">${ts}</div>`;
+    $('#messages').appendChild(el);
+    scrollChat();
+  }
+
+  function renderWikiResults(data) {
+    const container = $('#wiki-pages');
+    container.innerHTML = '';
+    if (!data) return;
+    const results = data.results || [];
+    if (results.length === 0) {
+      container.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No wiki results</div>';
+      return;
+    }
+    results.forEach(page => {
+      const el = document.createElement('div');
+      el.className = 'wiki-page';
+      const title = page.title || page.name || 'Untitled';
+      const meta = page.path || page.url || '';
+      el.innerHTML = `
+        <div class="wiki-page-title">${escapeHtml(title)}</div>
+        ${meta ? `<div class="wiki-page-meta">${escapeHtml(meta)}</div>` : ''}
+      `;
+      container.appendChild(el);
+    });
+  }
+
+  function renderWikiPages() {
+    const container = $('#wiki-pages');
+    const statusEl = $('#wiki-status');
+    container.innerHTML = '';
+    if (statusEl) {
+      if (state.wikiEnabled) {
+        statusEl.textContent = 'Connected';
+        statusEl.className = 'wiki-status connected';
+      } else {
+        statusEl.textContent = 'Not configured';
+        statusEl.className = 'wiki-status';
+      }
+    }
+    if (!state.wikiEnabled) {
+      container.innerHTML = '<div class="wiki-not-configured">Wiki is not configured. Enable it in your project settings.</div>';
+      return;
+    }
+    if (!state.wikiPages || state.wikiPages.length === 0) {
+      container.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No wiki pages</div>';
+      return;
+    }
+    state.wikiPages.forEach(page => {
+      const el = document.createElement('div');
+      el.className = 'wiki-page';
+      const title = page.title || page.name || 'Untitled';
+      const meta = page.path || page.url || '';
+      el.innerHTML = `
+        <div class="wiki-page-title">${escapeHtml(title)}</div>
+        ${meta ? `<div class="wiki-page-meta">${escapeHtml(meta)}</div>` : ''}
+      `;
+      container.appendChild(el);
+    });
+  }
+
+  function loadSectionData(section) {
+    if (section === 'skills') {
+      wsSend('skill_list', {});
+    } else if (section === 'memory') {
+      wsSend('memory_layers', {});
+      wsSend('memory_stats', {});
+    } else if (section === 'wiki') {
+      wsSend('wiki_pages', {});
+    }
+  }
+
   function clearChat() {
     $('#messages').innerHTML = '';
     state.messages = [];
@@ -1682,7 +1881,9 @@
         $$('.nav-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         $$('.section').forEach(s => s.classList.remove('active'));
-        $(`#section-${btn.dataset.section}`)?.classList.add('active');
+        const section = btn.dataset.section;
+        $(`#section-${section}`)?.classList.add('active');
+        loadSectionData(section);
       });
     });
 
@@ -1770,6 +1971,35 @@
 
     $('#refresh-files').addEventListener('click', () => wsSend('file_tree', { path: '.' }));
     $('#new-session').addEventListener('click', () => wsSend('session_new', { model: state.settings.model }));
+
+    let skillSearchTimer = null;
+    $('#skill-search')?.addEventListener('input', (e) => {
+      const query = e.target.value.trim();
+      if (skillSearchTimer) clearTimeout(skillSearchTimer);
+      if (!query) {
+        wsSend('skill_list', {});
+        return;
+      }
+      skillSearchTimer = setTimeout(() => wsSend('skill_search', { query }), 300);
+    });
+
+    $('#memory-search')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const query = e.target.value.trim();
+        if (query) wsSend('memory_search', { query, limit: 5 });
+      }
+    });
+
+    let wikiSearchTimer = null;
+    $('#wiki-search')?.addEventListener('input', (e) => {
+      const query = e.target.value.trim();
+      if (wikiSearchTimer) clearTimeout(wikiSearchTimer);
+      if (!query) {
+        wsSend('wiki_pages', {});
+        return;
+      }
+      wikiSearchTimer = setTimeout(() => wsSend('wiki_search', { query, limit: 5 }), 300);
+    });
 
     $('#session-search')?.addEventListener('input', () => {
       renderSessions(state.sessions || []);
