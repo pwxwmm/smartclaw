@@ -833,6 +833,15 @@ func (mm *MemoryManager) buildSystemContextForUser(ctx context.Context, currentQ
 	return joinParts(parts)
 }
 
+// Search performs a full-text search across session history via the session
+// search layer. It returns matching SessionFragment items ranked by relevance.
+func (mm *MemoryManager) Search(ctx context.Context, query string, limit int) ([]layers.SessionFragment, error) {
+	if mm.sessionSearch == nil {
+		return nil, nil
+	}
+	return mm.sessionSearch.Search(ctx, query, limit)
+}
+
 func (mm *MemoryManager) Close() error {
 	mm.providersMu.RLock()
 	for _, p := range mm.providers {

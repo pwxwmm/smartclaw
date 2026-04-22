@@ -689,3 +689,16 @@ type SkillSummary struct {
 	Triggers    []string
 	Tags        []string
 }
+
+var globalSkillManager *SkillManager
+
+// GetSkillManager returns the global SkillManager instance.
+// Returns nil if SetSkillManager has not been called.
+func GetSkillManager() *SkillManager {
+	return globalSkillManager
+}
+
+// SetSkillManager sets the global SkillManager instance.
+func SetSkillManager(sm *SkillManager) {
+	globalSkillManager = sm
+}
