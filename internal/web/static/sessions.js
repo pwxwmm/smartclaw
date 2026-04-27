@@ -1,0 +1,160 @@
+// SmartClaw - Sessions
+(function() {
+  'use strict';
+
+  function renderSessions(sessions) {
+    try {
+    const list = SC.$('#session-list');
+    list.innerHTML = '';
+    if (sessions.length === 0) {
+      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No sessions yet</div>';
+      SC.setState('sessions', sessions);
+      SC.$('#s-total-sessions').textContent = '0';
+      return;
+    }
+
+    const searchTerm = (SC.$('#session-search')?.value || '').toLowerCase();
+    const filtered = searchTerm
+      ? sessions.filter(s => (s.title || 'Untitled').toLowerCase().includes(searchTerm))
+      : sessions;
+
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No sessions found</div>';
+      SC.setState('sessions', sessions);
+      SC.$('#s-total-sessions').textContent = sessions.length;
+      return;
+    }
+
+    filtered.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'session-item' + (s.id === SC.state.ui.currentSessionId ? ' active' : '');
+      el.dataset.sessionId = s.id;
+      el.innerHTML = `
+        <div class="stitle">${SC.escapeHtml(s.title || 'Untitled')}</div>
+        <div class="smeta">${SC.escapeHtml(s.model)} / ${s.messageCount} msgs / ${new Date(s.updatedAt).toLocaleDateString()}</div>
+        <div class="session-actions">
+          <button class="session-rename" title="Rename session"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="session-del" title="Delete session">&times;</button>
+        </div>
+        <div class="session-confirm hidden">
+          <span>Delete this session? This cannot be undone.</span>
+          <button class="confirm-delete">Delete</button>
+          <button class="confirm-cancel">Cancel</button>
+        </div>
+      `;
+
+      el.querySelector('.session-rename').addEventListener('click', (e) => {
+        e.stopPropagation();
+        startRenameSession(el, s);
+      });
+
+      el.querySelector('.session-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        el.querySelector('.session-confirm').classList.remove('hidden');
+      });
+
+      el.querySelector('.confirm-delete').addEventListener('click', (e) => {
+        e.stopPropagation();
+        SC.wsSend('session_delete', { id: s.id });
+      });
+
+      el.querySelector('.confirm-cancel').addEventListener('click', (e) => {
+        e.stopPropagation();
+        el.querySelector('.session-confirm').classList.add('hidden');
+      });
+
+      el.addEventListener('click', () => SC.wsSend('session_load', { id: s.id }));
+      list.appendChild(el);
+    });
+    SC.setState('sessions', sessions);
+    SC.$('#s-total-sessions').textContent = sessions.length;
+    } catch (err) {
+      console.error('[renderSessions Error]', err);
+      SC.showErrorBanner('Sessions render error: ' + err.message, function() { renderSessions(sessions); });
+    }
+  }
+
+  function startRenameSession(el, session) {
+    const titleEl = el.querySelector('.stitle');
+    const currentTitle = session.title || 'Untitled';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-input';
+    input.value = currentTitle;
+    input.maxLength = 100;
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function finishRename() {
+      const newTitle = input.value.trim();
+      if (newTitle && newTitle !== currentTitle) {
+        SC.wsSend('session_rename', { id: session.id, title: newTitle });
+      } else {
+        const span = document.createElement('div');
+        span.className = 'stitle';
+        span.textContent = currentTitle;
+        input.replaceWith(span);
+      }
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finishRename(); }
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        const span = document.createElement('div');
+        span.className = 'stitle';
+        span.textContent = currentTitle;
+        input.replaceWith(span);
+      }
+    });
+
+    input.addEventListener('blur', finishRename);
+  }
+
+  function loadSessionMessages(msg) {
+    SC.state.ui.currentSessionId = msg.id;
+    try { localStorage.setItem('smartclaw-active-session', msg.id); } catch {}
+    const container = SC.$('#messages');
+    container.innerHTML = '';
+    SC.state.messages = [];
+    const messages = msg.messages || [];
+    messages.forEach(m => {
+      const el = document.createElement('div');
+      el.className = `message ${m.role}`;
+      const roleLabel = m.role === 'user' ? 'You' : 'SmartClaw';
+      const ts = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${m.role === 'assistant' ? SC.renderMarkdown(m.content) : SC.escapeHtml(m.content)}</div>${ts ? `<div class="msg-ts">${ts}</div>` : ''}`;
+      container.appendChild(el);
+      if (m.role === 'assistant') {
+        const bubble = el.querySelector('.msg-bubble');
+        SC.bindCodeCopy(bubble);
+        SC.postRenderMarkdown(bubble);
+      }
+      SC.state.messages.push({ role: m.role, content: m.content, ts: Date.now() });
+    });
+    SC.scrollChat();
+    SC.wsSend('session_list', {});
+  }
+
+  function toggleSessionsPanel() {
+    const sb = SC.$('#sidebar');
+    if (sb.classList.contains('collapsed')) {
+      sb.classList.remove('collapsed');
+      SC.state.ui.sidebarOpen = true;
+    }
+    SC.$$('.nav-btn').forEach(b => b.classList.remove('active'));
+    SC.$$('.section').forEach(s => s.classList.remove('active'));
+    const sessionsBtn = SC.$('[data-section="sessions"]');
+    if (sessionsBtn) sessionsBtn.classList.add('active');
+    SC.$('#section-sessions')?.classList.add('active');
+    const searchInput = SC.$('#session-search');
+    if (searchInput) setTimeout(() => searchInput.focus(), 100);
+  }
+
+  SC.renderSessions = renderSessions;
+  SC.startRenameSession = startRenameSession;
+  SC.loadSessionMessages = loadSessionMessages;
+  SC.toggleSessionsPanel = toggleSessionsPanel;
+})();

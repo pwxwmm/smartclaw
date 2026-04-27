@@ -97,19 +97,48 @@
           </div>
         </div>
         <div id="section-skills" class="section">
-          <div class="section-head"><span>Skills</span></div>
+          <div class="section-head" id="skill-section-header"><span>Skills</span></div>
           <input type="text" id="skill-search" class="session-search" placeholder="Search skills..." autocomplete="off">
           <div id="skill-list" class="skill-list"></div>
         </div>
         <div id="section-memory" class="section">
           <div class="section-head"><span>Memory</span></div>
           <div id="memory-stats" class="memory-stats"></div>
-          <input type="text" id="memory-search" class="session-search" placeholder="Search memory..." autocomplete="off">
-          <div id="memory-layers" class="memory-layers">
-            <details class="memory-layer"><summary>L1: MEMORY.md</summary><pre id="memory-content" class="memory-content"></pre></details>
-            <details class="memory-layer"><summary>L1: USER.md</summary><pre id="user-content" class="memory-content"></pre></details>
+          <div class="memory-tabs">
+            <button class="memory-tab active" data-tab="l1">L1 Prompt</button>
+            <button class="memory-tab" data-tab="l2">L2 Sessions</button>
+            <button class="memory-tab" data-tab="l3">L3 Skills</button>
+            <button class="memory-tab" data-tab="l4">L4 User Model</button>
           </div>
-          <div id="memory-search-results" class="memory-search-results"></div>
+          <div id="memory-tab-l1" class="memory-tab-content active">
+            <div id="memory-layers" class="memory-layers">
+              <details class="memory-layer"><summary>L1: MEMORY.md</summary><pre id="memory-content" class="memory-content"></pre></details>
+              <details class="memory-layer"><summary>L1: USER.md</summary><pre id="user-content" class="memory-content"></pre></details>
+            </div>
+            <div id="memory-search-results" class="memory-search-results"></div>
+          </div>
+          <div id="memory-tab-l2" class="memory-tab-content">
+            <input type="text" id="session-fragment-search" class="session-search" placeholder="Search session history..." autocomplete="off">
+            <div id="session-fragments" class="session-fragments"></div>
+          </div>
+          <div id="memory-tab-l3" class="memory-tab-content">
+            <div id="skill-memory-list" class="skill-memory-list"></div>
+            <div id="skill-editor" class="skill-editor hidden">
+              <div class="skill-editor-header">
+                <span id="skill-editor-name"></span>
+                <button id="skill-editor-cancel" class="memory-cancel-btn">Cancel</button>
+                <button id="skill-editor-save" class="memory-save-btn">Save</button>
+              </div>
+              <textarea id="skill-editor-content" class="memory-textarea" rows="12"></textarea>
+            </div>
+          </div>
+          <div id="memory-tab-l4" class="memory-tab-content">
+            <div class="memory-observations-header">
+              <span class="memory-observations-title">Observations</span>
+              <button id="refresh-observations" class="memory-edit-btn">Refresh</button>
+            </div>
+            <div id="user-observations" class="user-observations"></div>
+          </div>
         </div>
         <div id="section-wiki" class="section">
           <div class="section-head"><span>Wiki</span><span id="wiki-status" class="wiki-status"></span></div>
@@ -293,8 +322,22 @@
     <div id="toast-container" class="toast-container"></div>
   </div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/16.3.0/lib/marked.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@16.3.0/lib/marked.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/static/app.js?v=20260409"></script>
+  <script src="/static/common.js?v=20260427"></script>
+  <script src="/static/state.js?v=20260427"></script>
+  <script src="/static/ui.js?v=20260427"></script>
+  <script src="/static/ws.js?v=20260427"></script>
+  <script src="/static/chat.js?v=20260427"></script>
+  <script src="/static/sessions.js?v=20260427"></script>
+  <script src="/static/files.js?v=20260427"></script>
+  <script src="/static/skills.js?v=20260427"></script>
+  <script src="/static/memory.js?v=20260427"></script>
+  <script src="/static/wiki.js?v=20260427"></script>
+  <script src="/static/agents.js?v=20260427"></script>
+  <script src="/static/tools.js?v=20260427"></script>
+  <script src="/static/upload.js?v=20260427"></script>
+  <script src="/static/voice.js?v=20260427"></script>
+  <script src="/static/app.js?v=20260427"></script>
 </body>
 </html>
