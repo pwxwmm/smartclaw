@@ -454,4 +454,141 @@
   SC.importTheme = importTheme;
   SC.loadProviderConfig = loadProviderConfig;
   SC.saveProviderConfig = saveProviderConfig;
+
+  function initSidebarDragSort() {
+    const sidebarBody = SC.$('.sidebar-body');
+    if (!sidebarBody) return;
+
+    applySidebarOrder();
+    applySidebarCollapsedState();
+    addDragHandles();
+
+    sidebarBody.addEventListener('dragstart', (e) => {
+      const section = e.target.closest('.section');
+      if (!section) return;
+      const handle = e.target.closest('.drag-handle');
+      if (!handle) {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.setData('text/plain', section.id);
+      e.dataTransfer.effectAllowed = 'move';
+      section.classList.add('dragging');
+    });
+
+    sidebarBody.addEventListener('dragend', (e) => {
+      const section = e.target.closest('.section');
+      if (section) section.classList.remove('dragging');
+      SC.$$('.section', sidebarBody).forEach(s => s.classList.remove('drag-over'));
+    });
+
+    sidebarBody.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const target = e.target.closest('.section');
+      if (!target || target.classList.contains('dragging')) return;
+      SC.$$('.section', sidebarBody).forEach(s => s.classList.remove('drag-over'));
+      target.classList.add('drag-over');
+    });
+
+    sidebarBody.addEventListener('dragleave', (e) => {
+      const target = e.target.closest('.section');
+      if (target) target.classList.remove('drag-over');
+    });
+
+    sidebarBody.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const target = e.target.closest('.section');
+      if (!target) return;
+      const draggedId = e.dataTransfer.getData('text/plain');
+      const dragged = SC.$('#' + draggedId);
+      if (!dragged || dragged === target) return;
+
+      const sections = SC.$$('.section', sidebarBody);
+      const draggedIdx = sections.indexOf(dragged);
+      const targetIdx = sections.indexOf(target);
+
+      if (draggedIdx < targetIdx) {
+        sidebarBody.insertBefore(dragged, target.nextSibling);
+      } else {
+        sidebarBody.insertBefore(dragged, target);
+      }
+
+      SC.$$('.section', sidebarBody).forEach(s => s.classList.remove('drag-over'));
+      saveSidebarOrder();
+    });
+
+    sidebarBody.addEventListener('click', (e) => {
+      const head = e.target.closest('.section-head');
+      if (!head) return;
+      const toggle = e.target.closest('.collapse-toggle');
+      if (!toggle) return;
+      const section = head.closest('.section');
+      if (!section) return;
+      const isCollapsed = section.classList.toggle('section-collapsed');
+      saveSidebarCollapsedState();
+    });
+  }
+
+  function addDragHandles() {
+    SC.$$('.section-head').forEach(head => {
+      if (head.querySelector('.drag-handle')) return;
+      const handle = document.createElement('span');
+      handle.className = 'drag-handle';
+      handle.textContent = '⋮⋮';
+      handle.draggable = true;
+      head.insertBefore(handle, head.firstChild);
+
+      if (!head.querySelector('.collapse-toggle')) {
+        const toggle = document.createElement('span');
+        toggle.className = 'collapse-toggle';
+        toggle.innerHTML = '▸';
+        head.appendChild(toggle);
+      }
+    });
+  }
+
+  function saveSidebarOrder() {
+    const sections = SC.$$('.section');
+    const order = sections.map(s => s.id);
+    try { localStorage.setItem('smartclaw-sidebar-order', JSON.stringify(order)); } catch {}
+  }
+
+  function applySidebarOrder() {
+    try {
+      const saved = localStorage.getItem('smartclaw-sidebar-order');
+      if (!saved) return;
+      const order = JSON.parse(saved);
+      const sidebarBody = SC.$('.sidebar-body');
+      if (!sidebarBody) return;
+      order.forEach(id => {
+        const section = SC.$('#' + id);
+        if (section) sidebarBody.appendChild(section);
+      });
+    } catch {}
+  }
+
+  function saveSidebarCollapsedState() {
+    const state = {};
+    SC.$$('.section').forEach(s => {
+      state[s.id] = s.classList.contains('section-collapsed');
+    });
+    try { localStorage.setItem('smartclaw-sidebar-collapsed', JSON.stringify(state)); } catch {}
+  }
+
+  function applySidebarCollapsedState() {
+    try {
+      const saved = localStorage.getItem('smartclaw-sidebar-collapsed');
+      if (!saved) return;
+      const state = JSON.parse(saved);
+      Object.entries(state).forEach(([id, collapsed]) => {
+        const section = SC.$('#' + id);
+        if (section) {
+          section.classList.toggle('section-collapsed', collapsed);
+        }
+      });
+    } catch {}
+  }
+
+  SC.initSidebarDragSort = initSidebarDragSort;
 })();

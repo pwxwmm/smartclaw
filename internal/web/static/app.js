@@ -11,6 +11,9 @@
     SC.initDragDrop();
     SC.initCmdPalette();
     SC.initFileMention();
+    SC.initFileSearch();
+    SC.initSidebarDragSort();
+    SC.initNotifications();
     SC.initThemeEditor();
     SC.showWelcome();
 
