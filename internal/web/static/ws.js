@@ -127,10 +127,22 @@
         break;
       case 'file_tree':
         SC.state.flatFiles = SC.flattenFileTree(msg.tree || [], '');
+        SC.state.fileTreeData = msg.tree || [];
         SC.renderFileTree(msg.tree || []);
+        SC.requestGitStatus();
         break;
       case 'file_content':
         SC.openFileDrawer(msg.content, SC.state.ui.currentFile);
+        break;
+      case 'git_status':
+        if (msg.data && typeof msg.data === 'object') {
+          SC.state.gitStatus = msg.data;
+        } else {
+          SC.state.gitStatus = {};
+        }
+        if (SC.state.fileTreeData && SC.state.fileTreeData.length > 0) {
+          SC.renderFileTree(SC.state.fileTreeData);
+        }
         break;
       case 'session_list':
         SC.renderSessions(msg.sessions || []);
@@ -233,6 +245,9 @@
         } else {
           SC.toast('Skill edit failed', 'error');
         }
+        break;
+      case 'chat_edit':
+        SC.toast(msg.message || 'Message edited on server', 'success');
         break;
       case 'session_fragments':
         SC.state.sessionFragments = msg.data || [];

@@ -101,4 +101,45 @@
   SC.showEmptyState = function(container, icon, title, desc) {
     container.innerHTML = '<div class="empty-state">' + (icon || '') + '<span class="empty-title">' + SC.escapeHtml(title) + '</span>' + (desc ? '<span class="empty-desc">' + SC.escapeHtml(desc) + '</span>' : '') + '</div>';
   };
+
+  SC.showContextMenu = function(x, y, items) {
+    var menu = document.getElementById('msg-context-menu');
+    if (!menu) return;
+
+    menu.innerHTML = '';
+    items.forEach(function(item) {
+      var menuItem = document.createElement('div');
+      menuItem.className = 'ctx-menu-item';
+      menuItem.textContent = item.label;
+      menuItem.addEventListener('click', function() {
+        hideContextMenu();
+        if (item.action) item.action();
+      });
+      menu.appendChild(menuItem);
+    });
+
+    menu.classList.remove('hidden');
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var mw = menu.offsetWidth || 180;
+    var mh = menu.offsetHeight || 200;
+    var left = (x + mw > vw) ? x - mw : x;
+    var top = (y + mh > vh) ? y - mh : y;
+    menu.style.left = Math.max(0, left) + 'px';
+    menu.style.top = Math.max(0, top) + 'px';
+  };
+
+  function hideContextMenu() {
+    var menu = document.getElementById('msg-context-menu');
+    if (menu) menu.classList.add('hidden');
+  }
+
+  document.addEventListener('click', function(e) {
+    var menu = document.getElementById('msg-context-menu');
+    if (menu && !menu.contains(e.target)) hideContextMenu();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideContextMenu();
+  });
 })();

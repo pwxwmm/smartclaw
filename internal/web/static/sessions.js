@@ -128,19 +128,46 @@
     container.innerHTML = '';
     SC.state.messages = [];
     const messages = msg.messages || [];
-    messages.forEach(m => {
+    messages.forEach((m, i) => {
       const el = document.createElement('div');
       el.className = `message ${m.role}`;
+      el.dataset.msgIndex = i;
+      el.dataset.msgId = 'msg-' + i;
       const roleLabel = m.role === 'user' ? 'You' : 'SmartClaw';
       const ts = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      el.innerHTML = `<div class="msg-role">${roleLabel}</div><div class="msg-bubble">${m.role === 'assistant' ? SC.renderMarkdown(m.content) : SC.escapeHtml(m.content)}</div>${ts ? `<div class="msg-ts">${ts}</div>` : ''}`;
+
+      let actionsHtml = '';
+      if (m.role === 'user') {
+        actionsHtml = '<div class="msg-actions">' +
+          '<button class="msg-action-btn msg-edit-btn" title="Edit">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+          '</button>' +
+          '<button class="msg-action-btn msg-retry-btn" title="Retry">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>' +
+          '</button>' +
+        '</div>';
+      }
+
+      el.innerHTML = `<div class="msg-role">${roleLabel}</div>${actionsHtml}<div class="msg-bubble">${m.role === 'assistant' ? SC.renderMarkdown(m.content) : SC.escapeHtml(m.content)}</div>${ts ? `<div class="msg-ts">${ts}</div>` : ''}`;
       container.appendChild(el);
+
+      if (m.role === 'user') {
+        SC.bindMsgActions ? (function(el, idx) {
+          const editBtn = el.querySelector('.msg-edit-btn');
+          const retryBtn = el.querySelector('.msg-retry-btn');
+          if (editBtn) editBtn.addEventListener('click', function(e) { e.stopPropagation(); SC.startEditMessage(el, idx); });
+          if (retryBtn) retryBtn.addEventListener('click', function(e) { e.stopPropagation(); SC.retryMessage(el, idx); });
+        })(el, i) : null;
+      }
+
       if (m.role === 'assistant') {
         const bubble = el.querySelector('.msg-bubble');
         SC.bindCodeCopy(bubble);
         SC.postRenderMarkdown(bubble);
       }
-      SC.state.messages.push({ role: m.role, content: m.content, ts: Date.now() });
+
+      if (SC.bindMessageContextMenu) SC.bindMessageContextMenu(el);
+      SC.state.messages.push({ role: m.role, content: m.content, ts: Date.now(), msgId: 'msg-' + i });
     });
     SC.scrollChat();
     SC.wsSend('session_list', {});
