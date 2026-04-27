@@ -4,12 +4,29 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/observability"
 )
+
+func newTestAuthManager(apiKey string) *AuthManager {
+	am := &AuthManager{
+		secretKey: make([]byte, 32),
+		sessions:  make(map[string]*Session),
+		apiKey:    apiKey,
+	}
+	copy(am.secretKey, []byte("test-secret-key-32-bytes-long!!"))
+	return am
+}
+
+func newTestAuthManagerWithLegacy(apiKey, legacyToken string) *AuthManager {
+	am := newTestAuthManager(apiKey)
+	am.legacyToken = legacyToken
+	return am
+}
 
 func TestWriteJSON(t *testing.T) {
 	tests := []struct {
@@ -78,8 +95,9 @@ func TestCacheHitRate(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_NoToken(t *testing.T) {
-	s := &WebServer{authToken: ""}
+func TestAuthMiddleware_NoAuthRequired(t *testing.T) {
+	am := newTestAuthManager("")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -89,43 +107,68 @@ func TestAuthMiddleware_NoToken(t *testing.T) {
 	handler(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("no token configured: status = %d, want %d", w.Code, http.StatusOK)
+		t.Errorf("no auth required: status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
-func TestAuthMiddleware_ValidBearerToken(t *testing.T) {
-	s := &WebServer{authToken: "secret123"}
+func TestAuthMiddleware_NoAuthFlag(t *testing.T) {
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am, noAuth: true}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
 	req := httptest.NewRequest("GET", "/api/test", nil)
-	req.Header.Set("Authorization", "Bearer secret123")
 	w := httptest.NewRecorder()
 	handler(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("valid bearer token: status = %d, want %d", w.Code, http.StatusOK)
+		t.Errorf("noAuth flag: status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
-func TestAuthMiddleware_ValidQueryToken(t *testing.T) {
-	s := &WebServer{authToken: "secret123"}
+func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest("GET", "/api/test?token=secret123", nil)
+	token, err := am.GenerateToken("testuser")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	handler(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("valid query token: status = %d, want %d", w.Code, http.StatusOK)
+		t.Errorf("valid session token: status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestAuthMiddleware_LegacyToken(t *testing.T) {
+	am := newTestAuthManagerWithLegacy("apikey123", "legacy-token-xyz")
+	s := &WebServer{authManager: am}
+	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	req.Header.Set("Authorization", "Bearer legacy-token-xyz")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("valid legacy token: status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
-	s := &WebServer{authToken: "secret123"}
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -141,7 +184,8 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_MissingToken(t *testing.T) {
-	s := &WebServer{authToken: "secret123"}
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -156,7 +200,8 @@ func TestAuthMiddleware_MissingToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_WebSocketUpgrade(t *testing.T) {
-	s := &WebServer{authToken: "secret123"}
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -171,20 +216,46 @@ func TestAuthMiddleware_WebSocketUpgrade(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_QueryTokenPreferred(t *testing.T) {
-	s := &WebServer{authToken: "secret123"}
-	called := false
+func TestAuthMiddleware_CookieToken(t *testing.T) {
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		called = true
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest("GET", "/api/test?token=secret123", nil)
+	token, err := am.GenerateToken("testuser")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	req.AddCookie(&http.Cookie{Name: "smartclaw-token", Value: token})
 	w := httptest.NewRecorder()
 	handler(w, req)
 
-	if !called {
-		t.Error("handler should have been called")
+	if w.Code != http.StatusOK {
+		t.Errorf("valid cookie token: status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestAuthMiddleware_QueryToken(t *testing.T) {
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
+	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	token, err := am.GenerateToken("testuser")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/test?token="+token, nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("valid query token: status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
@@ -415,7 +486,8 @@ func TestWriteJSON_ResponseBodyContent(t *testing.T) {
 }
 
 func TestAuthMiddleware_BearerPrefixStripped(t *testing.T) {
-	s := &WebServer{authToken: "mytoken"}
+	am := newTestAuthManagerWithLegacy("apikey", "mytoken")
+	s := &WebServer{authManager: am}
 	called := false
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -433,7 +505,8 @@ func TestAuthMiddleware_BearerPrefixStripped(t *testing.T) {
 }
 
 func TestAuthMiddleware_InvalidBearerFormat(t *testing.T) {
-	s := &WebServer{authToken: "mytoken"}
+	am := newTestAuthManager("secret123")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -448,8 +521,9 @@ func TestAuthMiddleware_InvalidBearerFormat(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_EmptyStringToken_AllowsAll(t *testing.T) {
-	s := &WebServer{authToken: ""}
+func TestAuthMiddleware_NoAPIKey_AllowsAll(t *testing.T) {
+	am := newTestAuthManager("")
+	s := &WebServer{authManager: am}
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -459,7 +533,7 @@ func TestAuthMiddleware_EmptyStringToken_AllowsAll(t *testing.T) {
 	handler(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("no auth token configured: status = %d, want %d", w.Code, http.StatusOK)
+		t.Errorf("no API key configured: status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
@@ -483,5 +557,341 @@ func TestEstimateCost_NoModel(t *testing.T) {
 	cost := estimateCost(snapshot)
 	if cost < 0 {
 		t.Errorf("cost should not be negative, got %f", cost)
+	}
+}
+
+func TestAuthManager_GenerateAndValidate(t *testing.T) {
+	am := newTestAuthManager("testkey")
+
+	token, err := am.GenerateToken("user1")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	session, err := am.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken failed: %v", err)
+	}
+
+	if session.UserID != "user1" {
+		t.Errorf("UserID = %q, want %q", session.UserID, "user1")
+	}
+
+	if time.Now().After(session.ExpiresAt) {
+		t.Error("session should not be expired")
+	}
+}
+
+func TestAuthManager_InvalidToken(t *testing.T) {
+	am := newTestAuthManager("testkey")
+
+	_, err := am.ValidateToken("invalid-token")
+	if err == nil {
+		t.Error("expected error for invalid token")
+	}
+}
+
+func TestAuthManager_Login_ValidKey(t *testing.T) {
+	am := newTestAuthManager("correct-key")
+
+	token, err := am.Login("correct-key")
+	if err != nil {
+		t.Fatalf("Login failed: %v", err)
+	}
+
+	session, err := am.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken failed: %v", err)
+	}
+
+	if session.UserID != "default" {
+		t.Errorf("UserID = %q, want %q", session.UserID, "default")
+	}
+}
+
+func TestAuthManager_Login_InvalidKey(t *testing.T) {
+	am := newTestAuthManager("correct-key")
+
+	_, err := am.Login("wrong-key")
+	if err == nil {
+		t.Error("expected error for wrong API key")
+	}
+}
+
+func TestAuthManager_Login_NoKeyRequired(t *testing.T) {
+	am := newTestAuthManager("")
+
+	token, err := am.Login("any-key")
+	if err != nil {
+		t.Fatalf("Login should succeed with no API key configured: %v", err)
+	}
+
+	if token == "" {
+		t.Error("token should not be empty")
+	}
+}
+
+func TestAuthManager_ValidateLegacyToken(t *testing.T) {
+	am := newTestAuthManagerWithLegacy("apikey", "legacy-token-abc")
+
+	if !am.ValidateLegacyToken("legacy-token-abc") {
+		t.Error("should validate correct legacy token")
+	}
+
+	if am.ValidateLegacyToken("wrong-legacy") {
+		t.Error("should not validate wrong legacy token")
+	}
+}
+
+func TestAuthManager_IsAuthRequired(t *testing.T) {
+	am1 := newTestAuthManager("")
+	if am1.IsAuthRequired() {
+		t.Error("no API key means auth not required")
+	}
+
+	am2 := newTestAuthManager("secret")
+	if !am2.IsAuthRequired() {
+		t.Error("with API key, auth should be required")
+	}
+
+	am3 := newTestAuthManagerWithLegacy("", "legacy")
+	if !am3.IsAuthRequired() {
+		t.Error("with legacy token, auth should be required")
+	}
+}
+
+func TestAuthManager_TokenExpiry(t *testing.T) {
+	am := newTestAuthManager("testkey")
+
+	token, err := am.GenerateToken("user1")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	am.mu.Lock()
+	session := am.sessions[token]
+	session.ExpiresAt = time.Now().Add(-1 * time.Hour)
+	am.mu.Unlock()
+
+	_, err = am.ValidateToken(token)
+	if err == nil {
+		t.Error("expected error for expired token")
+	}
+}
+
+func TestHandleAuthLogin(t *testing.T) {
+	am := newTestAuthManager("test-api-key")
+	s := &WebServer{authManager: am}
+
+	body := `{"api_key":"test-api-key"}`
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleAuthLogin(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if result["token"] == "" {
+		t.Error("token should not be empty")
+	}
+
+	cookies := w.Result().Cookies()
+	found := false
+	for _, c := range cookies {
+		if c.Name == "smartclaw-token" {
+			found = true
+			if !c.HttpOnly {
+				t.Error("cookie should be HttpOnly")
+			}
+			if c.SameSite != http.SameSiteStrictMode {
+				t.Error("cookie should be SameSiteStrict")
+			}
+		}
+	}
+	if !found {
+		t.Error("smartclaw-token cookie should be set")
+	}
+}
+
+func TestHandleAuthLogin_InvalidKey(t *testing.T) {
+	am := newTestAuthManager("correct-key")
+	s := &WebServer{authManager: am}
+
+	body := `{"api_key":"wrong-key"}`
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleAuthLogin(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestHandleAuthStatus_Authenticated(t *testing.T) {
+	am := newTestAuthManager("")
+	s := &WebServer{authManager: am}
+
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	w := httptest.NewRecorder()
+
+	s.handleAuthStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if !result["authenticated"] {
+		t.Error("should be authenticated when no API key required")
+	}
+}
+
+func TestHandleAuthStatus_NoAuthFlag(t *testing.T) {
+	am := newTestAuthManager("secret")
+	s := &WebServer{authManager: am, noAuth: true}
+
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	w := httptest.NewRecorder()
+
+	s.handleAuthStatus(w, req)
+
+	var result map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if !result["authenticated"] {
+		t.Error("should be authenticated with noAuth flag")
+	}
+}
+
+func TestHandleAuthStatus_Unauthenticated(t *testing.T) {
+	am := newTestAuthManager("secret")
+	s := &WebServer{authManager: am}
+
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	w := httptest.NewRecorder()
+
+	s.handleAuthStatus(w, req)
+
+	var result map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if result["authenticated"] {
+		t.Error("should not be authenticated without valid token")
+	}
+}
+
+func TestHandleAuthStatus_WithToken(t *testing.T) {
+	am := newTestAuthManager("secret")
+	s := &WebServer{authManager: am}
+
+	token, err := am.GenerateToken("testuser")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	req.AddCookie(&http.Cookie{Name: "smartclaw-token", Value: token})
+	w := httptest.NewRecorder()
+
+	s.handleAuthStatus(w, req)
+
+	var result map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if !result["authenticated"] {
+		t.Error("should be authenticated with valid session token")
+	}
+}
+
+func TestExtractToken_CookiePreferred(t *testing.T) {
+	am := newTestAuthManager("secret")
+	s := &WebServer{authManager: am}
+
+	token, _ := am.GenerateToken("user")
+
+	req := httptest.NewRequest("GET", "/api/test?token=query-token", nil)
+	req.Header.Set("Authorization", "Bearer header-token")
+	req.AddCookie(&http.Cookie{Name: "smartclaw-token", Value: token})
+
+	extracted := s.extractToken(req)
+	if extracted != token {
+		t.Errorf("cookie token should be preferred, got %q", extracted)
+	}
+}
+
+func TestExtractToken_HeaderFallback(t *testing.T) {
+	am := newTestAuthManager("secret")
+	s := &WebServer{authManager: am}
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	req.Header.Set("Authorization", "Bearer header-token")
+
+	extracted := s.extractToken(req)
+	if extracted != "header-token" {
+		t.Errorf("header token fallback failed, got %q", extracted)
+	}
+}
+
+func TestExtractToken_QueryFallback(t *testing.T) {
+	am := newTestAuthManager("secret")
+	s := &WebServer{authManager: am}
+
+	req := httptest.NewRequest("GET", "/api/test?token=query-token", nil)
+
+	extracted := s.extractToken(req)
+	if extracted != "query-token" {
+		t.Errorf("query token fallback failed, got %q", extracted)
+	}
+}
+
+func TestAuthManager_CleanupExpired(t *testing.T) {
+	am := newTestAuthManager("testkey")
+
+	token, _ := am.GenerateToken("user1")
+
+	am.mu.Lock()
+	am.sessions[token].ExpiresAt = time.Now().Add(-1 * time.Hour)
+	am.mu.Unlock()
+
+	am.mu.Lock()
+	cleaned := 0
+	for tok, session := range am.sessions {
+		if time.Now().After(session.ExpiresAt) {
+			delete(am.sessions, tok)
+			cleaned++
+		}
+	}
+	am.mu.Unlock()
+
+	if cleaned != 1 {
+		t.Errorf("expected 1 expired session cleaned, got %d", cleaned)
+	}
+
+	am.mu.Lock()
+	_, exists := am.sessions[token]
+	am.mu.Unlock()
+
+	if exists {
+		t.Error("expired session should be removed from sessions map")
 	}
 }
