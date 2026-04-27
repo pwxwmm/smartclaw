@@ -1,0 +1,11 @@
+{
+  "name": "smartclaw-web",
+  "private": true,
+  "scripts": {
+    "build": "esbuild app.js --bundle --outfile=dist/bundle.js --minify",
+    "dev": "esbuild app.js --bundle --outfile=dist/bundle.js --watch --sourcemap"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}

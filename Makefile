@@ -4,7 +4,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS = -ldflags "-s -w -X github.com/instructkr/smartclaw/internal/cli.Version=$(VERSION) -X github.com/instructkr/smartclaw/internal/cli.Commit=$(COMMIT) -X github.com/instructkr/smartclaw/internal/cli.Date=$(DATE)"
 
-.PHONY: build install clean test cross-build dist lint fmt vet dmg exe web
+.PHONY: build install clean test cross-build dist lint fmt vet dmg exe web web-build
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/smartclaw
@@ -37,6 +37,9 @@ exe:
 
 web:
 	go run ./cmd/smartclaw web --port 8080
+
+web-build:
+	cd internal/web/static && npm install && npm run build
 
 lint:
 	go vet ./...

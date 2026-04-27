@@ -634,6 +634,43 @@ func (sm *SkillManager) GetContextAwareSkills(ctx context.Context, sessionID str
 	return skills
 }
 
+func (sm *SkillManager) CreateSkill(schema *SkillSchema, body string) error {
+	if errs := ValidateSchema(schema); len(errs) > 0 {
+		var msg string
+		for _, e := range errs {
+			if msg != "" {
+				msg += "; "
+			}
+			msg += e.Error()
+		}
+		return fmt.Errorf("validation failed: %s", msg)
+	}
+
+	rendered, err := RenderSKILLMarkdown(schema, body)
+	if err != nil {
+		return fmt.Errorf("failed to render skill markdown: %w", err)
+	}
+
+	skillDir := filepath.Join(sm.skillsDir, schema.Name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		return fmt.Errorf("failed to create skill directory: %w", err)
+	}
+
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte(rendered), 0644); err != nil {
+		return fmt.Errorf("failed to write skill file: %w", err)
+	}
+
+	skill := sm.parseSkillContent(schema.Name, rendered, "local")
+	skill.Path = skillPath
+
+	sm.mu.Lock()
+	sm.skills[schema.Name] = skill
+	sm.mu.Unlock()
+
+	return nil
+}
+
 func (sm *SkillManager) GetSkillSummaries() []SkillSummary {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
