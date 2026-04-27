@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -33,7 +34,7 @@ func LoadConfig() (*Config, error) {
 
 	cfg, err := config.LoadJSON[Config](path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return &Config{}, nil
 		}
 		return nil, err
