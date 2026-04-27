@@ -219,7 +219,17 @@
 
   function renderMarkdown(text) {
     try {
-      return marked.parse(text);
+      var html = marked.parse(text);
+      if (typeof DOMPurify !== 'undefined') {
+        html = DOMPurify.sanitize(html, {
+          ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','a','ul','ol','li','blockquote','pre','code','em','strong','del','table','thead','tbody','tr','th','td','img','hr','br','div','span','details','summary','sup','sub','dl','dt','dd','s','mark','abbr','cite','kbd','var','samp'],
+          ALLOWED_ATTR: ['href','src','alt','title','class','id','target','rel','data-code-id','data-msg-id'],
+          FORBID_ATTR: ['onerror','onload','onclick','onmouseover'],
+          FORBID_TAGS: ['script','iframe','object','embed','form','input','textarea','button','style'],
+          ADD_ATTR: ['target']
+        });
+      }
+      return html;
     } catch (e) {
       return SC.escapeHtml(text).replace(/\n/g, '<br>');
     }
