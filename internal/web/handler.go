@@ -4,32 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
-	"github.com/instructkr/smartclaw/internal/commands"
 	"github.com/instructkr/smartclaw/internal/costguard"
+	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/memory"
-	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/permissions"
 	"github.com/instructkr/smartclaw/internal/pool"
 	"github.com/instructkr/smartclaw/internal/provider"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/session"
-	"github.com/instructkr/smartclaw/internal/skills"
 	"github.com/instructkr/smartclaw/internal/store"
-	"github.com/instructkr/smartclaw/internal/tools"
-	"github.com/instructkr/smartclaw/internal/utils"
 	"github.com/instructkr/smartclaw/internal/wiki"
 )
 
-type Handler struct {
+type ApprovalMeta struct {
+	ToolName    string         `json:"toolName"`
+	Input       map[string]any `json:"input"`
+	RequestedAt time.Time      `json:"requestedAt"`
+}
+
+type ApprovalRecord struct {
+	BlockID   string    `json:"blockId"`
+	ToolName  string    `json:"toolName"`
+	Decision  string    `json:"decision"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+	type Handler struct {
 	hub           *Hub
 	workDir       string
 	apiClient     *api.Client
@@ -38,21 +45,24 @@ type Handler struct {
 	dataStore     *store.Store
 	memMgr        *memory.MemoryManager
 	wikiClient    *wiki.WikiClient
+	mcpRegistry   *mcp.MCPServerRegistry
 	showThinking  bool
 	clientSess    map[string]*session.Session
 	clientSessMu  sync.RWMutex
 	prompt        *runtime.PromptBuilder
-	approvalGate  *permissions.ApprovalGate
+	unifiedPerm   *permissions.UnifiedPermissionEngine
 	costGuard     *costguard.CostGuard
 	clientModels  map[string]string
-	clientCache   map[string]*api.Client // model -> client
+	clientCache   map[string]*api.Client
 	clientCacheMu sync.RWMutex
 
-	mu               sync.Mutex
-	pendingApprovals map[string]chan bool
-	autoApproved     map[string]map[string]bool
-	cancelFuncs      map[string]context.CancelFunc
-	wg               sync.WaitGroup
+	mu                 sync.Mutex
+	pendingApprovals   map[string]chan bool
+	pendingApprovalMeta map[string]*ApprovalMeta
+	approvalHistory    []ApprovalRecord
+	autoApproved       map[string]map[string]bool
+	cancelFuncs        map[string]context.CancelFunc
+	wg                 sync.WaitGroup
 }
 
 func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
@@ -105,25 +115,27 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 	}
 
 	h := &Handler{
-		hub:              hub,
-		workDir:          workDir,
-		apiClient:        apiClient,
-		router:           router,
-		sessMgr:          mgr,
-		dataStore:        dataStore,
-		showThinking:     showThinking,
-		clientSess:       make(map[string]*session.Session),
-		prompt:           runtime.NewPromptBuilder(),
-		approvalGate:     permissions.NewApprovalGate(),
-		costGuard:        costguard.NewCostGuard(costguard.DefaultBudgetConfig()),
-		clientModels:     make(map[string]string),
-		clientCache:      make(map[string]*api.Client),
-		pendingApprovals: make(map[string]chan bool),
-		autoApproved:     make(map[string]map[string]bool),
-		cancelFuncs:      make(map[string]context.CancelFunc),
+		hub:                hub,
+		workDir:            workDir,
+		apiClient:          apiClient,
+		router:             router,
+		sessMgr:            mgr,
+		dataStore:          dataStore,
+		showThinking:       showThinking,
+		clientSess:         make(map[string]*session.Session),
+		prompt:             runtime.NewPromptBuilder(),
+		unifiedPerm:         permissions.NewUnifiedPermissionEngine(permissions.NewApprovalGate(), nil),
+		costGuard:          costguard.NewCostGuard(costguard.DefaultBudgetConfig()),
+		clientModels:       make(map[string]string),
+		clientCache:        make(map[string]*api.Client),
+		pendingApprovals:   make(map[string]chan bool),
+		pendingApprovalMeta: make(map[string]*ApprovalMeta),
+		approvalHistory:    make([]ApprovalRecord, 0),
+		autoApproved:       make(map[string]map[string]bool),
+		cancelFuncs:        make(map[string]context.CancelFunc),
 	}
 
-	_ = h.approvalGate.LoadConfigFromDefaultPath()
+	_ = h.unifiedPerm.LoadApprovalConfigFromDefaultPath()
 
 	h.wikiClient = newWikiClientFromConfig()
 
@@ -287,6 +299,11 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		return
 	}
 
+	if err := h.validateWSMessage(msg); err != nil {
+		h.sendToClient(client, WSResponse{Type: "error", Content: err.Error()})
+		return
+	}
+
 	switch msg.Type {
 	case "chat":
 		h.handleChat(client, msg)
@@ -314,6 +331,12 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleAbort(client)
 	case "tool_approval":
 		h.handleToolApproval(client, msg)
+	case "approval_list":
+		h.handleApprovalListWS(client)
+	case "approval_history":
+		h.handleApprovalHistoryWS(client)
+	case "approval_bulk":
+		h.handleApprovalBulkWS(client, msg)
 	case "skill_list":
 		h.handleSkillListWS(client)
 	case "skill_detail":
@@ -322,6 +345,8 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleSkillToggleWS(client, msg)
 	case "skill_search":
 		h.handleSkillSearchWS(client, msg)
+	case "skill_create":
+		h.handleSkillCreateWS(client, msg)
 	case "memory_layers":
 		h.handleMemoryLayersWS(client)
 	case "memory_search":
@@ -330,15 +355,97 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleMemoryRecallWS(client, msg)
 	case "memory_store":
 		h.handleMemoryStoreWS(client, msg)
+	case "memory_update":
+		h.handleMemoryUpdateWS(client, msg)
 	case "memory_stats":
 		h.handleMemoryStatsWS(client)
+	case "memory_observations":
+		h.handleMemoryObservationsWS(client)
+	case "memory_observation_delete":
+		h.handleMemoryObservationDeleteWS(client, msg)
+	case "skill_edit":
+		h.handleSkillEditWS(client, msg)
+	case "session_fragments":
+		h.handleSessionFragmentsWS(client, msg)
 	case "wiki_search":
 		h.handleWikiSearchWS(client, msg)
 	case "wiki_pages":
 		h.handleWikiPagesWS(client)
+	case "wiki_page_content":
+		h.handleWikiPageContentWS(client, msg)
+	case "mcp_list":
+		h.handleMCPListWS(client)
+	case "mcp_add":
+		h.handleMCPAddWS(client, msg)
+	case "mcp_remove":
+		h.handleMCPRemoveWS(client, msg)
+	case "mcp_start":
+		h.handleMCPStartWS(client, msg)
+	case "mcp_stop":
+		h.handleMCPStopWS(client, msg)
+	case "agent_list":
+		h.handleAgentListWS(client)
+	case "agent_stop":
+		h.handleAgentStopWS(client, msg)
+	case "agent_output":
+		h.handleAgentOutputWS(client, msg)
 	default:
 		h.sendError(client, fmt.Sprintf("Unknown message type: %s", msg.Type))
 	}
+}
+
+var validWSTypes = map[string]bool{
+	"chat": true, "cmd": true, "model": true,
+	"file_open": true, "file_save": true, "file_tree": true,
+	"session_list": true, "session_new": true, "session_load": true,
+	"session_rename": true, "session_delete": true,
+	"abort": true, "tool_approval": true,
+	"approval_list": true, "approval_history": true, "approval_bulk": true,
+	"skill_list": true, "skill_detail": true, "skill_toggle": true,
+	"skill_search": true, "skill_create": true, "skill_edit": true,
+	"memory_layers": true, "memory_search": true, "memory_recall": true,
+	"memory_store": true, "memory_update": true, "memory_stats": true,
+	"memory_observations": true, "memory_observation_delete": true,
+	"session_fragments": true,
+	"wiki_search": true, "wiki_pages": true, "wiki_page_content": true,
+	"mcp_list": true, "mcp_add": true, "mcp_remove": true,
+	"mcp_start": true, "mcp_stop": true,
+	"agent_list": true, "agent_stop": true, "agent_output": true,
+}
+
+var typesRequiringData = map[string]bool{
+	"chat": true, "cmd": true, "model": true,
+	"file_open": true, "file_save": true, "file_tree": true,
+	"session_new": true, "session_load": true,
+	"session_rename": true, "session_delete": true,
+	"tool_approval": true, "approval_bulk": true,
+	"skill_detail": true, "skill_toggle": true,
+	"skill_search": true, "skill_create": true, "skill_edit": true,
+	"memory_search": true, "memory_recall": true,
+	"memory_store": true, "memory_update": true,
+	"memory_observation_delete": true, "session_fragments": true,
+	"wiki_search": true, "wiki_page_content": true,
+	"mcp_add": true, "mcp_remove": true,
+	"mcp_start": true, "mcp_stop": true,
+	"agent_stop": true, "agent_output": true,
+}
+
+func (h *Handler) validateWSMessage(msg WSMessage) error {
+	if msg.Type == "" {
+		return fmt.Errorf("message type is required")
+	}
+
+	if !validWSTypes[msg.Type] {
+		return fmt.Errorf("unknown message type: %s", msg.Type)
+	}
+
+	if typesRequiringData[msg.Type] {
+		if len(msg.Data) == 0 && msg.Content == "" && msg.Path == "" && msg.Name == "" && msg.ID == "" && msg.Model == "" && msg.Title == "" && len(msg.Args) == 0 {
+			return fmt.Errorf("message type %s requires data payload", msg.Type)
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) clientForRequest(clientID string) *api.Client {
@@ -370,1016 +477,6 @@ func (h *Handler) clientForRequest(clientID string) *api.Client {
 	return c
 }
 
-func (h *Handler) handleChat(client *Client, msg WSMessage) {
-	if h.apiClient == nil {
-		h.sendError(client, "API client not configured. Check ~/.smartclaw/config.json")
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	h.mu.Lock()
-	h.cancelFuncs[client.ID] = cancel
-	h.mu.Unlock()
-	defer func() {
-		cancel()
-		h.mu.Lock()
-		delete(h.cancelFuncs, client.ID)
-		h.mu.Unlock()
-	}()
-
-	if msg.Model != "" {
-		h.mu.Lock()
-		h.clientModels[client.ID] = msg.Model
-		h.mu.Unlock()
-	}
-
-	reqClient := h.clientForRequest(client.ID)
-
-	h.clientSessMu.RLock()
-	sess := h.clientSess[client.ID]
-	h.clientSessMu.RUnlock()
-	if sess == nil {
-		if h.sessMgr != nil {
-			sess = h.sessMgr.NewSession(reqClient.Model, client.UserID)
-		} else {
-			sess = &session.Session{ID: "temp", UserID: client.UserID, Model: reqClient.Model, Messages: []session.Message{}}
-		}
-		h.clientSessMu.Lock()
-		h.clientSess[client.ID] = sess
-		h.clientSessMu.Unlock()
-	}
-
-	sess.AddMessage("user", msg.Content)
-	h.syncMessageToStore(sess, "user", msg.Content, 0)
-	h.autoSaveSession(sess)
-
-	h.sendToClient(client, WSResponse{Type: "session_active", ID: sess.ID, Title: sess.Title})
-
-	messages := make([]api.Message, 0, len(sess.Messages))
-	for _, m := range sess.Messages {
-		messages = append(messages, api.Message{Role: m.Role, Content: m.Content})
-	}
-
-	var systemPrompt string
-	if h.memMgr != nil {
-		userMem := h.memMgr.ForUser(client.UserID)
-		systemPrompt = userMem.BuildPrompt()
-	} else {
-		systemPrompt = h.prompt.Build()
-	}
-
-	fullContentBuilder := pool.GetBuffer()
-	defer pool.PutBuffer(fullContentBuilder)
-	var openaiOutputChars int
-
-	if reqClient.IsOpenAI {
-		req := &api.MessageRequest{
-			Model:     reqClient.Model,
-			MaxTokens: 8192,
-			Messages:  messages,
-			System:    systemPrompt,
-		}
-
-		err := reqClient.StreamMessageOpenAI(ctx, req, func(event string, data []byte) error {
-			switch event {
-			case "content_block_delta":
-				var payload struct {
-					Delta struct {
-						Type     string `json:"type"`
-						Text     string `json:"text,omitempty"`
-						Thinking string `json:"thinking,omitempty"`
-					} `json:"delta"`
-				}
-				if json.Unmarshal(data, &payload) == nil {
-					if payload.Delta.Type == "text_delta" && payload.Delta.Text != "" {
-						fullContentBuilder.WriteString(payload.Delta.Text)
-						openaiOutputChars += len(payload.Delta.Text)
-						h.sendToClient(client, WSResponse{Type: "token", Content: payload.Delta.Text})
-					} else if payload.Delta.Type == "thinking_delta" && payload.Delta.Thinking != "" {
-						h.sendToClient(client, WSResponse{Type: "thinking", Content: payload.Delta.Thinking})
-					}
-				}
-			case "message_stop":
-				fullContent := fullContentBuilder.String()
-				sess.AddMessage("assistant", fullContent)
-				h.syncMessageToStore(sess, "assistant", fullContent, 0)
-				h.autoSaveSession(sess)
-				tokens := openaiOutputChars / 4
-				model := reqClient.Model
-				inputTokens := tokens / 3
-				outputTokens := tokens * 2 / 3
-				cost, breakdown := h.costGuard.CalculateCost(model, inputTokens, outputTokens)
-				h.sendToClient(client, WSResponse{Type: "done", Tokens: tokens, Cost: cost, CostBreakdown: &breakdown, Model: model})
-			}
-			return nil
-		})
-		if err != nil {
-			h.sendError(client, fmt.Sprintf("API error: %v", err))
-		}
-		return
-	}
-
-	// Anthropic SSE streaming with agentic tool loop
-	const maxIterations = 10
-	allTextBuilder := pool.GetBuffer()
-	defer pool.PutBuffer(allTextBuilder)
-	var totalInputTokens, totalOutputTokens int
-
-	for iteration := 0; iteration < maxIterations; iteration++ {
-		req := &api.MessageRequest{
-			Model:     reqClient.Model,
-			MaxTokens: 8192,
-			Messages:  messages,
-			System:    systemPrompt,
-			Stream:    true,
-			Tools:     api.BuiltinTools,
-		}
-
-		parser := api.NewStreamMessageParser()
-		iterTextBuilder := pool.GetBuffer()
-
-		err := reqClient.StreamMessageSSE(ctx, req, func(event string, data []byte) error {
-			result, err := parser.HandleEvent(event, data)
-			if err != nil {
-				return err
-			}
-
-			if result.Error != nil {
-				return result.Error
-			}
-
-			if result.TextDelta != "" {
-				iterTextBuilder.WriteString(result.TextDelta)
-				h.sendToClient(client, WSResponse{Type: "token", Content: result.TextDelta})
-			}
-
-			if result.ThinkingDelta != "" && h.showThinking {
-				h.sendToClient(client, WSResponse{Type: "thinking", Content: result.ThinkingDelta})
-			}
-
-			return nil
-		})
-
-		if err != nil {
-			pool.PutBuffer(iterTextBuilder)
-			h.sendError(client, fmt.Sprintf("API error: %v", err))
-			return
-		}
-
-		resp := parser.GetMessage()
-		totalInputTokens += resp.Usage.InputTokens
-		totalOutputTokens += resp.Usage.OutputTokens
-		allTextBuilder.WriteString(iterTextBuilder.String())
-		pool.PutBuffer(iterTextBuilder)
-
-		blocks := parser.GetContentBlocks()
-		var toolUseBlocks []api.ContentBlock
-		for _, block := range blocks {
-			if block.Type == "tool_use" || block.Type == "server_tool_use" {
-				toolUseBlocks = append(toolUseBlocks, block)
-			}
-		}
-
-		if len(toolUseBlocks) == 0 {
-			break
-		}
-
-		toolResults := make([]api.ContentBlock, 0, len(toolUseBlocks))
-		for _, block := range toolUseBlocks {
-			h.sendToClient(client, WSResponse{
-				Type:  "tool_start",
-				ID:    block.ID,
-				Tool:  block.Name,
-				Input: block.Input,
-			})
-
-			if h.needsApproval(client.ID, block.Name, block.Input) {
-				approved, approvalErr := h.requestApproval(client, block.ID, block.Name, block.Input)
-				if approvalErr != nil || !approved {
-					reason := "Tool execution denied by user"
-					if approvalErr != nil {
-						reason = approvalErr.Error()
-					}
-					utils.Go(func() { observability.AuditDenial(block.Name, block.ID, client.ID, reason) })
-					toolResults = append(toolResults, api.ContentBlock{
-						Type:      "tool_result",
-						ToolUseID: block.ID,
-						Content:   reason,
-						IsError:   true,
-					})
-					h.sendToClient(client, WSResponse{
-						Type:   "tool_output",
-						ID:     block.ID,
-						Output: reason,
-					})
-					h.sendToClient(client, WSResponse{
-						Type:     "tool_end",
-						ID:       block.ID,
-						Duration: 0,
-					})
-					continue
-				}
-			}
-
-			startTime := time.Now()
-			output, toolErr := h.executeTool(ctx, block.Name, block.Input)
-			duration := time.Since(startTime).Milliseconds()
-
-			if toolErr != nil {
-				toolResults = append(toolResults, api.ContentBlock{
-					Type:      "tool_result",
-					ToolUseID: block.ID,
-					Content:   toolErr.Error(),
-					IsError:   true,
-				})
-				h.sendToClient(client, WSResponse{
-					Type:   "tool_output",
-					ID:     block.ID,
-					Output: toolErr.Error(),
-				})
-			} else {
-				toolResults = append(toolResults, api.ContentBlock{
-					Type:      "tool_result",
-					ToolUseID: block.ID,
-					Content:   output,
-				})
-				h.sendToClient(client, WSResponse{
-					Type:   "tool_output",
-					ID:     block.ID,
-					Output: output,
-				})
-			}
-
-			h.sendToClient(client, WSResponse{
-				Type:     "tool_end",
-				ID:       block.ID,
-				Duration: duration,
-			})
-		}
-
-		assistantContent := make([]api.ContentBlock, len(blocks))
-		copy(assistantContent, blocks)
-		messages = append(messages, api.MessageParam{
-			Role:    "assistant",
-			Content: assistantContent,
-		})
-
-		messages = append(messages, api.MessageParam{
-			Role:    "user",
-			Content: toolResults,
-		})
-	}
-
-	allTextContent := allTextBuilder.String()
-	sess.AddMessage("assistant", allTextContent)
-	h.syncMessageToStore(sess, "assistant", allTextContent, 0)
-	h.autoSaveSession(sess)
-
-	totalTokens := totalInputTokens + totalOutputTokens
-	model := reqClient.Model
-	cost, breakdown := h.costGuard.CalculateCost(model, totalInputTokens, totalOutputTokens)
-	h.sendToClient(client, WSResponse{
-		Type:          "done",
-		Tokens:        totalTokens,
-		Cost:          cost,
-		CostBreakdown: &breakdown,
-		Model:         model,
-	})
-}
-
-func (h *Handler) autoSaveSession(sess *session.Session) {
-	if h.dataStore != nil {
-		storeSess := &store.Session{
-			ID:        sess.ID,
-			UserID:    sess.UserID,
-			Source:    "web",
-			Model:     sess.Model,
-			Title:     sess.Title,
-			Tokens:    sess.Tokens,
-			Cost:      sess.Cost,
-			CreatedAt: sess.CreatedAt,
-			UpdatedAt: sess.UpdatedAt,
-		}
-		h.wg.Add(1)
-		utils.Go(func() {
-			defer h.wg.Done()
-			if err := h.dataStore.UpsertSession(context.Background(), storeSess); err != nil {
-				slog.Warn("failed to upsert session", "error", err, "session_id", storeSess.ID)
-			}
-		})
-	}
-	if h.sessMgr != nil {
-		h.wg.Add(1)
-		utils.Go(func() {
-			defer h.wg.Done()
-			h.sessMgr.Save(sess)
-		})
-	}
-}
-
-func (h *Handler) syncMessageToStore(sess *session.Session, role, content string, tokens int) {
-	if h.dataStore == nil {
-		return
-	}
-	h.wg.Add(1)
-	utils.Go(func() {
-		defer h.wg.Done()
-		if err := h.dataStore.InsertSessionMessage(sess.ID, role, content, tokens); err != nil {
-			slog.Warn("failed to insert session message", "error", err, "session_id", sess.ID)
-		}
-	})
-}
-
-func (h *Handler) Wait() {
-	h.wg.Wait()
-}
-
-func (h *Handler) executeTool(ctx context.Context, name string, input map[string]any) (string, error) {
-	prepared := make(map[string]any, len(input))
-	for k, v := range input {
-		prepared[k] = v
-	}
-
-	// Resolve relative path inputs against workDir so registry tools (which use filepath.Abs) resolve correctly.
-	for _, key := range []string{"path", "file_path", "filepath", "filename", "directory", "dir"} {
-		if v, ok := prepared[key].(string); ok && v != "" && !filepath.IsAbs(v) {
-			prepared[key] = filepath.Join(h.workDir, v)
-		}
-	}
-
-	// BashTool reads "workdir" from input; inject if not already set.
-	if name == "bash" {
-		if _, ok := prepared["workdir"]; !ok {
-			prepared["workdir"] = h.workDir
-		}
-	}
-
-	result, err := tools.Execute(ctx, name, prepared)
-	if err != nil {
-		return "", err
-	}
-
-	return resultToString(result), nil
-}
-
-func resultToString(result any) string {
-	if result == nil {
-		return ""
-	}
-	switch v := result.(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	default:
-		pe := pool.GetJSONEncoder(nil)
-		if pe.Encode(result) != nil {
-			pool.PutJSONEncoder(pe)
-			return fmt.Sprint(v)
-		}
-		s := string(pe.Bytes())
-		pool.PutJSONEncoder(pe)
-		return s
-	}
-}
-
-func (h *Handler) needsApproval(clientID, toolName string, input map[string]any) bool {
-	if h.isAutoApproved(clientID, toolName) {
-		return false
-	}
-	needs, _ := h.approvalGate.NeedsApproval(toolName, input)
-	return needs
-}
-
-func (h *Handler) isAutoApproved(clientID, toolName string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if tools, ok := h.autoApproved[clientID]; ok {
-		return tools[toolName]
-	}
-	return false
-}
-
-func (h *Handler) requestApproval(client *Client, blockID, toolName string, input map[string]any) (bool, error) {
-	h.sendToClient(client, WSResponse{
-		Type:  "tool_approval_request",
-		ID:    blockID,
-		Tool:  toolName,
-		Input: input,
-	})
-
-	ch := make(chan bool, 1)
-	h.mu.Lock()
-	h.pendingApprovals[blockID] = ch
-	h.mu.Unlock()
-
-	select {
-	case approved := <-ch:
-		return approved, nil
-	case <-time.After(5 * time.Minute):
-		h.mu.Lock()
-		delete(h.pendingApprovals, blockID)
-		h.mu.Unlock()
-		return false, fmt.Errorf("tool approval timed out after 5 minutes")
-	}
-}
-
-func (h *Handler) handleCommand(client *Client, msg WSMessage) {
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	cmdErr := commands.Execute(msg.Name, msg.Args)
-
-	w.Close()
-	os.Stdout = oldStdout
-
-	output, _ := io.ReadAll(r)
-	r.Close()
-	outputStr := strings.TrimSpace(string(output))
-
-	if outputStr != "" {
-		h.sendToClient(client, WSResponse{Type: "cmd_result", Content: outputStr})
-	}
-
-	if cmdErr != nil && outputStr == "" {
-		h.sendToClient(client, WSResponse{Type: "error", Message: cmdErr.Error()})
-	}
-
-	h.sendToClient(client, WSResponse{Type: "done"})
-}
-
-func (h *Handler) handleToolApproval(client *Client, msg WSMessage) {
-	h.mu.Lock()
-	ch, ok := h.pendingApprovals[msg.ID]
-	if !ok {
-		h.mu.Unlock()
-		return
-	}
-	delete(h.pendingApprovals, msg.ID)
-
-	switch msg.Content {
-	case "approve":
-		utils.Go(func() { observability.AuditApproval(msg.Name, msg.ID, true, client.ID) })
-		ch <- true
-	case "always_approve":
-		if h.autoApproved[client.ID] == nil {
-			h.autoApproved[client.ID] = make(map[string]bool)
-		}
-		h.autoApproved[client.ID][msg.Name] = true
-		utils.Go(func() { observability.AuditApproval(msg.Name, msg.ID, true, client.ID) })
-		ch <- true
-	default:
-		utils.Go(func() { observability.AuditDenial(msg.Name, msg.ID, client.ID, "user denied") })
-		ch <- false
-	}
-	h.mu.Unlock()
-}
-
-func (h *Handler) handleAbort(client *Client) {
-	h.mu.Lock()
-	cancel, ok := h.cancelFuncs[client.ID]
-	if ok {
-		cancel()
-		delete(h.cancelFuncs, client.ID)
-	}
-	h.mu.Unlock()
-	h.sendToClient(client, WSResponse{Type: "aborted", Message: "Request aborted"})
-}
-
-func (h *Handler) handleModelSwitch(client *Client, msg WSMessage) {
-	if msg.Model != "" {
-		h.mu.Lock()
-		h.clientModels[client.ID] = msg.Model
-		h.mu.Unlock()
-	}
-
-	model := h.apiClient.Model
-	if m, ok := h.clientModels[client.ID]; ok {
-		model = m
-	}
-
-	h.sendToClient(client, WSResponse{
-		Type:    "model_changed",
-		Message: fmt.Sprintf("Model switched to %s", model),
-	})
-}
-
-func (h *Handler) handleFileOpen(client *Client, msg WSMessage) {
-	path := filepath.Join(h.workDir, msg.Path)
-	path = filepath.Clean(path)
-
-	if !strings.HasPrefix(path, filepath.Clean(h.workDir)) {
-		h.sendError(client, "Access denied: path outside work directory")
-		return
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to read file: %v", err))
-		return
-	}
-
-	h.sendToClient(client, WSResponse{
-		Type:    "file_content",
-		Content: string(data),
-	})
-}
-
-func (h *Handler) handleFileSave(client *Client, msg WSMessage) {
-	path := filepath.Join(h.workDir, msg.Path)
-	path = filepath.Clean(path)
-
-	if !strings.HasPrefix(path, filepath.Clean(h.workDir)) {
-		h.sendError(client, "Access denied: path outside work directory")
-		return
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to create directory: %v", err))
-		return
-	}
-
-	if err := os.WriteFile(path, []byte(msg.Content), 0644); err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to write file: %v", err))
-		return
-	}
-
-	h.sendToClient(client, WSResponse{
-		Type:    "done",
-		Message: fmt.Sprintf("File saved: %s", msg.Path),
-	})
-}
-
-func (h *Handler) handleFileTree(client *Client, msg WSMessage) {
-	root := h.workDir
-	if msg.Path != "" {
-		root = filepath.Join(h.workDir, msg.Path)
-	}
-
-	tree, err := h.buildFileTree(root, 3)
-	if err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to scan directory: %v", err))
-		return
-	}
-
-	h.sendToClient(client, WSResponse{
-		Type: "file_tree",
-		Tree: tree,
-	})
-}
-
-func (h *Handler) buildFileTree(root string, maxDepth int) ([]FileNode, error) {
-	if maxDepth <= 0 {
-		return nil, nil
-	}
-
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, err
-	}
-
-	var nodes []FileNode
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") && name != ".smartclaw" {
-			continue
-		}
-
-		node := FileNode{Name: name}
-
-		if entry.IsDir() {
-			skipDirs := map[string]bool{
-				"node_modules": true, "vendor": true, ".git": true,
-				"dist": true, "build": true, "bin": true, "__pycache__": true,
-			}
-			if skipDirs[name] {
-				node.Type = "dir"
-				continue
-			}
-
-			node.Type = "dir"
-			children, err := h.buildFileTree(filepath.Join(root, name), maxDepth-1)
-			if err == nil {
-				node.Children = children
-			}
-		} else {
-			info, err := entry.Info()
-			if err == nil {
-				node.Size = info.Size()
-			}
-			node.Type = "file"
-		}
-
-		nodes = append(nodes, node)
-	}
-
-	return nodes, nil
-}
-
-func (h *Handler) handleSessionList(client *Client) {
-	if h.dataStore != nil {
-		var sessions []*store.Session
-		var err error
-		if client.UserID != "" && client.UserID != "default" {
-			sessions, err = h.dataStore.ListSessions(client.UserID, 50)
-		} else {
-			sessions, err = h.dataStore.ListAllSessions(50)
-		}
-		if err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to list sessions: %v", err))
-			return
-		}
-
-		counts, _ := h.dataStore.GetMessageCountsBatch()
-		var infos []SessionInfo
-		for _, s := range sessions {
-			infos = append(infos, SessionInfo{
-				ID:           s.ID,
-				UserID:       s.UserID,
-				Title:        s.Title,
-				Model:        s.Model,
-				MessageCount: int(counts[s.ID]),
-				CreatedAt:    s.CreatedAt.Format(time.RFC3339),
-				UpdatedAt:    s.UpdatedAt.Format(time.RFC3339),
-			})
-		}
-		h.sendToClient(client, WSResponse{Type: "session_list", Sessions: infos})
-		return
-	}
-
-	if h.sessMgr == nil {
-		h.sendToClient(client, WSResponse{Type: "session_list", Sessions: []SessionInfo{}})
-		return
-	}
-
-	var sessions []session.SessionInfo
-	var err error
-	if client.UserID != "" && client.UserID != "default" {
-		sessions, err = h.sessMgr.ListByUser(client.UserID)
-	} else {
-		sessions, err = h.sessMgr.List()
-	}
-	if err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to list sessions: %v", err))
-		return
-	}
-
-	var infos []SessionInfo
-	for _, s := range sessions {
-		infos = append(infos, SessionInfo{
-			ID:           s.ID,
-			UserID:       s.UserID,
-			Title:        s.Title,
-			Model:        s.Model,
-			MessageCount: s.MessageCount,
-			CreatedAt:    s.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:    s.UpdatedAt.Format(time.RFC3339),
-		})
-	}
-
-	h.sendToClient(client, WSResponse{Type: "session_list", Sessions: infos})
-}
-
-func (h *Handler) handleSessionNew(client *Client, msg WSMessage) {
-	model := msg.Model
-	if model == "" {
-		model = h.apiClient.Model
-		if m, ok := h.clientModels[client.ID]; ok {
-			model = m
-		}
-	}
-
-	if h.dataStore != nil {
-		sess := h.sessMgr.NewSession(model, client.UserID)
-		storeSess := &store.Session{
-			ID:        sess.ID,
-			UserID:    client.UserID,
-			Source:    "web",
-			Model:     model,
-			Title:     sess.Title,
-			Tokens:    0,
-			Cost:      0,
-			CreatedAt: sess.CreatedAt,
-			UpdatedAt: sess.UpdatedAt,
-		}
-		if err := h.dataStore.UpsertSession(context.Background(), storeSess); err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to save session: %v", err))
-			return
-		}
-		h.clientSessMu.Lock()
-		h.clientSess[client.ID] = sess
-		h.clientSessMu.Unlock()
-		h.sendToClient(client, WSResponse{
-			Type:    "session_created",
-			ID:      sess.ID,
-			Message: "New session created",
-		})
-		return
-	}
-
-	if h.sessMgr == nil {
-		h.sendError(client, "Session manager not available")
-		return
-	}
-
-	sess := h.sessMgr.NewSession(model, client.UserID)
-	if err := h.sessMgr.Save(sess); err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to save session: %v", err))
-		return
-	}
-
-	h.clientSessMu.Lock()
-	h.clientSess[client.ID] = sess
-	h.clientSessMu.Unlock()
-
-	h.sendToClient(client, WSResponse{
-		Type:    "session_created",
-		ID:      sess.ID,
-		Message: "New session created",
-	})
-}
-
-func (h *Handler) handleSessionLoad(client *Client, msg WSMessage) {
-	if h.dataStore != nil {
-		storeSess, err := h.dataStore.GetSession(msg.ID)
-		if err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to load session: %v", err))
-			return
-		}
-		if storeSess == nil {
-			h.sendError(client, "Session not found")
-			return
-		}
-		if storeSess.UserID != "" && storeSess.UserID != client.UserID && client.UserID != "default" {
-			h.sendError(client, "Access denied: session belongs to another user")
-			return
-		}
-
-		storeMsgs, _ := h.dataStore.GetSessionMessages(msg.ID)
-
-		sess := &session.Session{
-			ID:        storeSess.ID,
-			UserID:    storeSess.UserID,
-			CreatedAt: storeSess.CreatedAt,
-			UpdatedAt: storeSess.UpdatedAt,
-			Model:     storeSess.Model,
-			Tokens:    storeSess.Tokens,
-			Cost:      storeSess.Cost,
-			Title:     storeSess.Title,
-			Messages:  make([]session.Message, 0, len(storeMsgs)),
-		}
-		for _, m := range storeMsgs {
-			sess.Messages = append(sess.Messages, session.Message{
-				Role:      m.Role,
-				Content:   m.Content,
-				Timestamp: m.Timestamp,
-				Tokens:    m.Tokens,
-			})
-		}
-
-		h.clientSessMu.Lock()
-		h.clientSess[client.ID] = sess
-		h.clientSessMu.Unlock()
-
-		var msgs []MsgItem
-		for _, m := range sess.Messages {
-			msgs = append(msgs, MsgItem{
-				Role:      m.Role,
-				Content:   m.Content,
-				Timestamp: m.Timestamp.Format(time.RFC3339),
-			})
-		}
-
-		h.sendToClient(client, WSResponse{
-			Type:     "session_loaded",
-			ID:       sess.ID,
-			Title:    sess.Title,
-			Messages: msgs,
-		})
-		return
-	}
-
-	if h.sessMgr == nil {
-		h.sendError(client, "Session manager not available")
-		return
-	}
-
-	sess, err := h.sessMgr.Load(msg.ID)
-	if err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to load session: %v", err))
-		return
-	}
-
-	if sess.UserID != "" && sess.UserID != client.UserID && client.UserID != "default" {
-		h.sendError(client, "Access denied: session belongs to another user")
-		return
-	}
-
-	h.clientSessMu.Lock()
-	h.clientSess[client.ID] = sess
-	h.clientSessMu.Unlock()
-
-	var msgs []MsgItem
-	for _, m := range sess.Messages {
-		msgs = append(msgs, MsgItem{
-			Role:      m.Role,
-			Content:   m.Content,
-			Timestamp: m.Timestamp.Format(time.RFC3339),
-		})
-	}
-
-	h.sendToClient(client, WSResponse{
-		Type:     "session_loaded",
-		ID:       sess.ID,
-		Title:    sess.Title,
-		Messages: msgs,
-	})
-}
-
-func (h *Handler) handleSessionDelete(client *Client, msg WSMessage) {
-	if h.dataStore != nil {
-		storeSess, err := h.dataStore.GetSession(msg.ID)
-		if err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to load session: %v", err))
-			return
-		}
-		if storeSess == nil {
-			h.sendError(client, "Session not found")
-			return
-		}
-		if storeSess.UserID != "" && storeSess.UserID != client.UserID && client.UserID != "default" {
-			h.sendError(client, "Access denied: session belongs to another user")
-			return
-		}
-		if err := h.dataStore.DeleteSession(context.Background(), msg.ID); err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to delete session: %v", err))
-			return
-		}
-		h.sendToClient(client, WSResponse{
-			Type:    "session_deleted",
-			ID:      msg.ID,
-			Message: "Session deleted",
-		})
-		return
-	}
-
-	if h.sessMgr == nil {
-		h.sendError(client, "Session manager not available")
-		return
-	}
-
-	sess, err := h.sessMgr.Load(msg.ID)
-	if err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to load session: %v", err))
-		return
-	}
-	if sess.UserID != "" && sess.UserID != client.UserID && client.UserID != "default" {
-		h.sendError(client, "Access denied: session belongs to another user")
-		return
-	}
-
-	if err := h.sessMgr.Delete(msg.ID); err != nil {
-		h.sendError(client, fmt.Sprintf("Failed to delete session: %v", err))
-		return
-	}
-
-	h.sendToClient(client, WSResponse{
-		Type:    "session_deleted",
-		ID:      msg.ID,
-		Message: "Session deleted",
-	})
-}
-
-func (h *Handler) handleSessionRename(client *Client, msg WSMessage) {
-	if msg.ID == "" {
-		h.sendError(client, "Session ID is required")
-		return
-	}
-
-	if h.dataStore != nil {
-		if err := h.dataStore.UpdateSessionTitle(context.Background(), msg.ID, msg.Title); err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to rename session: %v", err))
-			return
-		}
-	} else if h.sessMgr != nil {
-		if err := h.sessMgr.Rename(msg.ID, msg.Title); err != nil {
-			h.sendError(client, fmt.Sprintf("Failed to rename session: %v", err))
-			return
-		}
-	}
-
-	h.clientSessMu.RLock()
-	sess, ok := h.clientSess[client.ID]
-	h.clientSessMu.RUnlock()
-	if ok && sess.ID == msg.ID {
-		sess.Title = msg.Title
-	}
-
-	h.handleSessionList(client)
-}
-
-func (h *Handler) handleMemoryLayersWS(client *Client) {
-	if h.memMgr == nil {
-		h.sendError(client, "Memory manager not available")
-		return
-	}
-	pm := h.memMgr.GetPromptMemory()
-	layers := map[string]any{
-		"memory": pm.GetMemoryContent(),
-		"user":   pm.GetUserContent(),
-	}
-	h.sendToClient(client, WSResponse{Type: "memory_layers", Data: layers})
-}
-
-func (h *Handler) handleMemorySearchWS(client *Client, msg WSMessage) {
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid memory search request")
-		return
-	}
-	query, _ := data["query"].(string)
-	limit := 5
-	if l, ok := data["limit"].(float64); ok && l > 0 {
-		limit = int(l)
-	}
-	if h.memMgr == nil {
-		h.sendError(client, "Memory manager not available")
-		return
-	}
-	ctx := context.Background()
-	results, err := h.memMgr.Search(ctx, query, limit)
-	if err != nil {
-		h.sendError(client, "Search failed: "+err.Error())
-		return
-	}
-	h.sendToClient(client, WSResponse{Type: "memory_search", Data: results})
-}
-
-func (h *Handler) handleMemoryRecallWS(client *Client, msg WSMessage) {
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid memory recall request")
-		return
-	}
-	query, _ := data["query"].(string)
-	if h.memMgr == nil {
-		h.sendError(client, "Memory manager not available")
-		return
-	}
-	ctx := context.Background()
-	contextStr := h.memMgr.BuildSystemContext(ctx, query)
-	h.sendToClient(client, WSResponse{Type: "memory_recall", Data: map[string]any{
-		"query":   query,
-		"context": contextStr,
-	}})
-}
-
-func (h *Handler) handleMemoryStoreWS(client *Client, msg WSMessage) {
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid memory store request")
-		return
-	}
-	content, _ := data["content"].(string)
-	if content == "" {
-		h.sendError(client, "Content is required for store")
-		return
-	}
-	if h.memMgr == nil {
-		h.sendError(client, "Memory manager not available")
-		return
-	}
-	pm := h.memMgr.GetPromptMemory()
-	key, _ := data["key"].(string)
-	if key == "" {
-		key = "fact"
-	}
-	entry := fmt.Sprintf("- **%s**: %s (stored %s)", key, content, time.Now().Format("2006-01-02"))
-	if err := pm.AppendToSection("## Stored Facts", entry); err != nil {
-		h.sendError(client, "Store failed: "+err.Error())
-		return
-	}
-	h.sendToClient(client, WSResponse{Type: "memory_store", Data: map[string]any{
-		"stored": true,
-		"key":    key,
-	}})
-}
-
-func (h *Handler) handleMemoryStatsWS(client *Client) {
-	if h.memMgr == nil {
-		h.sendError(client, "Memory manager not available")
-		return
-	}
-	pm := h.memMgr.GetPromptMemory()
-	stats := map[string]any{
-		"memory_chars": len(pm.GetMemoryContent()),
-		"user_chars":   len(pm.GetUserContent()),
-	}
-	h.sendToClient(client, WSResponse{Type: "memory_stats", Data: stats})
-}
-
 func (h *Handler) sendToClient(client *Client, resp WSResponse) {
 	pe := pool.GetJSONEncoder(nil)
 	if err := pe.Encode(resp); err != nil {
@@ -1397,53 +494,20 @@ func (h *Handler) sendToClient(client *Client, resp WSResponse) {
 	}
 }
 
-func (h *Handler) handleWikiSearchWS(client *Client, msg WSMessage) {
-	if h.wikiClient == nil || !h.wikiClient.IsEnabled() {
-		h.sendToClient(client, WSResponse{Type: "wiki_search", Data: map[string]any{
-			"enabled": false,
-			"results": []any{},
-		}})
-		return
-	}
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid wiki search request")
-		return
-	}
-	query, _ := data["query"].(string)
-	limit := 5
-	if l, ok := data["limit"].(float64); ok && l > 0 {
-		limit = int(l)
-	}
-	result, err := h.wikiClient.Search(context.Background(), query, limit)
-	if err != nil {
-		h.sendError(client, "Wiki search failed: "+err.Error())
-		return
-	}
-	h.sendToClient(client, WSResponse{Type: "wiki_search", Data: result})
-}
-
-func (h *Handler) handleWikiPagesWS(client *Client) {
-	if h.wikiClient == nil || !h.wikiClient.IsEnabled() {
-		h.sendToClient(client, WSResponse{Type: "wiki_pages", Data: map[string]any{
-			"enabled": false,
-			"pages":   []any{},
-		}})
-		return
-	}
-	pages, err := h.wikiClient.ListPages(context.Background(), 50)
-	if err != nil {
-		h.sendError(client, "Wiki list failed: "+err.Error())
-		return
-	}
-	h.sendToClient(client, WSResponse{Type: "wiki_pages", Data: map[string]any{
-		"enabled": true,
-		"pages":   pages,
-	}})
-}
-
 func (h *Handler) sendError(client *Client, message string) {
 	h.sendToClient(client, WSResponse{Type: "error", Message: message})
+}
+
+func mustMarshalWSResponse(resp WSResponse) []byte {
+	pe := pool.GetJSONEncoder(nil)
+	if err := pe.Encode(resp); err != nil {
+		pool.PutJSONEncoder(pe)
+		return nil
+	}
+	data := make([]byte, len(pe.Bytes()))
+	copy(data, pe.Bytes())
+	pool.PutJSONEncoder(pe)
+	return data
 }
 
 func (h *Handler) sendJSON(client *Client, v any) {
@@ -1461,77 +525,6 @@ func (h *Handler) sendJSON(client *Client, v any) {
 	case <-time.After(5 * time.Second):
 		slog.Warn("websocket send timeout, client may be slow", "client_id", client.ID)
 	}
-}
-
-func (h *Handler) handleSkillListWS(client *Client) {
-	sm := skills.GetSkillManager()
-	if sm == nil {
-		h.sendError(client, "Skill manager not available")
-		return
-	}
-	skillList := sm.List()
-	h.sendToClient(client, WSResponse{Type: "skill_list", Data: skillList})
-}
-
-func (h *Handler) handleSkillDetailWS(client *Client, msg WSMessage) {
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid skill detail request")
-		return
-	}
-	name, _ := data["name"].(string)
-	sm := skills.GetSkillManager()
-	if sm == nil {
-		h.sendError(client, "Skill manager not available")
-		return
-	}
-	skill := sm.Get(name)
-	if skill == nil {
-		h.sendError(client, "Skill not found: "+name)
-		return
-	}
-	h.sendToClient(client, WSResponse{Type: "skill_detail", Data: skill})
-}
-
-func (h *Handler) handleSkillToggleWS(client *Client, msg WSMessage) {
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid skill toggle request")
-		return
-	}
-	name, _ := data["name"].(string)
-	action, _ := data["action"].(string)
-	sm := skills.GetSkillManager()
-	if sm == nil {
-		h.sendError(client, "Skill manager not available")
-		return
-	}
-	switch action {
-	case "enable":
-		sm.Enable(name)
-		h.sendToClient(client, WSResponse{Type: "skill_toggle", Data: map[string]string{"name": name, "status": "enabled"}})
-	case "disable":
-		sm.Disable(name)
-		h.sendToClient(client, WSResponse{Type: "skill_toggle", Data: map[string]string{"name": name, "status": "disabled"}})
-	default:
-		h.sendError(client, "Invalid action: "+action)
-	}
-}
-
-func (h *Handler) handleSkillSearchWS(client *Client, msg WSMessage) {
-	var data map[string]any
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		h.sendError(client, "Invalid skill search request")
-		return
-	}
-	query, _ := data["query"].(string)
-	sm := skills.GetSkillManager()
-	if sm == nil {
-		h.sendError(client, "Skill manager not available")
-		return
-	}
-	results := sm.Search(query)
-	h.sendToClient(client, WSResponse{Type: "skill_search", Data: results})
 }
 
 type StatsResponse struct {
