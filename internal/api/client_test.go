@@ -61,8 +61,7 @@ func TestClientCreateMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	messages := []Message{
 		{Role: "user", Content: "Hello"},

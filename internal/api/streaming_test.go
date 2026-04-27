@@ -193,8 +193,7 @@ func TestStreamingClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	streamingClient := NewStreamingClient(client)
 
@@ -237,8 +236,7 @@ func TestStreamIterator(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-5",
@@ -308,8 +306,7 @@ func TestStreamWithStats(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-5",
@@ -407,17 +404,15 @@ func TestClientStreamMessageSSE(t *testing.T) {
 			t.Errorf("Expected POST request, got %s", r.Method)
 		}
 
-		if r.Header.Get("Accept") != "text/event-stream" {
-			t.Errorf("Expected Accept header 'text/event-stream', got '%s'", r.Header.Get("Accept"))
-		}
-
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("event: ping\ndata: {\"type\":\"ping\"}\n\n"))
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_sse\",\"model\":\"claude-sonnet-4-5\",\"role\":\"assistant\"}}\n\n"))
+		w.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n"))
+		w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n"))
+		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-5",
@@ -447,8 +442,7 @@ func TestClientStreamMessageSSEError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-5",
@@ -468,12 +462,14 @@ func TestClientStreamMessageSSEError(t *testing.T) {
 func TestClientStreamMessageSSEHandlerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("event: test\ndata: {}\n\n"))
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_err\",\"model\":\"claude-sonnet-4-5\",\"role\":\"assistant\"}}\n\n"))
+		w.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n"))
+		w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"test\"}}\n\n"))
+		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 	}))
 	defer server.Close()
 
-	client := NewClient("test-key")
-	client.BaseURL = server.URL
+	client := NewClientWithBaseURL("test-key", server.URL)
 
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-5",

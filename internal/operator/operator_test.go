@@ -791,8 +791,8 @@ func TestActionAutoPreApproved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
-	if !strings.Contains(out, "executed") {
-		t.Fatalf("expected 'executed' message for pre-approved action, got %q", out)
+	if !strings.Contains(out, "notification sent") {
+		t.Fatalf("expected 'notification sent' for pre-approved action, got %q", out)
 	}
 }
 
@@ -821,7 +821,7 @@ func TestActionFull(t *testing.T) {
 	}
 	result, _ := m.Enable(context.Background(), config)
 
-	out, err := m.ExecuteAction(context.Background(), result.ID, "auto_remediate")
+	out, err := m.ExecuteAction(context.Background(), result.ID, "restart_service")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}

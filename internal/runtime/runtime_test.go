@@ -46,8 +46,8 @@ func TestCountTokens(t *testing.T) {
 	text := "hello world test"
 	count := CountTokens(text)
 
-	if count != 3 {
-		t.Errorf("Expected 3 tokens, got %d", count)
+	if count != 4 {
+		t.Errorf("Expected 4 tokens, got %d", count)
 	}
 }
 

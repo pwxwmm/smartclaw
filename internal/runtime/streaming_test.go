@@ -61,8 +61,7 @@ func TestQueryStream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := api.NewClient("test-key")
-	client.BaseURL = server.URL
+	client := api.NewClientWithBaseURL("test-key", server.URL)
 
 	engine := NewQueryEngine(client, QueryConfig{})
 
@@ -122,8 +121,7 @@ func TestQueryStreamCancelled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := api.NewClient("test-key")
-	client.BaseURL = server.URL
+	client := api.NewClientWithBaseURL("test-key", server.URL)
 
 	engine := NewQueryEngine(client, QueryConfig{})
 

@@ -30,6 +30,7 @@ func TestPromptBuilderFreeze(t *testing.T) {
 
 func TestPromptBuilderPersona(t *testing.T) {
 	pb := NewPromptBuilder()
+	pb.homeDir = t.TempDir()
 
 	pb.SetPersona("You are a test assistant.")
 	prompt := pb.Build()

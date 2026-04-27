@@ -93,12 +93,10 @@ func TestSpeculativeExecutorSimilarResults(t *testing.T) {
 	defer fastServer.Close()
 	defer slowServer.Close()
 
-	fastClient := api.NewClient("test-key")
-	fastClient.BaseURL = fastServer.URL
+	fastClient := api.NewClientWithBaseURL("test-key", fastServer.URL)
 	fastClient.Model = "haiku"
 
-	slowClient := api.NewClient("test-key")
-	slowClient.BaseURL = slowServer.URL
+	slowClient := api.NewClientWithBaseURL("test-key", slowServer.URL)
 	slowClient.Model = "sonnet"
 
 	executor := NewSpeculativeExecutor(slowClient, fastClient)
@@ -132,11 +130,9 @@ func TestSpeculativeExecutorDifferentResults(t *testing.T) {
 	defer fastServer.Close()
 	defer slowServer.Close()
 
-	fastClient := api.NewClient("test-key")
-	fastClient.BaseURL = fastServer.URL
+	fastClient := api.NewClientWithBaseURL("test-key", fastServer.URL)
 
-	slowClient := api.NewClient("test-key")
-	slowClient.BaseURL = slowServer.URL
+	slowClient := api.NewClientWithBaseURL("test-key", slowServer.URL)
 
 	executor := NewSpeculativeExecutor(slowClient, fastClient)
 	executor.SetEnabled(true)
@@ -163,11 +159,9 @@ func TestSpeculativeExecutorFastError(t *testing.T) {
 	slowServer := makeSSEServer("sonnet", "Good response", 10*time.Millisecond)
 	defer slowServer.Close()
 
-	fastClient := api.NewClient("test-key")
-	fastClient.BaseURL = errorServer.URL
+	fastClient := api.NewClientWithBaseURL("test-key", errorServer.URL)
 
-	slowClient := api.NewClient("test-key")
-	slowClient.BaseURL = slowServer.URL
+	slowClient := api.NewClientWithBaseURL("test-key", slowServer.URL)
 
 	executor := NewSpeculativeExecutor(slowClient, fastClient)
 	executor.SetEnabled(true)

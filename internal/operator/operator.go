@@ -39,6 +39,7 @@ type OperatorManager struct {
 }
 
 func NewOperatorManager() *OperatorManager {
+	cfg := DefaultConfig()
 	return &OperatorManager{
 		configs:         make(map[string]*OperatorConfig),
 		statuses:        make(map[string]*OperatorStatus),
@@ -47,8 +48,8 @@ func NewOperatorManager() *OperatorManager {
 		escalationState: make(map[string]map[int]bool),
 		stopChans:       make(map[string]chan struct{}),
 		maxConfigs:      100,
-		maxCheckResults: 100,
-		maxEvents:       1000,
+		maxCheckResults: cfg.MaxRecentResults,
+		maxEvents:       cfg.MaxEvents,
 	}
 }
 

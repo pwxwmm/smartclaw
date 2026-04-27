@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -325,7 +326,7 @@ func (e *HookExecutor) ExecuteAsync(ctx context.Context, event HookEvent, input 
 func (e *HookRegistry) LoadFromConfig(configPath string) error {
 	cfg, err := config.LoadJSON[hookConfigFile](configPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
