@@ -7,6 +7,9 @@
     if (typeof window.mermaid !== 'undefined') {
       mermaid.initialize({ startOnLoad: false, theme: 'dark' });
     }
+    if (typeof SC.initVirtualList === 'function') {
+      SC.initVirtualList();
+    }
     SC.wsConnect();
     SC.initDragDrop();
     SC.initCmdPalette();
@@ -108,6 +111,7 @@
       SC.state.settings.theme = e.target.value;
       SC.saveSettings();
       SC.applySettings();
+      if (typeof SC.updateEditorTheme === 'function') SC.updateEditorTheme();
     });
     SC.$('#model-select').addEventListener('change', (e) => {
       SC.state.settings.model = e.target.value;

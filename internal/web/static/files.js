@@ -274,11 +274,15 @@
   function openEditor(content, path) {
     SC.state.ui.editorFile = path;
     SC.$('#editor-title').textContent = path || 'New File';
-    SC.$('#editor-content').value = content || '';
     const panel = SC.$('#editor-panel');
     panel.classList.remove('hidden');
     requestAnimationFrame(() => panel.classList.add('visible'));
-    SC.$('#editor-content').focus();
+    if (typeof SC.openInEditor === 'function') {
+      SC.openInEditor(content, path);
+    } else {
+      SC.$('#editor-content').value = content || '';
+      SC.$('#editor-content').focus();
+    }
   }
 
   function closeEditor() {
@@ -289,7 +293,10 @@
 
   function saveEditor() {
     if (!SC.state.ui.editorFile) return;
-    SC.wsSend('file_save', { path: SC.state.ui.editorFile, content: SC.$('#editor-content').value });
+    var content = (typeof SC.getEditorContent === 'function')
+      ? SC.getEditorContent()
+      : SC.$('#editor-content').value;
+    SC.wsSend('file_save', { path: SC.state.ui.editorFile, content: content });
     SC.toast('File saved', 'success');
   }
 
