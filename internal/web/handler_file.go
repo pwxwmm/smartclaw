@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -70,6 +71,50 @@ func (h *Handler) handleFileTree(client *Client, msg WSMessage) {
 		Type: "file_tree",
 		Tree: tree,
 	})
+}
+
+func (h *Handler) handleGitStatus(client *Client, msg WSMessage) {
+	statusMap, err := h.getGitStatus()
+	if err != nil {
+		h.sendToClient(client, WSResponse{
+			Type: "git_status",
+			Data: map[string]string{},
+		})
+		return
+	}
+	h.sendToClient(client, WSResponse{
+		Type: "git_status",
+		Data: statusMap,
+	})
+}
+
+func (h *Handler) getGitStatus() (map[string]string, error) {
+	gitDir := filepath.Join(h.workDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("not a git repository")
+	}
+
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = h.workDir
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]string)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		statusCode := strings.TrimSpace(line[:2])
+		path := line[3:]
+		if path == "" {
+			continue
+		}
+		result[path] = statusCode
+	}
+	return result, nil
 }
 
 func (h *Handler) buildFileTree(root string, maxDepth int) ([]FileNode, error) {

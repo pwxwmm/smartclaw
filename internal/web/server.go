@@ -192,6 +192,7 @@ func (s *WebServer) Start() error {
 	rl := newRateLimiter()
 	mux.HandleFunc("/api/files", rl.Middleware(s.authMiddleware(s.handleFileTree)))
 	mux.HandleFunc("/api/file", rl.Middleware(s.authMiddleware(s.handleFileContent)))
+	mux.HandleFunc("/api/git-status", rl.Middleware(s.authMiddleware(s.handleGitStatusAPI)))
 	mux.HandleFunc("/api/upload", rl.Middleware(s.authMiddleware(s.handleFileUpload)))
 	mux.HandleFunc("/api/sessions", rl.Middleware(s.authMiddleware(s.handleSessions)))
 	mux.HandleFunc("/api/config", rl.Middleware(s.authMiddleware(s.handleConfig)))
@@ -533,6 +534,15 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		"path":    path,
 		"content": string(data),
 	})
+}
+
+func (s *WebServer) handleGitStatusAPI(w http.ResponseWriter, r *http.Request) {
+	statusMap, err := s.handler.getGitStatus()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{})
+		return
+	}
+	writeJSON(w, http.StatusOK, statusMap)
 }
 
 func (s *WebServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {

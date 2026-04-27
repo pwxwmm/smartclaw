@@ -3,6 +3,93 @@
   'use strict';
 
   let dirCounter = 0;
+  let gitStatusMap = {};
+  let searchQuery = '';
+
+  SC.fileIconMap = {
+    go:   { color: '#00ADD8', label: 'Go' },
+    js:   { color: '#F7DF1E', label: 'JS' },
+    mjs:  { color: '#F7DF1E', label: 'JS' },
+    cjs:  { color: '#F7DF1E', label: 'JS' },
+    jsx:  { color: '#61DAFB', label: 'JSX' },
+    ts:   { color: '#3178C6', label: 'TS' },
+    tsx:  { color: '#3178C6', label: 'TSX' },
+    py:   { color: '#3776AB', label: 'Py' },
+    pyw:  { color: '#3776AB', label: 'Py' },
+    md:   { color: '#E8E8EC', label: 'Md' },
+    yaml: { color: '#CB171E', label: 'Ym' },
+    yml:  { color: '#CB171E', label: 'Ym' },
+    json: { color: '#5B9A4C', label: '{}' },
+    html: { color: '#E34F26', label: 'Ht' },
+    htm:  { color: '#E34F26', label: 'Ht' },
+    css:  { color: '#A855F7', label: 'Cs' },
+    scss: { color: '#A855F7', label: 'Sc' },
+    less: { color: '#A855F7', label: 'Le' },
+    rs:   { color: '#DEA584', label: 'Rs' },
+    java: { color: '#ED8B00', label: 'Jv' },
+    sh:   { color: '#4EAA25', label: 'Sh' },
+    bash: { color: '#4EAA25', label: 'Sh' },
+    zsh:  { color: '#4EAA25', label: 'Sh' },
+    dockerfile: { color: '#2496ED', label: 'Dk' },
+    mod:  { color: '#00ADD8', label: 'Md' },
+    sum:  { color: '#00ADD8', label: 'Sm' },
+    sql:  { color: '#E38C00', label: 'Db' },
+    rb:   { color: '#CC342D', label: 'Rb' },
+    c:    { color: '#A8B9CC', label: 'C' },
+    h:    { color: '#A8B9CC', label: 'H' },
+    cpp:  { color: '#00599C', label: 'C+' },
+    toml: { color: '#9C4221', label: 'Tm' },
+    xml:  { color: '#F26522', label: 'Xm' },
+  };
+
+  function getFileIcon(name) {
+    const lower = name.toLowerCase();
+    const basename = lower.split('/').pop();
+    if (basename === 'dockerfile' || basename.startsWith('dockerfile.')) {
+      return SC.fileIconMap.dockerfile;
+    }
+    if (basename === 'makefile' || basename === 'gnumakefile') {
+      return { color: '#6D8086', label: 'Mk' };
+    }
+    if (basename === '.gitignore' || basename === '.dockerignore') {
+      return { color: '#F54D27', label: 'Gi' };
+    }
+    if (basename === 'go.mod') return SC.fileIconMap.mod;
+    if (basename === 'go.sum') return SC.fileIconMap.sum;
+    const dotIdx = basename.lastIndexOf('.');
+    if (dotIdx > 0) {
+      const ext = basename.slice(dotIdx + 1);
+      if (SC.fileIconMap[ext]) return SC.fileIconMap[ext];
+    }
+    return null;
+  }
+
+  function fileIconSvg(name) {
+    const icon = getFileIcon(name);
+    if (!icon) {
+      return '<svg class="ficon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+    }
+    return '<svg class="ficon file-type-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="4" y="2" width="16" height="20" rx="2" fill="' + icon.color + '" opacity="0.15" stroke="' + icon.color + '" stroke-width="1.2"/><text x="12" y="15" text-anchor="middle" fill="' + icon.color + '" font-size="7" font-weight="700" font-family="JetBrains Mono,monospace">' + icon.label + '</text></svg>';
+  }
+
+  function gitStatusDot(path) {
+    const code = gitStatusMap[path];
+    if (!code) return '';
+    let color = '';
+    if (code === '??' || code.startsWith('A')) color = 'var(--ok)';
+    else if (code.includes('M')) color = 'var(--warn)';
+    else if (code.includes('D')) color = 'var(--err)';
+    else color = 'var(--info)';
+    return '<span class="git-dot" style="background:' + color + '"></span>';
+  }
+
+  function highlightName(name, query) {
+    if (!query) return SC.escapeHtml(name);
+    const escaped = SC.escapeHtml(name);
+    const q = SC.escapeHtml(query);
+    const regex = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    return escaped.replace(regex, '<mark>$1</mark>');
+  }
 
   function flattenFileTree(nodes, prefix) {
     let result = [];
@@ -17,6 +104,17 @@
     return result;
   }
 
+  function matchesSearch(node, query, prefix) {
+    if (!query) return true;
+    const path = prefix ? prefix + '/' + node.name : node.name;
+    const q = query.toLowerCase();
+    if (node.name.toLowerCase().includes(q)) return true;
+    if (node.type === 'dir' && node.children) {
+      return node.children.some(child => matchesSearch(child, query, path));
+    }
+    return false;
+  }
+
   function renderFileTree(nodes, parent) {
     const container = parent || SC.$('#file-tree');
     container.innerHTML = '';
@@ -28,16 +126,25 @@
       );
       return;
     }
-    nodes.forEach(node => {
+    const prefix = parent ? getNodePath(parent) : '';
+    const filteredNodes = searchQuery
+      ? nodes.filter(node => matchesSearch(node, searchQuery, prefix))
+      : nodes;
+
+    filteredNodes.forEach(node => {
       const el = document.createElement('div');
       el.className = `file-node ${node.type === 'dir' ? 'dir' : ''}`;
-      const iconSvg = node.type === 'dir'
-        ? '<svg class="ficon folder" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>'
-        : '<svg class="ficon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
-      el.innerHTML = `${iconSvg}<span class="fname">${node.name}</span>`;
+      const path = prefix ? prefix + '/' + node.name : node.name;
+
       if (node.type === 'dir') {
+        const iconSvg = '<svg class="ficon folder" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>';
+        el.innerHTML = `${iconSvg}<span class="fname">${highlightName(node.name, searchQuery)}</span>`;
         const dirId = 'dir-' + (++dirCounter);
         el.dataset.dirId = dirId;
+        const shouldExpand = searchQuery && matchesSearch(node, searchQuery, path);
+        if (shouldExpand) {
+          el.dataset.collapsed = 'false';
+        }
         el.addEventListener('click', (e) => {
           e.stopPropagation();
           const children = container.querySelector(`[data-dir-children="${dirId}"]`);
@@ -53,9 +160,15 @@
           childContainer.className = 'file-children';
           childContainer.dataset.dirChildren = dirId;
           renderFileTree(node.children, childContainer);
+          if (shouldExpand) {
+            childContainer.style.display = '';
+          }
           container.appendChild(childContainer);
         }
       } else {
+        const iconSvg = fileIconSvg(node.name);
+        const dot = gitStatusDot(path);
+        el.innerHTML = `${iconSvg}<span class="fname">${highlightName(node.name, searchQuery)}</span>${dot}`;
         el.addEventListener('click', (e) => {
           e.stopPropagation();
           SC.state.ui.currentFile = getNodePath(el);
@@ -63,6 +176,7 @@
         });
         el.draggable = true;
         el.addEventListener('dragstart', (e) => {
+          SC.state.ui.currentFile = getNodePath(el);
           e.dataTransfer.setData('text/plain', SC.state.ui.currentFile);
         });
         container.appendChild(el);
@@ -302,6 +416,34 @@
     }
   }
 
+  function initFileSearch() {
+    const searchInput = SC.$('#file-search');
+    const clearBtn = SC.$('#file-search-clear');
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', () => {
+      searchQuery = searchInput.value.trim();
+      clearBtn.classList.toggle('hidden', !searchQuery);
+      dirCounter = 0;
+      const tree = SC.state.fileTreeData || [];
+      renderFileTree(tree);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      searchQuery = '';
+      clearBtn.classList.add('hidden');
+      dirCounter = 0;
+      const tree = SC.state.fileTreeData || [];
+      renderFileTree(tree);
+      searchInput.focus();
+    });
+  }
+
+  function requestGitStatus() {
+    SC.wsSend('git_status', {});
+  }
+
   SC.flattenFileTree = flattenFileTree;
   SC.renderFileTree = renderFileTree;
   SC.openFileDrawer = openFileDrawer;
@@ -311,4 +453,9 @@
   SC.saveEditor = saveEditor;
   SC.initDragDrop = initDragDrop;
   SC.initFileMention = initFileMention;
+  SC.initFileSearch = initFileSearch;
+  SC.requestGitStatus = requestGitStatus;
+
+  SC.state.fileTreeData = [];
+  SC.state.gitStatus = {};
 })();

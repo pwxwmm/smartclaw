@@ -38,6 +38,8 @@
     wikiPages: [],
     wikiEnabled: false,
     uploads: [],
+    gitStatus: {},
+    fileTreeData: [],
   };
 
   const subscribers = {};

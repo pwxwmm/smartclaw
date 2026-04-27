@@ -317,6 +317,8 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleFileSave(client, msg)
 	case "file_tree":
 		h.handleFileTree(client, msg)
+	case "git_status":
+		h.handleGitStatus(client, msg)
 	case "session_list":
 		h.handleSessionList(client)
 	case "session_new":
@@ -396,7 +398,7 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 
 var validWSTypes = map[string]bool{
 	"chat": true, "cmd": true, "model": true,
-	"file_open": true, "file_save": true, "file_tree": true,
+	"file_open": true, "file_save": true, "file_tree": true, "git_status": true,
 	"session_list": true, "session_new": true, "session_load": true,
 	"session_rename": true, "session_delete": true,
 	"abort": true, "tool_approval": true,
