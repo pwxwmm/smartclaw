@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ type ServerConfig struct {
 
 type MCPServerRegistry struct {
 	servers   map[string]*ServerConfig
+	clients   map[string]*McpClient
 	configDir string
 	mu        sync.RWMutex
 }
@@ -35,6 +37,7 @@ func NewMCPServerRegistry() *MCPServerRegistry {
 
 	registry := &MCPServerRegistry{
 		servers:   make(map[string]*ServerConfig),
+		clients:   make(map[string]*McpClient),
 		configDir: configDir,
 	}
 
@@ -137,6 +140,74 @@ func (r *MCPServerRegistry) UpdateServer(name string, updates map[string]any) er
 	}
 
 	return r.save()
+}
+
+func (r *MCPServerRegistry) StartServer(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	config, exists := r.servers[name]
+	if !exists {
+		return fmt.Errorf("server not found: %s", name)
+	}
+
+	if client, alreadyRunning := r.clients[name]; alreadyRunning && client.IsReady() {
+		return fmt.Errorf("server already running: %s", name)
+	}
+
+	mcpConfig := &McpServerConfig{
+		Name:      config.Name,
+		Transport: config.Type,
+		Command:   config.Command,
+		Args:      config.Args,
+		Env:       config.Env,
+		URL:       config.URL,
+		Headers:   config.Headers,
+	}
+
+	client, err := NewClientFromConfig(ctx, mcpConfig)
+	if err != nil {
+		return fmt.Errorf("failed to start server %s: %w", name, err)
+	}
+
+	r.clients[name] = client
+	return nil
+}
+
+func (r *MCPServerRegistry) StopServer(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	client, exists := r.clients[name]
+	if !exists {
+		return fmt.Errorf("server not running: %s", name)
+	}
+
+	if err := client.Disconnect(); err != nil {
+		return fmt.Errorf("failed to stop server %s: %w", name, err)
+	}
+
+	delete(r.clients, name)
+	return nil
+}
+
+func (r *MCPServerRegistry) IsServerRunning(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	client, exists := r.clients[name]
+	if !exists {
+		return false
+	}
+	return client.IsReady()
+}
+
+func (r *MCPServerRegistry) GetClient(name string) (*McpClient, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	client, exists := r.clients[name]
+	return client, exists
 }
 
 type MCPOAuthFlow struct {

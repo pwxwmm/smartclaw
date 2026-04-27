@@ -8,10 +8,12 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,10 +24,12 @@ import (
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/costguard"
 	"github.com/instructkr/smartclaw/internal/lifecycle"
+	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/instructkr/smartclaw/internal/skills"
 	"github.com/instructkr/smartclaw/internal/tools"
+	"github.com/instructkr/smartclaw/internal/wiki"
 )
 
 type rateLimiter struct {
@@ -146,6 +150,24 @@ func (s *WebServer) initSubsystems() {
 	} else {
 		s.otlpShutdown = otlpShutdown
 	}
+
+	mcpRegistry := mcp.NewMCPServerRegistry()
+	s.handler.mcpRegistry = mcpRegistry
+	autoStartMCPServers(mcpRegistry)
+
+	if s.handler.wikiClient != nil && s.handler.wikiClient.IsEnabled() && s.handler.memMgr != nil {
+		wikiProvider := wiki.NewWikiMemoryProvider(s.handler.wikiClient)
+		s.handler.memMgr.RegisterProvider("wiki", wikiProvider)
+	}
+}
+
+func autoStartMCPServers(registry *mcp.MCPServerRegistry) {
+	servers := registry.ListServers()
+	for _, config := range servers {
+		if config.AutoStart {
+			slog.Info("Auto-starting MCP server", "name", config.Name)
+		}
+	}
 }
 
 func (s *WebServer) Start() error {
@@ -166,6 +188,7 @@ func (s *WebServer) Start() error {
 	rl := newRateLimiter()
 	mux.HandleFunc("/api/files", rl.Middleware(s.authMiddleware(s.handleFileTree)))
 	mux.HandleFunc("/api/file", rl.Middleware(s.authMiddleware(s.handleFileContent)))
+	mux.HandleFunc("/api/upload", rl.Middleware(s.authMiddleware(s.handleFileUpload)))
 	mux.HandleFunc("/api/sessions", rl.Middleware(s.authMiddleware(s.handleSessions)))
 	mux.HandleFunc("/api/config", rl.Middleware(s.authMiddleware(s.handleConfig)))
 	mux.HandleFunc("/api/stats", rl.Middleware(s.authMiddleware(s.handleStats)))
@@ -174,7 +197,13 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/api/skills/", rl.Middleware(s.authMiddleware(s.handleSkillDetail)))
 	mux.HandleFunc("/api/memory", rl.Middleware(s.authMiddleware(s.handleMemoryAPI)))
 	mux.HandleFunc("/api/memory/search", rl.Middleware(s.authMiddleware(s.handleMemorySearch)))
+	mux.HandleFunc("/api/memory/update", rl.Middleware(s.authMiddleware(s.handleMemoryUpdateAPI)))
+	mux.HandleFunc("/api/memory/observations", rl.Middleware(s.authMiddleware(s.handleMemoryObservationsAPI)))
+	mux.HandleFunc("/api/sessions/search", rl.Middleware(s.authMiddleware(s.handleSessionSearchAPI)))
 	mux.HandleFunc("/api/wiki", rl.Middleware(s.authMiddleware(s.handleWikiAPI)))
+	mux.HandleFunc("/api/wiki/page", rl.Middleware(s.authMiddleware(s.handleWikiPageAPI)))
+	mux.HandleFunc("/api/agents", rl.Middleware(s.authMiddleware(s.handleAgentsAPI)))
+	mux.HandleFunc("/api/mcp", rl.Middleware(s.authMiddleware(s.handleMCPServersAPI)))
 	mux.Handle("/metrics", observability.PrometheusHandler())
 
 	s.server = &http.Server{
@@ -421,6 +450,62 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *WebServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file too large (max 50MB)"})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file field required"})
+		return
+	}
+	defer file.Close()
+
+	relPath := r.FormValue("path")
+	if relPath == "" {
+		relPath = header.Filename
+	}
+
+	fullPath := filepath.Join(s.workDir, relPath)
+	fullPath = filepath.Clean(fullPath)
+
+	if !strings.HasPrefix(fullPath, filepath.Clean(s.workDir)) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create directory"})
+		return
+	}
+
+	dst, err := os.Create(fullPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create file"})
+		return
+	}
+	defer dst.Close()
+
+	written, err := io.Copy(dst, file)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write file"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"path":    relPath,
+		"size":    written,
+	})
+}
+
 func (s *WebServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if s.handler.dataStore != nil {
 		sessions, err := s.handler.dataStore.ListAllSessions(50)
@@ -536,17 +621,69 @@ func (s *WebServer) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleSkills(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if r.Method == http.MethodGet {
+		sm := skills.GetSkillManager()
+		if sm == nil {
+			writeJSON(w, http.StatusOK, []any{})
+			return
+		}
+		skillList := sm.List()
+		writeJSON(w, http.StatusOK, skillList)
 		return
 	}
-	sm := skills.GetSkillManager()
-	if sm == nil {
-		writeJSON(w, http.StatusOK, []any{})
+
+	if r.Method == http.MethodPost {
+		var req struct {
+			Name        string   `json:"name"`
+			Description string   `json:"description"`
+			Version     string   `json:"version"`
+			Tags        []string `json:"tags"`
+			Tools       []string `json:"tools"`
+			Triggers    []string `json:"triggers"`
+			Body        string   `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+
+		if req.Name == "" || req.Description == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and description are required"})
+			return
+		}
+
+		if req.Version == "" {
+			req.Version = "1.0"
+		}
+
+		schema := &skills.SkillSchema{
+			Name:        req.Name,
+			Description: req.Description,
+			Version:     req.Version,
+			Tags:        req.Tags,
+			Tools:       req.Tools,
+			Triggers:    req.Triggers,
+		}
+
+		sm := skills.GetSkillManager()
+		if sm == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "skill manager not available"})
+			return
+		}
+
+		if err := sm.CreateSkill(schema, req.Body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"success": true,
+			"name":    schema.Name,
+		})
 		return
 	}
-	skillList := sm.List()
-	writeJSON(w, http.StatusOK, skillList)
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
 func (s *WebServer) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +799,172 @@ func (s *WebServer) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, results)
 }
 
+func (s *WebServer) handleMemoryUpdateAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		File    string `json:"file"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.File != "memory" && req.File != "user" {
+		http.Error(w, "File must be 'memory' or 'user'", http.StatusBadRequest)
+		return
+	}
+	if req.Content == "" {
+		http.Error(w, "Content must not be empty", http.StatusBadRequest)
+		return
+	}
+	if s.handler.memMgr == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"error": "Memory manager not available"})
+		return
+	}
+	pm := s.handler.memMgr.GetPromptMemory()
+	var updateErr error
+	if req.File == "memory" {
+		updateErr = pm.UpdateMemory(req.Content)
+	} else {
+		updateErr = pm.UpdateUserProfile(req.Content)
+	}
+	if updateErr != nil {
+		http.Error(w, "Update failed: "+updateErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	pm.EnforceLimit()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"file":         req.File,
+		"memory_chars": len(pm.GetMemoryContent()),
+		"user_chars":   len(pm.GetUserContent()),
+	})
+}
+
+func (s *WebServer) handleMemoryObservationsAPI(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet, http.MethodPost:
+		if s.handler.dataStore == nil {
+			writeJSON(w, http.StatusOK, []any{})
+			return
+		}
+		rows, err := s.handler.dataStore.DB().Query(
+			`SELECT id, category, key, value, confidence, observed_at, session_id FROM user_observations ORDER BY observed_at DESC LIMIT 100`,
+		)
+		if err != nil {
+			http.Error(w, "Failed to query observations", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var observations []map[string]any
+		for rows.Next() {
+			var id int
+			var category, key, value, sessionID string
+			var confidence float64
+			var observedAt time.Time
+			if err := rows.Scan(&id, &category, &key, &value, &confidence, &observedAt, &sessionID); err != nil {
+				continue
+			}
+			observations = append(observations, map[string]any{
+				"id":         id,
+				"category":   category,
+				"key":        key,
+				"value":      value,
+				"confidence": confidence,
+				"observedAt": observedAt.Format(time.RFC3339),
+				"sessionId":  sessionID,
+			})
+		}
+		if observations == nil {
+			observations = []map[string]any{}
+		}
+		writeJSON(w, http.StatusOK, observations)
+
+	case http.MethodDelete:
+		var req struct {
+			ID int `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.ID <= 0 {
+			http.Error(w, "Observation id is required", http.StatusBadRequest)
+			return
+		}
+		if s.handler.dataStore == nil {
+			http.Error(w, "Store not available", http.StatusServiceUnavailable)
+			return
+		}
+		result, err := s.handler.dataStore.DB().Exec(`DELETE FROM user_observations WHERE id = ?`, req.ID)
+		if err != nil {
+			http.Error(w, "Failed to delete observation", http.StatusInternalServerError)
+			return
+		}
+		affected, _ := result.RowsAffected()
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "affected": affected})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *WebServer) handleSessionSearchAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	if s.handler.memMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	fragments, err := s.handler.memMgr.Search(r.Context(), query, limit)
+	if err != nil {
+		http.Error(w, "Search failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type fragmentJSON struct {
+		SessionID string  `json:"sessionId"`
+		Timestamp string  `json:"timestamp"`
+		Role      string  `json:"role"`
+		Content   string  `json:"content"`
+		Relevance float64 `json:"relevance"`
+	}
+
+	var result []fragmentJSON
+	for _, f := range fragments {
+		result = append(result, fragmentJSON{
+			SessionID: f.SessionID,
+			Timestamp: f.Timestamp.Format(time.RFC3339),
+			Role:      f.Role,
+			Content:   f.Content,
+			Relevance: f.Relevance,
+		})
+	}
+	if result == nil {
+		result = []fragmentJSON{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *WebServer) handleWikiAPI(w http.ResponseWriter, r *http.Request) {
 	if s.handler.wikiClient == nil || !s.handler.wikiClient.IsEnabled() {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -705,6 +1008,47 @@ func (s *WebServer) handleWikiAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *WebServer) handleWikiPageAPI(w http.ResponseWriter, r *http.Request) {
+	if s.handler.wikiClient == nil || !s.handler.wikiClient.IsEnabled() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"message": "Wiki not configured. Set wiki.base_url in config.",
+		})
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pageID := r.URL.Query().Get("id")
+	if pageID == "" {
+		http.Error(w, "id query parameter is required", http.StatusBadRequest)
+		return
+	}
+	page, err := s.handler.wikiClient.GetPage(r.Context(), pageID)
+	if err != nil {
+		http.Error(w, "Wiki get page failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"page":    page,
+	})
+}
+
+func (s *WebServer) handleAgentsAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := tools.Execute(r.Context(), "agent", map[string]any{"operation": "list"})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"agents": []any{}, "count": 0})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *WebServer) reloadAPIClient(config map[string]any) {
 	apiKey, _ := config["api_key"].(string)
 	baseURL, _ := config["base_url"].(string)
@@ -730,4 +1074,76 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+func (s *WebServer) handleMCPServersAPI(w http.ResponseWriter, r *http.Request) {
+	if s.handler.mcpRegistry == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		servers := s.handler.mcpRegistry.ListServers()
+		writeJSON(w, http.StatusOK, servers)
+	case http.MethodPost:
+		var req struct {
+			Name        string            `json:"name"`
+			Type        string            `json:"type"`
+			Command     string            `json:"command"`
+			Args        []string          `json:"args"`
+			URL         string            `json:"url"`
+			Env         map[string]string `json:"env"`
+			AutoStart   bool              `json:"auto_start"`
+			Description string            `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		if req.Name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+			return
+		}
+		config := &mcp.ServerConfig{
+			Name:        req.Name,
+			Type:        req.Type,
+			Command:     req.Command,
+			Args:        req.Args,
+			URL:         req.URL,
+			Env:         req.Env,
+			AutoStart:   req.AutoStart,
+			Description: req.Description,
+		}
+		if err := s.handler.mcpRegistry.AddServer(config); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"success": true,
+			"name":    req.Name,
+		})
+	case http.MethodDelete:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		if req.Name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+			return
+		}
+		if err := s.handler.mcpRegistry.RemoveServer(req.Name); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"name":    req.Name,
+		})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
