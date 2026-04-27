@@ -154,7 +154,11 @@
       case 'session_created':
         SC.state.ui.currentSessionId = msg.id;
         try { localStorage.setItem('smartclaw-active-session', msg.id); } catch {}
-        SC.$('#messages').innerHTML = '';
+        if (SC.vl) {
+          SC.vl.clear();
+        } else {
+          SC.$('#messages').innerHTML = '';
+        }
         SC.state.messages = [];
         SC.toast('Session created', 'success');
         wsSend('session_list', {});
@@ -167,7 +171,11 @@
         if (SC.state.ui.currentSessionId === msg.id) {
           SC.state.ui.currentSessionId = null;
           try { localStorage.removeItem('smartclaw-active-session'); } catch {}
-          SC.$('#messages').innerHTML = '';
+          if (SC.vl) {
+            SC.vl.clear();
+          } else {
+            SC.$('#messages').innerHTML = '';
+          }
           SC.state.messages = [];
         }
         wsSend('session_list', {});

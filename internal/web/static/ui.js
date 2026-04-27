@@ -64,8 +64,14 @@
   }
 
   function clearChat() {
-    SC.$('#messages').innerHTML = '';
+    if (SC.vl) {
+      SC.vl.clear();
+    } else {
+      SC.$('#messages').innerHTML = '';
+    }
     SC.state.messages = [];
+    var welcome = SC.$('#welcome');
+    if (welcome) welcome.classList.remove('hidden');
     toast('Chat cleared', 'success');
   }
 
@@ -81,8 +87,14 @@
   }
 
   function showWelcome() {
-    const messages = SC.$('#messages');
-    if (messages.children.length > 0) return;
+    var welcome = SC.$('#welcome');
+    if (welcome) {
+      welcome.classList.remove('hidden');
+      return;
+    }
+    var messages = SC.$('#messages');
+    if (!SC.vl && messages.children.length > 0) return;
+    if (SC.vl && SC.vl.items.length > 0) return;
     messages.innerHTML = `
       <div class="welcome">
         <svg class="welcome-icon" width="64" height="64" viewBox="0 0 512 512" fill="none">

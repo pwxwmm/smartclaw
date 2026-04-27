@@ -3,6 +3,7 @@
   'use strict';
 
   let currentAssistantEl = null;
+  let currentAssistantIndex = -1;
   let currentContent = '';
   let currentThinking = '';
   let thinkingBlock = null;
@@ -10,9 +11,91 @@
   let doneTimeout = null;
 
   function forceFinishIfStale() {
-    if (currentAssistantEl && currentContent) {
+    if (currentAssistantIndex >= 0 && currentContent) {
       finishMessage({ tokens: 0, cost: 0 });
     }
+  }
+
+  function initVirtualList() {
+    var chatEl = SC.$('#chat');
+    var messagesEl = SC.$('#messages');
+    var welcomeEl = SC.$('#welcome');
+    if (!chatEl || !messagesEl) return;
+    SC.vl = new SC.VirtualList(messagesEl, {
+      scrollContainer: chatEl,
+      welcomeEl: welcomeEl,
+      renderItem: createMessageElement
+    });
+  }
+
+  function createMessageElement(item, index) {
+    var el = document.createElement('div');
+    var role = item.role;
+    el.className = 'message ' + role;
+    el.dataset.msgIndex = index;
+    el.dataset.msgId = item.msgId || ('msg-' + index);
+    var roleLabel = role === 'user' ? 'You' : role === 'cmd_result' ? '▶ Command' : 'SmartClaw';
+    var ts = item.displayTs || '';
+
+    var actionsHtml = '';
+    if (role === 'user') {
+      actionsHtml = '<div class="msg-actions">' +
+        '<button class="msg-action-btn msg-edit-btn" title="Edit">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+        '</button>' +
+        '<button class="msg-action-btn msg-retry-btn" title="Retry">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>' +
+        '</button>' +
+      '</div>';
+    }
+
+    var bubbleContent;
+    if (role === 'cmd_result') {
+      bubbleContent = '<div class="msg-bubble" style="font-family:var(--font-d);background:var(--bg-2);border:1px solid var(--bd);border-radius:8px;white-space:pre-wrap;word-break:break-word;padding:10px 14px">' + SC.escapeHtml(item.content) + '</div>';
+    } else if (role === 'assistant') {
+      if (item.isStreaming) {
+        if (item.thinkingContent) {
+          bubbleContent = '<div class="msg-bubble"><details class="thinking-block" open><summary>💭 Thinking...</summary><div class="thinking-content">' + SC.escapeHtml(item.thinkingContent) + '</div></details>' + (item.content ? renderPlainText(item.content) : '') + '</div>';
+        } else if (!item.content) {
+          bubbleContent = '<div class="msg-bubble"><div class="thinking"><div class="think-eyes"><svg width="32" height="16" viewBox="0 0 32 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle cx="24" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle class="pupil-l" cx="8" cy="8" r="2" fill="currentColor"/><circle class="pupil-r" cx="24" cy="8" r="2" fill="currentColor"/></svg></div><span class="think-label">Thinking<span class="think-dots"><span></span><span></span><span></span></span></span></div></div>';
+        } else {
+          bubbleContent = '<div class="msg-bubble">' + renderPlainText(item.content) + '</div>';
+        }
+      } else if (item.isRendered) {
+        bubbleContent = '<div class="msg-bubble rendered">' + renderMarkdown(item.content) + '</div>';
+      } else {
+        bubbleContent = '<div class="msg-bubble">' + SC.escapeHtml(item.content) + '</div>';
+      }
+    } else {
+      bubbleContent = '<div class="msg-bubble">' + SC.escapeHtml(item.content) + '</div>';
+    }
+
+    var roleStyle = role === 'cmd_result' ? ' style="color:var(--accent)"' : '';
+    el.innerHTML = '<div class="msg-role"' + roleStyle + '>' + roleLabel + '</div>' + actionsHtml + bubbleContent + (ts ? '<div class="msg-ts">' + ts + '</div>' : '');
+
+    if (role === 'user') {
+      bindMsgActions(el, index);
+    }
+
+    bindMessageContextMenu(el);
+
+    if (role === 'assistant' && item.isRendered && !item.isStreaming) {
+      var bubble = el.querySelector('.msg-bubble');
+      if (bubble) {
+        if (item.thinkingContent) {
+          var tb = bubble.querySelector('.thinking-block');
+          if (tb) {
+            tb.open = false;
+            var summary = tb.querySelector('summary');
+            if (summary) summary.textContent = '💭 Thought process (' + item.thinkingContent.length + ' chars)';
+          }
+        }
+        bindCodeCopy(bubble);
+        postRenderMarkdown(bubble);
+      }
+    }
+
+    return el;
   }
 
   function sendMessage() {
@@ -37,10 +120,14 @@
 
     currentContent = '';
     currentAssistantEl = addMessage('assistant', '');
+    currentAssistantIndex = SC.state.messages.length - 1;
+    if (SC.vl) SC.vl.setStreaming(true);
     if (doneTimeout) clearTimeout(doneTimeout);
     doneTimeout = setTimeout(forceFinishIfStale, 30000);
-    const bubble = currentAssistantEl.querySelector('.msg-bubble');
-    bubble.innerHTML = '<div class="thinking"><div class="think-eyes"><svg width="32" height="16" viewBox="0 0 32 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle cx="24" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle class="pupil-l" cx="8" cy="8" r="2" fill="currentColor"/><circle class="pupil-r" cx="24" cy="8" r="2" fill="currentColor"/></svg></div><span class="think-label">Thinking<span class="think-dots"><span></span><span></span><span></span></span></span></div>';
+    if (currentAssistantEl) {
+      const bubble = currentAssistantEl.querySelector('.msg-bubble');
+      if (bubble) bubble.innerHTML = '<div class="thinking"><div class="think-eyes"><svg width="32" height="16" viewBox="0 0 32 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle cx="24" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle class="pupil-l" cx="8" cy="8" r="2" fill="currentColor"/><circle class="pupil-r" cx="24" cy="8" r="2" fill="currentColor"/></svg></div><span class="think-label">Thinking<span class="think-dots"><span></span><span></span><span></span></span></span></div>';
+    }
     SC.wsSend('chat', { content: text });
     } catch (err) {
       console.error('[sendMessage Error]', err);
@@ -49,38 +136,34 @@
   }
 
   function addMessage(role, content) {
-    const welcome = SC.$('.welcome');
-    if (welcome) welcome.remove();
-    const msgIndex = SC.state.messages.length;
-    const msgId = 'msg-' + msgIndex;
-    const el = document.createElement('div');
-    el.className = `message ${role}`;
-    el.dataset.msgIndex = msgIndex;
-    el.dataset.msgId = msgId;
-    const roleLabel = role === 'user' ? 'You' : 'SmartClaw';
+    var welcome = SC.$('#welcome');
+    if (welcome) welcome.classList.add('hidden');
+
+    var msgIndex = SC.state.messages.length;
+    var msgId = 'msg-' + msgIndex;
     const now = new Date();
     const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    let actionsHtml = '';
-    if (role === 'user') {
-      actionsHtml = '<div class="msg-actions">' +
-        '<button class="msg-action-btn msg-edit-btn" title="Edit">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
-        '</button>' +
-        '<button class="msg-action-btn msg-retry-btn" title="Retry">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>' +
-        '</button>' +
-      '</div>';
+    var item = {
+      role: role,
+      content: content,
+      ts: Date.now(),
+      msgId: msgId,
+      displayTs: ts,
+      isStreaming: role === 'assistant',
+      isRendered: role !== 'assistant',
+      thinkingContent: ''
+    };
+
+    var el = null;
+
+    if (SC.vl) {
+      SC.vl.addItem(item);
+      el = SC.vl.getItemElement(msgIndex);
+    } else {
+      el = createMessageElement(item, msgIndex);
+      SC.$('#messages').appendChild(el);
     }
-
-    el.innerHTML = `<div class="msg-role">${roleLabel}</div>${actionsHtml}<div class="msg-bubble">${SC.escapeHtml(content)}</div><div class="msg-ts">${ts}</div>`;
-    SC.$('#messages').appendChild(el);
-
-    if (role === 'user') {
-      bindMsgActions(el, msgIndex);
-    }
-
-    bindMessageContextMenu(el);
 
     SC.scrollChat();
     SC.state.messages.push({ role, content, ts: Date.now(), msgId });
@@ -143,9 +226,14 @@
       if (SC.state.messages[msgIndex]) {
         SC.state.messages[msgIndex].content = newContent;
       }
+      if (SC.vl && SC.vl.items[msgIndex]) {
+        SC.vl.items[msgIndex].content = newContent;
+        SC.vl.items[msgIndex].isRendered = true;
+      }
       bubble.innerHTML = SC.escapeHtml(newContent);
       SC.wsSend('chat_edit', { content: newContent, msgIndex: msgIndex });
       SC.toast('Message edited', 'success');
+      if (SC.vl) SC.vl.refreshItemHeight(msgIndex);
     });
 
     cancelBtn.addEventListener('click', function() {
@@ -169,45 +257,63 @@
     if (!msgData) return;
     const content = msgData.content;
 
-    const msgElements = SC.$$('#messages .message');
-    let remove = false;
-    const toRemove = [];
-    for (let i = 0; i < msgElements.length; i++) {
-      const idx = parseInt(msgElements[i].dataset.msgIndex, 10);
-      if (idx === msgIndex) {
-        remove = true;
-        toRemove.push(msgElements[i]);
-        continue;
-      }
-      if (remove && msgElements[i].classList.contains('assistant')) {
-        toRemove.push(msgElements[i]);
-        break;
-      }
-      if (remove && msgElements[i].classList.contains('user')) {
-        break;
-      }
-    }
-    toRemove.forEach(e => e.remove());
+    var removeCount = (SC.state.messages[msgIndex + 1] && SC.state.messages[msgIndex + 1].role === 'assistant') ? 2 : 1;
 
-    if (SC.state.messages[msgIndex + 1] && SC.state.messages[msgIndex + 1].role === 'assistant') {
-      SC.state.messages.splice(msgIndex, 2);
+    if (SC.vl) {
+      SC.vl.removeItemsAt(msgIndex, removeCount);
+      for (var i = 0; i < SC.vl.items.length; i++) {
+        SC.vl.items[i].msgId = 'msg-' + i;
+      }
     } else {
-      SC.state.messages.splice(msgIndex, 1);
+      const msgElements = SC.$$('#messages .message');
+      let remove = false;
+      const toRemove = [];
+      for (let i = 0; i < msgElements.length; i++) {
+        const idx = parseInt(msgElements[i].dataset.msgIndex, 10);
+        if (idx === msgIndex) {
+          remove = true;
+          toRemove.push(msgElements[i]);
+          continue;
+        }
+        if (remove && msgElements[i].classList.contains('assistant')) {
+          toRemove.push(msgElements[i]);
+          break;
+        }
+        if (remove && msgElements[i].classList.contains('user')) {
+          break;
+        }
+      }
+      toRemove.forEach(e => e.remove());
     }
 
+    SC.state.messages.splice(msgIndex, removeCount);
     reindexMessages();
 
     addMessage('user', content);
     currentContent = '';
     currentAssistantEl = addMessage('assistant', '');
+    currentAssistantIndex = SC.state.messages.length - 1;
+    if (SC.vl) SC.vl.setStreaming(true);
     if (doneTimeout) clearTimeout(doneTimeout);
     doneTimeout = setTimeout(forceFinishIfStale, 30000);
-    const bubble = currentAssistantEl.querySelector('.msg-bubble');
-    bubble.innerHTML = '<div class="thinking"><div class="think-eyes"><svg width="32" height="16" viewBox="0 0 32 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle cx="24" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle class="pupil-l" cx="8" cy="8" r="2" fill="currentColor"/><circle class="pupil-r" cx="24" cy="8" r="2" fill="currentColor"/></svg></div><span class="think-label">Thinking<span class="think-dots"><span></span><span></span><span></span></span></span></div>';
+    if (currentAssistantEl) {
+      const bubble = currentAssistantEl.querySelector('.msg-bubble');
+      if (bubble) bubble.innerHTML = '<div class="thinking"><div class="think-eyes"><svg width="32" height="16" viewBox="0 0 32 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle cx="24" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/><circle class="pupil-l" cx="8" cy="8" r="2" fill="currentColor"/><circle class="pupil-r" cx="24" cy="8" r="2" fill="currentColor"/></svg></div><span class="think-label">Thinking<span class="think-dots"><span></span><span></span><span></span></span></span></div>';
+    }
     SC.wsSend('chat', { content: content });
   }
 
   function reindexMessages() {
+    if (SC.vl) {
+      for (var i = 0; i < SC.vl.items.length; i++) {
+        SC.vl.items[i].msgId = 'msg-' + i;
+      }
+      for (var j = 0; j < SC.state.messages.length; j++) {
+        SC.state.messages[j].msgId = 'msg-' + j;
+      }
+      SC.vl._render();
+      return;
+    }
     const msgElements = SC.$$('#messages .message');
     msgElements.forEach(function(el, i) {
       el.dataset.msgIndex = i;
@@ -224,21 +330,39 @@
   }
 
   function addCmdResult(content) {
-    const welcome = SC.$('.welcome');
-    if (welcome) welcome.remove();
-    const el = document.createElement('div');
-    el.className = 'message cmd-result';
+    var welcome = SC.$('#welcome');
+    if (welcome) welcome.classList.add('hidden');
+    var msgIndex = SC.state.messages.length;
+    var msgId = 'msg-' + msgIndex;
     const now = new Date();
     const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    el.innerHTML = `<div class="msg-role" style="color:var(--accent)">▶ Command</div><div class="msg-bubble" style="font-family:var(--font-d);background:var(--bg-2);border:1px solid var(--bd);border-radius:8px;white-space:pre-wrap;word-break:break-word;padding:10px 14px">${SC.escapeHtml(content)}</div><div class="msg-ts">${ts}</div>`;
-    SC.$('#messages').appendChild(el);
+
+    var item = {
+      role: 'cmd_result',
+      content: content,
+      ts: Date.now(),
+      msgId: msgId,
+      displayTs: ts,
+      isStreaming: false,
+      isRendered: true,
+      thinkingContent: ''
+    };
+
+    if (SC.vl) {
+      SC.vl.addItem(item);
+    } else {
+      const el = document.createElement('div');
+      el.className = 'message cmd-result';
+      el.innerHTML = `<div class="msg-role" style="color:var(--accent)">▶ Command</div><div class="msg-bubble" style="font-family:var(--font-d);background:var(--bg-2);border:1px solid var(--bd);border-radius:8px;white-space:pre-wrap;word-break:break-word;padding:10px 14px">${SC.escapeHtml(content)}</div><div class="msg-ts">${ts}</div>`;
+      SC.$('#messages').appendChild(el);
+    }
+
     SC.scrollChat();
     SC.state.messages.push({ role: 'cmd_result', content, ts: Date.now() });
-    return el;
   }
 
   function appendToken(token) {
-    if (!currentAssistantEl) return;
+    if (currentAssistantIndex < 0 && !currentAssistantEl) return;
     if (!SC.state.isProcessing) {
       SC.setState('isProcessing', true);
       SC.updateStopBtn();
@@ -247,8 +371,15 @@
     if (renderRAF) return;
     renderRAF = requestAnimationFrame(() => {
       renderRAF = null;
-      if (!currentAssistantEl) return;
-      const bubble = currentAssistantEl.querySelector('.msg-bubble');
+
+      if (SC.vl && currentAssistantIndex >= 0 && currentAssistantIndex < SC.vl.items.length) {
+        SC.vl.items[currentAssistantIndex].content = currentContent;
+      }
+
+      var el = SC.vl ? SC.vl.getItemElement(currentAssistantIndex) : currentAssistantEl;
+      if (!el) return;
+      const bubble = el.querySelector('.msg-bubble');
+      if (!bubble) return;
       const thinking = bubble.querySelector('.thinking');
       if (thinking) thinking.remove();
 
@@ -260,12 +391,16 @@
         bubble.prepend(thinkingBlockEl);
       }
       SC.scrollChat();
+      if (SC.vl) SC.vl.refreshItemHeight(currentAssistantIndex);
     });
   }
 
   function appendThinking(token) {
-    if (!currentAssistantEl) return;
-    const bubble = currentAssistantEl.querySelector('.msg-bubble');
+    if (currentAssistantIndex < 0 && !currentAssistantEl) return;
+    var el = SC.vl ? SC.vl.getItemElement(currentAssistantIndex) : currentAssistantEl;
+    if (!el) return;
+    const bubble = el.querySelector('.msg-bubble');
+    if (!bubble) return;
     currentThinking += token;
     if (!thinkingBlock) {
       thinkingBlock = document.createElement('details');
@@ -280,31 +415,47 @@
     content.textContent = currentThinking;
     thinkingBlock.querySelector('summary').textContent = '💭 Thinking...';
     SC.scrollChat();
+    if (SC.vl && currentAssistantIndex >= 0) {
+      SC.vl.items[currentAssistantIndex].thinkingContent = currentThinking;
+      SC.vl.refreshItemHeight(currentAssistantIndex);
+    }
   }
 
   function finishMessage(msg) {
     if (renderRAF) { cancelAnimationFrame(renderRAF); renderRAF = null; }
-    if (currentAssistantEl && currentContent) {
-      const bubble = currentAssistantEl.querySelector('.msg-bubble');
-      if (bubble) {
-        const thinking = bubble.querySelector('.thinking');
-        if (thinking) thinking.remove();
-        const thinkingBlockEl = bubble.querySelector('.thinking-block');
-        try {
-          bubble.innerHTML = renderMarkdown(currentContent);
-          bubble.classList.add('rendered');
-        } catch (e) {
-          console.error('renderMarkdown error:', e);
-          bubble.innerHTML = renderPlainText(currentContent);
+
+    if (currentAssistantIndex >= 0 || currentAssistantEl) {
+      var el = SC.vl ? SC.vl.getItemElement(currentAssistantIndex) : currentAssistantEl;
+      if (el) {
+        const bubble = el.querySelector('.msg-bubble');
+        if (bubble) {
+          const thinking = bubble.querySelector('.thinking');
+          if (thinking) thinking.remove();
+          const thinkingBlockEl = bubble.querySelector('.thinking-block');
+          try {
+            bubble.innerHTML = renderMarkdown(currentContent);
+            bubble.classList.add('rendered');
+          } catch (e) {
+            console.error('renderMarkdown error:', e);
+            bubble.innerHTML = renderPlainText(currentContent);
+          }
+          if (thinkingBlockEl) {
+            thinkingBlockEl.open = false;
+            thinkingBlockEl.querySelector('summary').textContent = '💭 Thought process (' + currentThinking.length + ' chars)';
+            bubble.prepend(thinkingBlockEl);
+            thinkingBlock = null;
+          }
+          bindCodeCopy(bubble);
+          postRenderMarkdown(bubble);
         }
-        if (thinkingBlockEl) {
-          thinkingBlockEl.open = false;
-          thinkingBlockEl.querySelector('summary').textContent = '💭 Thought process (' + currentThinking.length + ' chars)';
-          bubble.prepend(thinkingBlockEl);
-          thinkingBlock = null;
-        }
-        bindCodeCopy(bubble);
-        postRenderMarkdown(bubble);
+      }
+
+      if (SC.vl && currentAssistantIndex >= 0 && currentAssistantIndex < SC.vl.items.length) {
+        SC.vl.items[currentAssistantIndex].isStreaming = false;
+        SC.vl.items[currentAssistantIndex].isRendered = true;
+        SC.vl.items[currentAssistantIndex].content = currentContent;
+        SC.vl.items[currentAssistantIndex].thinkingContent = currentThinking;
+        SC.vl.refreshItemHeight(currentAssistantIndex);
       }
     }
     if (msg.tokens) {
@@ -327,10 +478,12 @@
     }
     if (doneTimeout) { clearTimeout(doneTimeout); doneTimeout = null; }
     currentAssistantEl = null;
+    currentAssistantIndex = -1;
     currentContent = '';
     currentThinking = '';
     SC.setState('isProcessing', false);
     SC.updateStopBtn();
+    if (SC.vl) SC.vl.setStreaming(false);
 
     if (SC.state.ui.currentSessionId && SC.state.messages.length > 0) {
       const currentSession = (SC.state.sessions || []).find(s => s.id === SC.state.ui.currentSessionId);
@@ -548,4 +701,6 @@
   SC.startEditMessage = startEditMessage;
   SC.retryMessage = retryMessage;
   SC.bindMsgActions = bindMsgActions;
+  SC.initVirtualList = initVirtualList;
+  SC.createMessageElement = createMessageElement;
 })();
