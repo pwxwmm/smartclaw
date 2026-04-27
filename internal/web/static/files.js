@@ -21,7 +21,11 @@
     const container = parent || SC.$('#file-tree');
     container.innerHTML = '';
     if (!parent && nodes.length === 0) {
-      container.innerHTML = '<div class="loading-placeholder"><span class="spin"></span>Loading files...</div>';
+      SC.showEmptyState(container,
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>',
+        'No files loaded',
+        'Open a project directory to see its files here.'
+      );
       return;
     }
     nodes.forEach(node => {

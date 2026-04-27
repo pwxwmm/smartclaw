@@ -8,7 +8,11 @@
     if (!list) return;
     list.innerHTML = '';
     if (!SC.state.agents || SC.state.agents.length === 0) {
-      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No active agents</div>';
+      SC.showEmptyState(list,
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+        'No active agents',
+        'Agents will appear here when running tasks.'
+      );
       SC.updateStats();
       return;
     }

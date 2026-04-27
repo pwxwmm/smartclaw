@@ -83,4 +83,22 @@
       SC.toast('Async error: ' + msg.slice(0, 80), 'error');
     }
   });
+
+  SC.showSkeleton = function(container, count) {
+    count = count || 3;
+    var html = '';
+    for (var i = 0; i < count; i++) {
+      html += '<div class="skeleton-block skeleton"><div class="skeleton-text skeleton w-75"></div><div class="skeleton-text skeleton w-50"></div><div class="skeleton-text skeleton w-33"></div></div>';
+    }
+    container.innerHTML = html;
+  };
+
+  SC.hideSkeleton = function(container) {
+    var skeletons = container.querySelectorAll('.skeleton-block, .skeleton-text, .skeleton-circle');
+    skeletons.forEach(function(el) { el.remove(); });
+  };
+
+  SC.showEmptyState = function(container, icon, title, desc) {
+    container.innerHTML = '<div class="empty-state">' + (icon || '') + '<span class="empty-title">' + SC.escapeHtml(title) + '</span>' + (desc ? '<span class="empty-desc">' + SC.escapeHtml(desc) + '</span>' : '') + '</div>';
+  };
 })();

@@ -7,7 +7,11 @@
     const list = SC.$('#session-list');
     list.innerHTML = '';
     if (sessions.length === 0) {
-      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No sessions yet</div>';
+      SC.showEmptyState(list,
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>',
+        'No sessions yet',
+        'Start a conversation to create your first session.'
+      );
       SC.setState('sessions', sessions);
       SC.$('#s-total-sessions').textContent = '0';
       return;
@@ -19,7 +23,11 @@
       : sessions;
 
     if (filtered.length === 0) {
-      list.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No sessions found</div>';
+      SC.showEmptyState(list,
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+        'No sessions found',
+        'Try a different search term.'
+      );
       SC.setState('sessions', sessions);
       SC.$('#s-total-sessions').textContent = sessions.length;
       return;
