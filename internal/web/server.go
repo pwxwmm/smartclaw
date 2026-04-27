@@ -99,20 +99,22 @@ type WebServer struct {
 	apiClient    *api.Client
 	server       *http.Server
 	otlpShutdown func(context.Context) error
-	authToken    string
+	authManager  *AuthManager
+	noAuth       bool
 }
 
-func NewWebServer(port int, workDir string, apiClient *api.Client) *WebServer {
+func NewWebServer(port int, workDir string, apiClient *api.Client, noAuth bool) *WebServer {
 	hub := NewHub()
 	handler := NewHandler(hub, workDir, apiClient)
 
 	return &WebServer{
-		port:      port,
-		hub:       hub,
-		handler:   handler,
-		workDir:   workDir,
-		apiClient: apiClient,
-		authToken: os.Getenv("SMARTCLAW_AUTH_TOKEN"),
+		port:        port,
+		hub:         hub,
+		handler:     handler,
+		workDir:     workDir,
+		apiClient:   apiClient,
+		authManager: NewAuthManager(),
+		noAuth:      noAuth,
 	}
 }
 
@@ -185,6 +187,8 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/", s.serveIndex)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
 	mux.HandleFunc("/ws", s.handleWebSocket)
+	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 	rl := newRateLimiter()
 	mux.HandleFunc("/api/files", rl.Middleware(s.authMiddleware(s.handleFileTree)))
 	mux.HandleFunc("/api/file", rl.Middleware(s.authMiddleware(s.handleFileContent)))
@@ -269,10 +273,12 @@ func (s *WebServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	if s.authToken != "" && token != s.authToken {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	if !s.noAuth && s.authManager.IsAuthRequired() {
+		token := s.extractToken(r)
+		if !s.validateAccessToken(token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	conn, err := websocket.Accept(w, r, nil)
@@ -300,21 +306,100 @@ func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		token := r.URL.Query().Get("token")
-		if token == "" {
-			token = r.Header.Get("Authorization")
-			if strings.HasPrefix(token, "Bearer ") {
-				token = strings.TrimPrefix(token, "Bearer ")
-			}
+		if s.noAuth {
+			next(w, r)
+			return
 		}
 
-		if s.authToken != "" && token != s.authToken {
+		if !s.authManager.IsAuthRequired() {
+			next(w, r)
+			return
+		}
+
+		token := s.extractToken(r)
+		if !s.validateAccessToken(token) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		next(w, r)
 	}
+}
+
+func (s *WebServer) extractToken(r *http.Request) string {
+	if cookie, err := r.Cookie("smartclaw-token"); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+
+	token := r.Header.Get("Authorization")
+	if strings.HasPrefix(token, "Bearer ") {
+		return strings.TrimPrefix(token, "Bearer ")
+	}
+	if token != "" {
+		return token
+	}
+
+	return r.URL.Query().Get("token")
+}
+
+func (s *WebServer) validateAccessToken(token string) bool {
+	if token == "" {
+		return false
+	}
+
+	if session, err := s.authManager.ValidateToken(token); err == nil && session != nil {
+		return true
+	}
+
+	if s.authManager.ValidateLegacyToken(token) {
+		return true
+	}
+
+	return false
+}
+
+func (s *WebServer) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	token, err := s.authManager.Login(req.APIKey)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "smartclaw-token",
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(sessionDuration.Seconds()),
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+func (s *WebServer) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	authenticated := s.noAuth || !s.authManager.IsAuthRequired()
+
+	if !authenticated {
+		token := s.extractToken(r)
+		authenticated = s.validateAccessToken(token)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": authenticated})
 }
 
 func (s *WebServer) readPump(client *Client, conn *websocket.Conn) {

@@ -151,6 +151,7 @@ func init() {
 	})
 
 	var webPort int
+	var webNoAuth bool
 	webCmd := &cobra.Command{
 		Use:   "web",
 		Short: "Start SmartClaw WebUI server",
@@ -173,7 +174,7 @@ func init() {
 			}
 
 			workDir, _ := os.Getwd()
-			server := web.NewWebServer(webPort, workDir, apiClient)
+			server := web.NewWebServer(webPort, workDir, apiClient, webNoAuth)
 			lifecycle.Register(server)
 			if err := server.Start(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -182,6 +183,7 @@ func init() {
 		},
 	}
 	webCmd.Flags().IntVar(&webPort, "port", 8080, "WebUI server port")
+	webCmd.Flags().BoolVar(&webNoAuth, "no-auth", false, "Disable authentication for local development")
 	rootCmd.AddCommand(webCmd)
 
 	acpCmd := &cobra.Command{
