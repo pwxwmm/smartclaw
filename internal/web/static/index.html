@@ -1,387 +1,767 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" class="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="SmartClaw — AI agent that learns your workflow" />
+  <meta name="theme-color" content="#08080b" />
   <title>SmartClaw</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230f172a'/%3E%3Cellipse cx='16' cy='19' rx='9' ry='10' fill='%232d3748'/%3E%3Cpath d='M7 6l4 9M25 6l-4 9' stroke='%232d3748' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='16' r='3' fill='%23ed8936'/%3E%3Ccircle cx='20' cy='16' r='3' fill='%23ed8936'/%3E%3Ccircle cx='12' cy='16' r='1.5' fill='%230d0d1a'/%3E%3Ccircle cx='20' cy='16' r='1.5' fill='%230d0d1a'/%3E%3Ccircle cx='11.2' cy='15.2' r='.7' fill='%23fff' opacity='.8'/%3E%3Ccircle cx='19.2' cy='15.2' r='.7' fill='%23fff' opacity='.8'/%3E%3Cpath d='M15 20l1 3 1-3' fill='%23ed8936'/%3E%3C/svg%3E">
-
-  <link rel="stylesheet" href="/static/style.css?v=20260409">
-  <link rel="stylesheet" href="/static/vendor/atom-one-dark.min.css">
-  <link rel="stylesheet" href="/static/vendor/katex.min.css">
-  <link rel="stylesheet" href="/static/vendor/codemirror/codemirror.min.css">
-  <link rel="stylesheet" href="/static/vendor/codemirror/dracula.min.css">
-  <script defer src="/static/vendor/katex.min.js"></script>
-  <script defer src="/static/vendor/auto-render.min.js"></script>
+  <link rel="icon" type="image/svg+xml" href="/static/assets/logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden">
+    <defs>
+      <filter id="lg-refract" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.012 0.015" numOctaves="3" seed="5" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="6" xChannelSelector="R" yChannelSelector="G" result="refracted"/>
+        <feGaussianBlur in="refracted" stdDeviation="0.4" result="smoothed"/>
+        <feMerge><feMergeNode in="smoothed"/></feMerge>
+      </filter>
+      <filter id="lg-refract-light" x="-3%" y="-3%" width="106%" height="106%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.018 0.02" numOctaves="2" seed="8" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+    </defs>
+  </svg>
+  <style>
+    #app { min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg-0); }
+    .loader { display:flex; flex-direction:column; align-items:center; gap:16px; }
+    .loader-ring { width:36px; height:36px; border:2px solid rgba(139,92,246,0.12); border-top-color:#8b5cf6; border-radius:50%; animation:spin .8s linear infinite; }
+    .loader-text { font-family:'Inter',-apple-system,sans-serif; font-size:13px; color:rgba(167,139,250,0.4); letter-spacing:.08em; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+  </style>
 </head>
-<body>
-  <div id="app">
-    <aside id="sidebar" class="sidebar">
-      <div class="sidebar-head">
-        <div class="brand">
-          <svg class="brand-icon" width="22" height="22" viewBox="0 0 32 32" fill="none">
-            <ellipse cx="16" cy="19" rx="9" ry="10" fill="currentColor" opacity=".85"/>
-            <path d="M7 6l4 9M25 6l-4 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-            <circle cx="12" cy="16" r="3" fill="#ed8936"/>
-            <circle cx="20" cy="16" r="3" fill="#ed8936"/>
-            <circle cx="12" cy="16" r="1.5" fill="#0d0d1a"/>
-            <circle cx="20" cy="16" r="1.5" fill="#0d0d1a"/>
-            <circle cx="11.2" cy="15.2" r=".7" fill="#fff" opacity=".8"/>
-            <circle cx="19.2" cy="15.2" r=".7" fill="#fff" opacity=".8"/>
-            <path d="M15 20l1 3 1-3" fill="#ed8936"/>
-          </svg>
-          <span class="brand-name">SmartClaw</span>
+<body class="antialiased">
+<div id="app">
+
+
+
+<div id="splash" class="overlay-full">
+  <div class="loader"><div class="loader-ring"></div><span class="loader-text">SmartClaw</span></div>
+</div>
+
+<aside id="sidebar" class="sidebar liquid-glass-strong" aria-label="Sidebar">
+  <div class="sidebar-rail">
+    <button class="sidebar-brand-btn" title="SmartClaw">
+      <svg width="24" height="24" viewBox="0 0 512 512" fill="none"><circle cx="256" cy="256" r="240" fill="#0f172a" opacity=".95"/><ellipse cx="256" cy="195" rx="85" ry="70" fill="#2d3748"/><circle cx="225" cy="190" r="14" fill="#8b5cf6"/><circle cx="287" cy="190" r="14" fill="#8b5cf6"/><circle cx="219" cy="184" r="3.5" fill="#fff" opacity=".85"/><circle cx="281" cy="184" r="3.5" fill="#fff" opacity=".85"/></svg>
+    </button>
+    <div class="sidebar-rail-icons">
+      <button class="sidebar-rail-btn" data-view="chat" title="Chat">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="files" title="Files">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="sessions" title="Sessions">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="agents" title="Agents">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="skills" title="Skills">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="memory" title="Memory">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 0110 10c0 5.52-4.48 10-10 10S2 17.52 2 12"/><path d="M12 6v6l4 2"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="mcp" title="MCP">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="2"/><rect x="14" y="2" width="8" height="8" rx="2"/><rect x="2" y="14" width="8" height="8" rx="2"/><rect x="14" y="14" width="8" height="8" rx="2"/><line x1="10" y1="6" x2="14" y2="6"/><line x1="10" y1="18" x2="14" y2="18"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="wiki" title="Wiki">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      </button>
+    </div>
+    <div class="sidebar-rail-bottom">
+      <div class="sidebar-rail-projects" id="sidebar-rail-projects"></div>
+      <button class="sidebar-rail-btn" id="rail-project-add" title="Open Project">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <button class="sidebar-rail-btn" data-view="settings" title="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="sidebar-expanded">
+    <div class="sidebar-head">
+      <div class="sidebar-project-switcher" id="project-switcher">
+        <div class="project-avatar" id="project-avatar">P</div>
+        <span class="project-switcher-name" id="project-name">Project</span>
+      </div>
+      <button class="icon-btn sm" id="sidebar-toggle" title="Collapse">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>
+      </button>
+    </div>
+    <div class="sidebar-body">
+    <div id="section-files" class="section active">
+      <div class="section-head"><span>Files</span><button class="icon-btn sm" id="refresh-files" title="Refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></button></div>
+      <div class="file-search-wrap">
+        <svg class="file-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="file-search" id="file-search" placeholder="Search files..." aria-label="Search files" />
+        <button class="file-search-clear hidden" id="file-search-clear">&times;</button>
+      </div>
+      <div id="file-tree" class="file-tree"></div>
+    </div>
+  </div>
+</aside>
+
+<div id="sidebar-overlay" class="hidden"></div>
+
+<main class="main">
+  <header class="topbar liquid-glass">
+    <div class="topbar-left">
+      <button class="icon-btn" id="sidebar-open-view" title="Toggle Sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      </button>
+      <span class="conn-dot" id="connection-status" data-status="off"></span>
+      <span class="model-tag" id="current-model">sre-model</span>
+      <span class="app-title" id="app-title">SmartClaw</span>
+    </div>
+    <div class="topbar-right">
+      <div id="agent-switcher" class="relative" style="display:inline-flex">
+        <button class="icon-btn" id="agent-switcher-toggle" title="Agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></button>
+        <div id="agent-switcher-dropdown" class="hidden" style="position:absolute;top:100%;right:0;min-width:200px;z-index:50"></div>
+      </div>
+      <button class="icon-btn relative" id="btn-bookmarks" title="Bookmarks">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
+        <span id="bookmark-count" class="notif-badge hidden">0</span>
+      </button>
+      <div id="bookmark-dropdown" class="hidden" style="position:absolute;top:100%;right:60px;width:300px;z-index:50">
+        <div class="panel-header"><span class="label-sm">Bookmarks</span><button id="bookmark-clear-all" class="btn-text-xs">Clear All</button></div>
+        <div id="bookmark-list" class="scroll-box"></div>
+      </div>
+      <button class="icon-btn relative" id="btn-notifications" title="Notifications">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span id="notification-badge" class="notif-badge hidden">0</span>
+      </button>
+      <div id="notification-dropdown" class="notif-dropdown hidden" style="position:absolute;top:100%;right:40px;width:320px;z-index:50">
+        <div class="panel-header"><span class="label-sm">Notifications</span><div class="flex-gap-xs"><button id="notif-mark-read" class="btn-text-xs">Mark all read</button><button id="notif-clear-all" class="btn-text-xs">Clear all</button></div></div>
+        <div id="notif-list" class="scroll-box"></div>
+      </div>
+      <button class="icon-btn" id="btn-dashboard" title="Dashboard">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-editor" title="Editor">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-share" title="Share">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      </button>
+      <button class="hidden" id="btn-stop" title="Stop" aria-label="Stop generation">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
+      </button>
+      <div class="window-controls" id="window-controls">
+        <button class="win-ctrl win-minimize" id="win-minimize" title="Minimize">
+          <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+        <button class="win-ctrl win-maximize" id="win-maximize" title="Maximize">
+          <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        </button>
+        <button class="win-ctrl win-close" id="win-close" title="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="tab-bar" role="tablist">
+    <div id="tab-bar-scroll">
+      <button id="tab-scroll-left" class="icon-btn sm hidden flex-shrink-0">&#9664;</button>
+      <button id="tab-scroll-right" class="icon-btn sm hidden flex-shrink-0">&#9654;</button>
+    </div>
+    <button id="tab-new" class="icon-btn sm flex-shrink-0" title="New Tab">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </div>
+
+  <div id="view-chat" class="view active">
+    <div id="intent-ribbon" class="intent-ribbon hidden"></div>
+    <div id="chat" class="chat">
+      <div id="messages" class="messages" role="log" aria-live="polite" aria-label="Chat messages">
+        <div class="vl-top-spacer"></div>
+        <div class="vl-bottom-spacer"></div>
+      </div>
+      <div id="welcome" class="welcome">
+        <svg class="welcome-icon" width="64" height="64" viewBox="0 0 512 512" fill="none"><circle cx="256" cy="256" r="240" fill="#0f172a" opacity=".95"/><path d="M190 170L175 110L210 155Z" fill="#2d3748"/><path d="M322 170L337 110L302 155Z" fill="#2d3748"/><ellipse cx="256" cy="310" rx="100" ry="120" fill="#2d3748"/><ellipse cx="256" cy="195" rx="85" ry="70" fill="#2d3748"/><circle cx="225" cy="190" r="24" fill="#8b5cf6"/><circle cx="287" cy="190" r="24" fill="#8b5cf6"/><circle cx="225" cy="190" r="14" fill="#0d0d1a"/><circle cx="287" cy="190" r="14" fill="#0d0d1a"/><circle cx="219" cy="184" r="3.5" fill="#fff" opacity=".85"/><circle cx="281" cy="184" r="3.5" fill="#fff" opacity=".85"/><path d="M248 208L256 228L264 208Z" fill="#8b5cf6"/></svg>
+        <h2>SmartClaw</h2>
+        <p>Your AI coding assistant. Ask me anything about your codebase, write features, debug issues, or explore your project.</p>
+        <div class="shortcuts">
+          <span class="shortcut"><kbd>Enter</kbd> Send</span>
+          <span class="shortcut"><kbd>Shift+Enter</kbd> New line</span>
+          <span class="shortcut"><kbd>@</kbd> Add files</span>
+          <span class="shortcut"><kbd>/</kbd> Commands</span>
+          <span class="shortcut"><kbd>Ctrl+K</kbd> Focus input</span>
         </div>
       </div>
-
-      <nav class="sidebar-nav">
-        <button class="nav-btn active" data-section="files">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-          <span>Files</span>
-        </button>
-        <button class="nav-btn" data-section="sessions">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-          <span>Sessions</span>
-        </button>
-        <button class="nav-btn" data-section="agents">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span>Agents</span>
-        </button>
-        <button class="nav-btn" data-section="settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          <span>Settings</span>
-        </button>
-        <button class="nav-btn" data-section="skills">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span>Skills</span>
-        </button>
-        <button class="nav-btn" data-section="memory">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="8" rx="9" ry="6"/><path d="M3 8v8a9 6 0 0018 0V8"/></svg>
-          <span>Memory</span>
-        </button>
-        <button class="nav-btn" data-section="wiki">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-          <span>Wiki</span>
-        </button>
-      </nav>
-
-      <div class="sidebar-body">
-        <div id="section-files" class="section active">
-          <div class="section-head"><span>Project Files</span><button class="icon-btn sm" id="refresh-files" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></button></div>
-          <div class="file-search-wrap">
-            <svg class="file-search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="file-search" class="file-search" placeholder="Search files..." autocomplete="off">
-            <button class="file-search-clear hidden" id="file-search-clear" aria-label="Clear">&times;</button>
-          </div>
-          <div id="file-tree" class="file-tree"></div>
-        </div>
-        <div id="section-sessions" class="section">
-          <div class="section-head"><span>Sessions</span><button class="icon-btn sm" id="new-session" aria-label="New session"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>
-          <input type="text" id="session-search" class="session-search" placeholder="Search sessions..." autocomplete="off">
-          <div id="session-list" class="session-list"></div>
-        </div>
-        <div id="section-agents" class="section">
-          <div class="section-head"><span>Agent Tasks</span></div>
-          <div id="agent-list" class="agent-list"></div>
-        </div>
-        <div id="section-settings" class="section">
-          <div class="section-head"><span>Settings</span></div>
-          <div class="settings-list">
-            <label class="setting-row"><span>Theme</span><select id="theme-select"><option value="dark">Dark</option><option value="light">Light</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunset">Sunset</option></select></label>
-            <label class="setting-row"><span>Model</span><select id="model-select"><option value="sre-model">SRE Model</option><option value="glm-4-plus">GLM-4 Plus</option><option value="glm-4-flash">GLM-4 Flash</option><option value="glm-4-long">GLM-4 Long</option><option value="claude-sonnet-4-5">Sonnet 4.5</option><option value="claude-opus-4">Opus 4</option><option value="gpt-4o">GPT-4o</option></select></label>
-            <label class="setting-row"><span>Font Size</span><input type="range" id="font-size" min="12" max="20" value="14"></label>
-            <div class="settings-divider"></div>
-            <div class="settings-group-title">Provider Configuration</div>
-            <label class="setting-row"><span>API Key</span><input type="password" id="cfg-api-key" class="cfg-input" placeholder="sk-..."></label>
-            <label class="setting-row"><span>Base URL</span><input type="text" id="cfg-base-url" class="cfg-input" placeholder="http://host:port/v1"></label>
-            <label class="setting-row"><span>Custom Model</span><input type="text" id="cfg-custom-model" class="cfg-input" placeholder="model-name"></label>
-            <label class="setting-row"><span>OpenAI Compatible</span><input type="checkbox" id="cfg-openai" checked></label>
-            <div class="setting-row"><button id="btn-save-provider" class="btn-primary sm">Save & Apply</button></div>
-            <div class="settings-divider"></div>
-            <div class="setting-row"><button id="open-theme-editor" class="btn-ghost">Theme Editor</button></div>
-            <div class="setting-row"><button id="open-dashboard" class="btn-ghost">Dashboard</button></div>
-          </div>
-        </div>
-        <div id="section-skills" class="section">
-          <div class="section-head" id="skill-section-header"><span>Skills</span></div>
-          <input type="text" id="skill-search" class="session-search" placeholder="Search skills..." autocomplete="off">
-          <div id="skill-list" class="skill-list"></div>
-        </div>
-        <div id="section-memory" class="section">
-          <div class="section-head"><span>Memory</span></div>
-          <div id="memory-stats" class="memory-stats"></div>
-          <div class="memory-tabs">
-            <button class="memory-tab active" data-tab="l1">L1 Prompt</button>
-            <button class="memory-tab" data-tab="l2">L2 Sessions</button>
-            <button class="memory-tab" data-tab="l3">L3 Skills</button>
-            <button class="memory-tab" data-tab="l4">L4 User Model</button>
-          </div>
-          <div id="memory-tab-l1" class="memory-tab-content active">
-            <div id="memory-layers" class="memory-layers">
-              <details class="memory-layer"><summary>L1: MEMORY.md</summary><pre id="memory-content" class="memory-content"></pre></details>
-              <details class="memory-layer"><summary>L1: USER.md</summary><pre id="user-content" class="memory-content"></pre></details>
-            </div>
-            <div id="memory-search-results" class="memory-search-results"></div>
-          </div>
-          <div id="memory-tab-l2" class="memory-tab-content">
-            <input type="text" id="session-fragment-search" class="session-search" placeholder="Search session history..." autocomplete="off">
-            <div id="session-fragments" class="session-fragments"></div>
-          </div>
-          <div id="memory-tab-l3" class="memory-tab-content">
-            <div id="skill-memory-list" class="skill-memory-list"></div>
-            <div id="skill-editor" class="skill-editor hidden">
-              <div class="skill-editor-header">
-                <span id="skill-editor-name"></span>
-                <button id="skill-editor-cancel" class="memory-cancel-btn">Cancel</button>
-                <button id="skill-editor-save" class="memory-save-btn">Save</button>
-              </div>
-              <textarea id="skill-editor-content" class="memory-textarea" rows="12"></textarea>
-            </div>
-          </div>
-          <div id="memory-tab-l4" class="memory-tab-content">
-            <div class="memory-observations-header">
-              <span class="memory-observations-title">Observations</span>
-              <button id="refresh-observations" class="memory-edit-btn">Refresh</button>
-            </div>
-            <div id="user-observations" class="user-observations"></div>
-          </div>
-        </div>
-        <div id="section-wiki" class="section">
-          <div class="section-head"><span>Wiki</span><span id="wiki-status" class="wiki-status"></span></div>
-          <input type="text" id="wiki-search" class="session-search" placeholder="Search wiki..." autocomplete="off">
-          <div id="wiki-pages" class="wiki-pages"></div>
-        </div>
+      <div id="drag-overlay" class="drag-overlay hidden"><div class="drag-inner"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span>Drop files here</span></div></div>
+    </div>
+    <div id="input-area" class="input-area liquid-glass">
+      <div id="image-previews" class="flex-gap-xs" style="padding:0 0 4px;flex-wrap:wrap"></div>
+      <div id="voice-bar" class="voice-bar hidden">
+        <canvas id="waveform" class="waveform" width="400" height="32"></canvas>
+        <span id="voice-status" class="voice-status">Listening...</span>
+        <button class="btn-ghost sm" id="voice-stop">Stop</button>
       </div>
-    </aside>
-
-    <main id="main" class="main">
-      <header class="topbar">
-        <div class="topbar-left">
-          <button id="sidebar-open" class="icon-btn" aria-label="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button>
-          <span id="connection-status" class="conn-dot" data-status="off"></span>
-          <span class="model-tag" id="current-model">sre-model</span>
+      <div id="intent-ribbon-input" class="intent-ribbon hidden"></div>
+      <div class="input-row">
+        <button class="icon-btn" id="btn-attach" title="Attach file" aria-label="Attach file">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <textarea id="input" class="input" rows="1" placeholder="Ask SmartClaw anything..." aria-label="Message input"></textarea>
+        <input type="hidden" id="chat-input" />
+        <div id="file-mention" class="file-mention hidden">
+          <ul id="file-mention-list" class="file-mention-list"></ul>
         </div>
-        <div class="topbar-right">
-          <button id="btn-stop" class="btn-stop-top hidden" aria-label="Stop">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-          </button>
-          <button id="btn-voice" class="icon-btn" aria-label="Voice"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-          <button id="btn-notifications" class="icon-btn" aria-label="Notifications">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-            <span id="notification-badge" class="notif-badge hidden">0</span>
-          </button>
-          <div id="notification-dropdown" class="notif-dropdown hidden">
-            <div class="notif-dropdown-head">
-              <span>Notifications</span>
-              <div class="notif-dropdown-actions">
-                <button id="notif-mark-read" class="notif-action-btn">Mark all read</button>
-                <button id="notif-clear-all" class="notif-action-btn">Clear all</button>
-              </div>
-            </div>
-            <div id="notif-list" class="notif-list"></div>
-          </div>
-          <button id="btn-dashboard" class="icon-btn" aria-label="Dashboard"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></button>
-          <button id="btn-editor" class="icon-btn" aria-label="Editor"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        </div>
-      </header>
-
-      <div id="chat" class="chat">
-        <div id="welcome" class="welcome">
-          <svg class="welcome-icon" width="48" height="48" viewBox="0 0 32 32" fill="none"><ellipse cx="16" cy="19" rx="9" ry="10" fill="currentColor" opacity=".85"/><path d="M7 6l4 9M25 6l-4 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="16" r="3" fill="#ed8936"/><circle cx="20" cy="16" r="3" fill="#ed8936"/><circle cx="12" cy="16" r="1.5" fill="#0d0d1a"/><circle cx="20" cy="16" r="1.5" fill="#0d0d1a"/><path d="M15 20l1 3 1-3" fill="#ed8936"/></svg>
-          <h2>Welcome to SmartClaw</h2>
-          <p>Your AI-powered coding assistant. Ask me anything to get started.</p>
-          <div class="shortcuts"><span class="shortcut"><kbd>Ctrl</kbd>+<kbd>K</kbd> Focus</span><span class="shortcut"><kbd>Ctrl</kbd>+<kbd>N</kbd> New session</span><span class="shortcut"><kbd>Ctrl</kbd>+<kbd>/</kbd> Toggle sidebar</span></div>
-        </div>
-        <div id="messages" class="messages"></div>
-        <div id="drag-overlay" class="drag-overlay hidden">
-          <div class="drag-inner">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span>Drop files here</span>
-          </div>
-        </div>
-      </div>
-
-      <div id="input-area" class="input-area">
-        <div id="cmd-palette" class="cmd-palette hidden">
-          <input id="cmd-input" class="cmd-input" placeholder="Type a command..." autocomplete="off">
+        <div id="cmd-palette" class="cmd-palette liquid-glass-strong hidden">
+          <input type="text" class="cmd-input" id="cmd-input" placeholder="Type a command..." aria-label="Command palette search" />
           <ul id="cmd-list" class="cmd-list"></ul>
         </div>
-        <div class="input-row">
-          <div id="file-mention" class="file-mention hidden">
-            <ul id="file-mention-list" class="file-mention-list"></ul>
-          </div>
-          <button id="btn-attach" class="icon-btn" aria-label="Attach"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
-          <textarea id="input" class="input" placeholder="Ask me anything... (type @ to add files)" rows="1"></textarea>
-          <button id="btn-send" class="btn-send" aria-label="Send">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </button>
-        </div>
-        <div id="voice-bar" class="voice-bar hidden">
-          <canvas id="waveform" class="waveform" width="600" height="48"></canvas>
-          <span id="voice-status" class="voice-status">Listening...</span>
-          <button id="voice-stop" class="btn-stop">Stop</button>
-        </div>
-      </div>
-    </main>
-
-    <footer class="statusbar">
-      <span id="stat-tokens">0 / 200k tokens</span>
-      <div class="token-bar"><div id="token-fill" class="token-fill"></div></div>
-      <span id="stat-cost">$0.00</span>
-      <span id="stat-agents">0 agents</span>
-    </footer>
-
-    <div id="file-drawer" class="drawer">
-      <div class="drawer-head">
-        <span id="drawer-title" class="drawer-title">File Preview</span>
-        <button class="icon-btn" id="drawer-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-      </div>
-      <div class="drawer-actions">
-        <button class="btn-ghost sm" id="drawer-add-context">Add to Context</button>
-        <button class="btn-ghost sm" id="drawer-edit">Edit</button>
-      </div>
-      <pre id="drawer-content" class="drawer-content"><code></code></pre>
-    </div>
-
-    <div id="editor-panel" class="panel">
-      <div class="panel-head">
-        <span id="editor-title" class="panel-title">Editor</span>
-        <div class="panel-actions">
-          <button class="btn-primary sm" id="editor-save">Save</button>
-          <button class="icon-btn" id="editor-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-      </div>
-      <textarea id="editor-content" class="editor-content" spellcheck="false"></textarea>
-    </div>
-
-    <div id="dashboard-panel" class="panel">
-      <div class="panel-head">
-        <span class="panel-title">Dashboard</span>
-        <div class="panel-actions">
-          <button class="btn-ghost sm" id="telemetry-refresh">Refresh</button>
-          <button class="icon-btn" id="dashboard-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-      </div>
-      <div class="dash-grid">
-        <div class="dash-card"><h3>Token Usage</h3><canvas id="chart-tokens" width="300" height="160"></canvas></div>
-        <div class="dash-card"><h3>Cost Breakdown</h3><canvas id="chart-cost" width="300" height="160"></canvas></div>
-        <div class="dash-card"><h3>Agent Activity</h3><canvas id="chart-agents" width="300" height="160"></canvas></div>
-        <div class="dash-card">
-          <h3>Live Telemetry</h3>
-          <div class="telemetry-grid">
-            <div class="stat"><span class="stat-val" id="t-queries">0</span><span class="stat-lbl">Queries</span></div>
-            <div class="stat"><span class="stat-val" id="t-input-tokens">0</span><span class="stat-lbl">Input Tok</span></div>
-            <div class="stat"><span class="stat-val" id="t-output-tokens">0</span><span class="stat-lbl">Output Tok</span></div>
-            <div class="stat"><span class="stat-val" id="t-cost">$0.00</span><span class="stat-lbl">Est. Cost</span></div>
-            <div class="stat"><span class="stat-val" id="t-cache-rate">0%</span><span class="stat-lbl">Cache Hit</span></div>
-            <div class="stat"><span class="stat-val" id="t-avg-latency">0ms</span><span class="stat-lbl">Avg Latency</span></div>
-          </div>
-        </div>
-        <div class="dash-card">
-          <h3>Session Stats</h3>
-          <div class="stats-grid">
-            <div class="stat"><span class="stat-val" id="s-total-msgs">0</span><span class="stat-lbl">Messages</span></div>
-            <div class="stat"><span class="stat-val" id="s-total-tokens">0</span><span class="stat-lbl">Tokens</span></div>
-            <div class="stat"><span class="stat-val" id="s-total-cost">$0.00</span><span class="stat-lbl">Cost</span></div>
-            <div class="stat"><span class="stat-val" id="s-total-sessions">0</span><span class="stat-lbl">Sessions</span></div>
-          </div>
-        </div>
-        <div class="dash-card">
-          <h3>Tool Executions</h3>
-          <div id="tool-exec-list" class="tool-exec-list"></div>
-        </div>
+        <button class="icon-btn" id="btn-voice" title="Voice input" aria-label="Voice input">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <button class="btn-send" id="btn-send" title="Send" aria-label="Send message">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
       </div>
     </div>
-
-    <div id="theme-editor-panel" class="panel">
-      <div class="panel-head">
-        <span class="panel-title">Theme Editor</span>
-        <div class="panel-actions">
-          <button class="btn-ghost sm" id="theme-export">Export</button>
-          <button class="btn-ghost sm" id="theme-import">Import</button>
-          <button class="icon-btn" id="theme-editor-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-      </div>
-      <div id="theme-colors" class="theme-colors"></div>
-    </div>
-
-    <div id="help-modal" class="modal hidden">
-      <div class="modal-backdrop"></div>
-      <div class="modal-content">
-        <div class="modal-head">
-          <span class="modal-title">Keyboard Shortcuts & Commands</span>
-          <button class="icon-btn" id="help-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-        <div class="modal-body">
-          <div class="help-section">
-            <h4>Keyboard Shortcuts</h4>
-            <div class="help-grid">
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>K</kbd></span><span class="help-desc">Focus input / command mode</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>S</kbd></span><span class="help-desc">Save file (in editor)</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>N</kbd></span><span class="help-desc">New session</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>/</kbd></span><span class="help-desc">Toggle sidebar</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>P</kbd></span><span class="help-desc">Model switcher</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>O</kbd></span><span class="help-desc">Sessions panel</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>L</kbd></span><span class="help-desc">Clear chat</span>
-              <span class="help-key"><kbd>Ctrl</kbd>+<kbd>H</kbd></span><span class="help-desc">Help (this dialog)</span>
-              <span class="help-key"><kbd>Esc</kbd></span><span class="help-desc">Close panels/modals</span>
-              <span class="help-key"><kbd>↑</kbd> / <kbd>↓</kbd></span><span class="help-desc">Navigate command history</span>
-            </div>
-          </div>
-          <div class="help-section">
-            <h4>Slash Commands</h4>
-            <div class="help-grid">
-              <span class="help-key">/help</span><span class="help-desc">Show available commands</span>
-              <span class="help-key">/clear</span><span class="help-desc">Clear chat</span>
-              <span class="help-key">/model</span><span class="help-desc">Switch model</span>
-              <span class="help-key">/theme</span><span class="help-desc">Manage themes</span>
-              <span class="help-key">/memory</span><span class="help-desc">Memory management</span>
-              <span class="help-key">/skills</span><span class="help-desc">List available skills</span>
-              <span class="help-key">/agents</span><span class="help-desc">List available agents</span>
-              <span class="help-key">/export</span><span class="help-desc">Export session</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="toast-container" class="toast-container"></div>
-
-    <div id="msg-context-menu" class="ctx-menu hidden"></div>
   </div>
-  <script src="/static/vendor/highlight.min.js"></script>
-  <script src="/static/vendor/marked.min.js"></script>
-  <script src="/static/vendor/mermaid.min.js"></script>
-  <script src="/static/vendor/dompurify.min.js"></script>
-  <script src="/static/vendor/codemirror/codemirror.min.js"></script>
-  <script src="/static/vendor/codemirror/addon/matchbrackets.min.js"></script>
-  <script src="/static/vendor/codemirror/addon/closebrackets.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/xml.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/javascript.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/go.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/python.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/markdown.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/yaml.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/css.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/htmlmixed.min.js"></script>
-  <script src="/static/vendor/codemirror/mode/shell.min.js"></script>
-  <script src="/static/common.js?v=20260427"></script>
-  <script src="/static/state.js?v=20260427"></script>
-  <script src="/static/virtual-list.js?v=20260427"></script>
-  <script src="/static/ui.js?v=20260427"></script>
-  <script src="/static/ws.js?v=20260427"></script>
-  <script src="/static/chat.js?v=20260427"></script>
-  <script src="/static/sessions.js?v=20260427"></script>
-  <script src="/static/files.js?v=20260427"></script>
-  <script src="/static/skills.js?v=20260427"></script>
-  <script src="/static/memory.js?v=20260427"></script>
-  <script src="/static/wiki.js?v=20260427"></script>
-  <script src="/static/agents.js?v=20260427"></script>
-  <script src="/static/notifications.js?v=20260427"></script>
-  <script src="/static/tools.js?v=20260427"></script>
-  <script src="/static/upload.js?v=20260427"></script>
-  <script src="/static/voice.js?v=20260427"></script>
-  <script src="/static/editor.js?v=20260427"></script>
-  <script src="/static/app.js?v=20260427"></script>
+
+  <div id="view-sessions" class="view view-panel">
+    <div class="view-panel-header">
+      <h3 class="view-heading">Sessions</h3>
+      <div class="flex-gap-xs">
+        <button class="btn-ghost sm" id="new-session-view">New Session</button>
+        <button class="btn-ghost sm" id="refresh-sessions-view">Refresh</button>
+      </div>
+    </div>
+    <input type="text" class="session-search" id="session-search-view" placeholder="Search sessions..." aria-label="Search sessions" />
+    <div id="session-list-view" class="session-list"></div>
+  </div>
+  <div id="view-agents" class="view view-panel">
+    <div class="view-panel-header">
+      <h3 class="view-heading">Agents</h3>
+    </div>
+    <div id="agent-list-view" class="agent-list"></div>
+  </div>
+  <div id="view-skills" class="view view-panel">
+    <div class="view-panel-header">
+      <h3 class="view-heading">Skills</h3>
+      <div class="flex-gap-xs">
+        <button class="btn-ghost sm" id="btn-create-skill-view">Create Skill</button>
+        <button class="btn-ghost sm" id="btn-skill-marketplace">Marketplace</button>
+      </div>
+    </div>
+    <input type="text" class="session-search" id="skill-search-view" placeholder="Search skills..." aria-label="Search skills" />
+    <div id="skill-health-dashboard-view"></div>
+    <div id="skill-trending-section-view"></div>
+    <div id="skill-list-view" class="skill-list"></div>
+    <div id="skill-memory-list-view"></div>
+    <div id="skill-editor-view" class="skill-editor hidden">
+      <div class="skill-editor-header"><span id="skill-editor-name-view">Skill</span><button class="memory-save-btn" id="skill-editor-save-view">Save</button><button class="memory-cancel-btn" id="skill-editor-cancel-view">Cancel</button></div>
+      <textarea id="skill-editor-content-view" class="memory-textarea" style="min-height:300px"></textarea>
+    </div>
+  </div>
+  <div id="view-memory" class="view view-panel">
+    <h3 class="view-heading mb-16">Memory</h3>
+    <div id="memory-stats-view" class="memory-stats"></div>
+    <div class="memory-tabs" id="memory-tabs-view">
+      <button class="memory-tab active" data-tab="l1">L1 Prompt</button>
+      <button class="memory-tab" data-tab="l2">L2 Session</button>
+      <button class="memory-tab" data-tab="l3">L3 Skill</button>
+      <button class="memory-tab" data-tab="l4">L4 Profile</button>
+    </div>
+    <div id="memory-tab-l1-view" class="memory-tab-content active">
+      <div id="memory-content-view"></div>
+      <div id="user-content-view"></div>
+    </div>
+    <div id="memory-tab-l2-view" class="memory-tab-content">
+      <input type="text" class="session-search" id="memory-search-view" placeholder="Search memory..." aria-label="Search memory" />
+      <div id="memory-search-results-view"></div>
+      <div id="session-fragments-view"></div>
+    </div>
+    <div id="memory-tab-l3-view" class="memory-tab-content">
+      <div id="skill-memory-list-view-2"></div>
+    </div>
+    <div id="memory-tab-l4-view" class="memory-tab-content">
+      <div id="user-observations-view"></div>
+      <div id="user-profile-view"></div>
+      <button class="btn-ghost sm" id="refresh-observations-view">Refresh Observations</button>
+    </div>
+  </div>
+  <div id="view-files" class="view view-panel">
+    <div class="flex-between-heading">
+      <h3 class="view-heading">Files</h3>
+      <button class="btn-ghost sm" id="refresh-files-view-2">Refresh</button>
+    </div>
+    <div class="file-search-wrap"><svg class="file-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" class="file-search" id="file-search-view" placeholder="Search files..." aria-label="Search files" /></div>
+    <div id="file-tree-view" class="file-tree"></div>
+  </div>
+  <div id="view-wiki" class="view view-panel">
+    <div class="flex-between-heading">
+      <h3 class="view-heading">Wiki</h3>
+      <span id="wiki-status-view" class="wiki-status"></span>
+    </div>
+    <input type="text" class="session-search" id="wiki-search-view" placeholder="Search wiki..." aria-label="Search wiki" />
+    <div id="wiki-pages-view"></div>
+    <div id="wiki-pages-view-2" class="hidden"></div>
+    <div id="wiki-search-view-2" class="hidden"></div>
+    <div id="wiki-status-view-2" class="hidden"></div>
+  </div>
+  <div id="view-mcp" class="view view-panel">
+    <h3 class="view-heading mb-16">MCP Servers</h3>
+    <div class="flex-gap-xs mb-12"><button class="btn-ghost sm" id="mcp-add-btn">Add Server</button></div>
+    <div id="mcp-servers-panel"></div>
+    <div id="mcp-catalog-panel">
+      <div id="mcp-catalog-search-view" class="mb-8"><input type="text" class="session-search" placeholder="Search MCP catalog..." aria-label="Search MCP catalog" /></div>
+      <div id="mcp-category-chips" class="hidden"></div>
+      <div id="mcp-category-chips-view" class="flex-gap-xs mb-8" style="flex-wrap:wrap"></div>
+      <div id="mcp-catalog-grid-view" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px"></div>
+    </div>
+    <div id="mcp-tools-panel">
+      <div class="mb-8"><select id="mcp-tools-server-select" aria-label="Select MCP server" class="cfg-input" style="width:100%"><option value="">Select server...</option></select></div>
+      <div class="flex-end mb-8"><button class="btn-ghost sm" id="mcp-tools-refresh">Refresh</button></div>
+      <div id="mcp-tools-list"></div>
+      <div id="mcp-resources-list"></div>
+      <div id="mcp-market-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px"></div>
+    </div>
+  </div>
+  <div id="view-cron" class="view view-panel">
+    <h3 class="view-heading mb-16">Scheduled Tasks</h3>
+    <div id="cron-panel">
+      <input type="text" id="cron-schedule-input" aria-label="Cron schedule" class="hidden" />
+      <textarea id="cron-instruction-input" aria-label="Cron instruction" class="hidden"></textarea>
+      <div id="cron-schedule-preview"></div>
+      <button id="cron-form-cancel" class="hidden">Cancel</button>
+      <button id="cron-form-create" class="hidden">Create</button>
+    </div>
+    <div id="cron-panel-view"></div>
+  </div>
+  <div id="view-cost" class="view view-panel">
+    <div class="flex-between-heading">
+      <h3 class="view-heading">Cost Dashboard</h3>
+      <div class="flex-gap-xs"><button class="btn-ghost sm" id="cost-refresh">Refresh</button><button class="btn-ghost sm" id="cost-refresh-view">Refresh</button></div>
+    </div>
+    <div id="cost-period-tabs" class="flex-gap-xs mb-12" style="gap:4px"></div>
+    <div id="cost-trend-chart" class="mb-16"></div>
+    <div id="cost-trend-chart-view" class="mb-16"></div>
+    <div id="cost-model-breakdown" class="mb-16"></div>
+    <div id="cost-model-breakdown-view" class="mb-16"></div>
+    <div id="cost-tips" class="mb-16"></div>
+    <div id="cost-tips-view" class="mb-16"></div>
+    <div id="cost-projects"></div>
+  </div>
+  <div id="view-privacy" class="view view-panel">
+    <div class="flex-between-heading">
+      <h3 class="view-heading">Privacy Audit</h3>
+      <button class="btn-ghost sm" id="privacy-refresh-view">Refresh</button>
+    </div>
+    <div id="privacy-summary" class="mb-16"></div>
+    <div id="privacy-summary-view" class="mb-16"></div>
+    <div id="privacy-table-body"></div>
+    <div id="privacy-table-body-view"></div>
+  </div>
+  <div id="view-context" class="view view-panel">
+    <h3 class="view-heading mb-16">Context</h3>
+    <div id="context-files-section"><div id="file-tree-view-2"></div></div>
+      <div id="dependency-graph-section" class="hidden"><div id="graph-canvas"></div><div class="mt-8" style="text-align:right"><button class="btn-ghost sm" id="graph-refresh">Refresh</button></div></div>
+    <button class="btn-ghost sm hidden" id="reload-context-view">Reload Context</button>
+  </div>
+  <div id="view-workflows" class="view view-panel">
+    <h3 class="view-heading mb-16">Workflows</h3>
+    <div id="section-workflows"><div id="wf-toolbar-name" class="mb-8"></div><div id="wf-list" class="mb-16"></div><div id="wf-props"></div></div>
+  </div>
+  <div id="view-settings" class="view view-panel">
+    <div class="view-panel-header">
+      <h3 class="view-heading">Settings</h3>
+    </div>
+    <div class="settings-list">
+      <div class="settings-group-title">Appearance</div>
+      <div class="setting-row"><span>Theme</span><select id="theme-select-view"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunset">Sunset</option></select></div>
+      <div class="setting-row"><span>Font Size</span><input type="range" id="font-size-view" min="12" max="18" value="14" aria-label="Font size" /></div>
+      <div class="setting-row"><span>Language</span><select id="lang-select-view"><option value="en">English</option><option value="zh">中文</option><option value="ja">日本語</option></select></div>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Model</div>
+      <div class="setting-row"><span>Model</span><select id="model-select-view"><option value="sre-model">sre-model</option><option value="claude-sonnet-4-20250514">Claude Sonnet 4</option><option value="claude-opus-4-20250514">Claude Opus 4</option></select></div>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Provider</div>
+      <div class="setting-row"><span>API Key</span><input type="password" class="cfg-input" id="cfg-api-key-view" placeholder="sk-..." aria-label="API Key" /></div>
+      <div class="setting-row"><span>Base URL</span><input type="text" class="cfg-input" id="cfg-base-url-view" placeholder="https://api.anthropic.com" aria-label="Base URL" /></div>
+      <div class="setting-row"><span>Custom Model</span><input type="text" class="cfg-input" id="cfg-custom-model-view" placeholder="model-name" aria-label="Custom model name" /></div>
+      <div class="setting-row"><span>OpenAI Mode</span><input type="checkbox" id="cfg-openai-view" aria-label="Use OpenAI-compatible API" /></div>
+      <button class="btn-ghost" id="btn-save-provider-view">Save Provider</button>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Sound</div>
+      <div class="setting-row"><span>Sound Effects</span><input type="checkbox" id="setting-sound-view" aria-label="Sound effects" /></div>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Density</div>
+      <div class="setting-row"><span>UI Density</span><select id="setting-density-view" aria-label="Display density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></div>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Shortcuts</div>
+      <div id="shortcuts-editor-view"></div>
+      <button class="btn-ghost" id="shortcuts-reset-view">Reset Shortcuts</button>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Watchdog</div>
+      <div class="setting-row"><span>Enable Watchdog</span><input type="checkbox" id="watchdog-toggle-view" aria-label="Enable Watchdog" /></div>
+      <div class="settings-divider"></div>
+      <div class="settings-group-title">Tools</div>
+      <button class="btn-ghost" id="open-theme-editor-view">Theme Editor</button>
+      <button class="btn-ghost" id="open-dashboard-view-2">Dashboard</button>
+      <button class="btn-ghost" id="btn-focus-mode-view">Focus Mode</button>
+    </div>
+  </div>
+  <div id="view-onboarding" class="view view-panel"></div>
+  <div id="view-profile" class="view view-panel">
+    <h3 class="view-heading mb-16">Profile</h3>
+    <div class="flex-end mb-12"><button class="btn-ghost sm" id="profile-refresh">Refresh</button></div>
+    <div id="profile-content"></div>
+    <div id="profile-observations-timeline"></div>
+    <div id="profile-privacy"></div>
+    <div id="obs-category-filter" class="hidden"></div>
+    <button id="obs-load-more-btn" class="btn-ghost sm hidden">Load More</button>
+    <button id="btn-delete-all-obs" class="btn-ghost sm hidden">Delete All Observations</button>
+  </div>
+
+  <footer class="statusbar liquid-glass-light">
+    <span id="status-ring"></span>
+    <span id="stat-tokens">0 / 200k tokens</span>
+    <div class="token-bar" id="token-bar"><div class="token-fill" id="token-fill" style="width:0%"></div></div>
+    <span id="stat-cost">$0.00</span>
+    <span id="stat-agents">0 agents</span>
+    <span id="s-total-sessions" class="hidden"></span>
+  <div class="flex-1"></div>
+    <span id="current-phase"></span>
+  </footer>
+</main>
+
+
+
+<div id="editor-panel" class="panel">
+  <div class="panel-head">
+    <span class="panel-title" id="editor-title">Editor</span>
+    <div class="panel-actions">
+      <button class="btn-ghost sm" id="editor-save">Save</button>
+      <button class="icon-btn sm" id="editor-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+  </div>
+  <textarea class="editor-content" id="editor-content"></textarea>
+</div>
+
+<div id="dashboard-panel" class="panel">
+  <div class="panel-head">
+    <span class="panel-title">Dashboard</span>
+    <button class="icon-btn sm" id="dashboard-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="dash-grid">
+    <div class="dash-card liquid-glass"><h3>Messages</h3><div class="stats-grid"><div class="stat"><span class="stat-val" id="s-total-msgs">0</span><span class="stat-lbl">Total</span></div><div class="stat"><span class="stat-val" id="s-total-tokens">0</span><span class="stat-lbl">Tokens</span></div></div></div>
+    <div class="dash-card liquid-glass"><h3>Cost</h3><div class="stats-grid"><div class="stat"><span class="stat-val" id="s-total-cost">$0.00</span><span class="stat-lbl">Total</span></div><div class="stat"><span class="stat-val">-</span><span class="stat-lbl">Today</span></div></div></div>
+    <div class="dash-card liquid-glass"><h3>Tokens</h3><canvas id="chart-tokens" width="280" height="120"></canvas></div>
+    <div class="dash-card liquid-glass"><h3>Cost</h3><canvas id="chart-cost" width="280" height="120"></canvas></div>
+    <div class="dash-card liquid-glass"><h3>Agents</h3><canvas id="chart-agents" width="280" height="120"></canvas></div>
+  </div>
+</div>
+
+<div id="theme-editor-panel" class="panel">
+  <div class="panel-head">
+    <span class="panel-title">Theme Editor</span>
+    <button class="icon-btn sm" id="theme-editor-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="flex-gap-sm" style="padding:16px">
+    <button class="btn-ghost sm" id="theme-export">Export</button>
+    <button class="btn-ghost sm" id="theme-import">Import</button>
+  </div>
+  <div id="theme-colors" class="theme-colors"></div>
+</div>
+
+<div id="help-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content liquid-glass-strong">
+    <div class="modal-head">
+      <span class="modal-title">Keyboard Shortcuts</span>
+      <button class="icon-btn sm" id="help-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="help-section"><h4>Navigation</h4><div class="help-grid"><span class="help-key"><kbd>Ctrl+K</kbd></span><span class="help-desc">Command Palette</span><span class="help-key"><kbd>Ctrl+/</kbd></span><span class="help-desc">Toggle Sidebar</span><span class="help-key"><kbd>Ctrl+L</kbd></span><span class="help-desc">Clear Chat</span><span class="help-key"><kbd>Ctrl+N</kbd></span><span class="help-desc">New Session</span></div></div>
+      <div class="help-section"><h4>Input</h4><div class="help-grid"><span class="help-key"><kbd>Enter</kbd></span><span class="help-desc">Send Message</span><span class="help-key"><kbd>Shift+Enter</kbd></span><span class="help-desc">New Line</span><span class="help-key"><kbd>/</kbd></span><span class="help-desc">Commands</span><span class="help-key"><kbd>@</kbd></span><span class="help-desc">Mention File</span></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="share-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content liquid-glass-strong">
+    <div class="modal-head">
+      <span class="modal-title">Share</span>
+      <button class="icon-btn sm" id="share-modal-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div id="share-link-row" class="flex-gap-sm" style="align-items:center"><input type="text" id="share-link-input" class="cfg-input" style="flex:1" readonly aria-label="Share link" /><button class="btn-ghost sm" id="share-copy-btn">Copy</button></div>
+      <div class="flex-gap-sm mt-12">
+        <button class="btn-ghost sm" id="share-export-md">Export Markdown</button>
+        <button class="btn-ghost sm" id="share-export-pdf">Export JSON</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="mcp-add-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content liquid-glass-strong modal-md">
+    <div class="modal-head">
+      <span class="modal-title">Add MCP Server</span>
+      <button class="icon-btn sm" id="mcp-add-modal-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-list">
+        <div class="setting-row"><span>Name</span><input type="text" class="cfg-input" id="mcp-add-name" placeholder="my-server" aria-label="Server name" /></div>
+        <div class="setting-row"><span>Type</span><select id="mcp-add-type"><option value="stdio">Stdio</option><option value="sse">SSE</option></select></div>
+        <div id="mcp-add-stdio-fields">
+          <div class="setting-row"><span>Command</span><input type="text" class="cfg-input" id="mcp-add-command" placeholder="npx" aria-label="Server command" /></div>
+          <div class="setting-row"><span>Args</span><input type="text" class="cfg-input" id="mcp-add-args" placeholder="-y, @modelcontextprotocol/server" aria-label="Server arguments" /></div>
+        </div>
+        <div id="mcp-add-sse-fields" class="hidden">
+          <div class="setting-row"><span>URL</span><input type="text" class="cfg-input" id="mcp-add-url" placeholder="http://localhost:3000/sse" aria-label="Server URL" /></div>
+        </div>
+        <div class="setting-row"><span>Env</span><input type="text" class="cfg-input" id="mcp-add-env" placeholder="KEY=value" aria-label="Environment variables" /></div>
+        <div class="setting-row"><span>Description</span><input type="text" class="cfg-input" id="mcp-add-desc" placeholder="Optional description" aria-label="Server description" /></div>
+        <div class="setting-row"><span>Auto Start</span><input type="checkbox" id="mcp-add-autostart" checked aria-label="Auto-start server" /></div>
+      </div>
+    </div>
+    <div class="flex-gap-sm" style="padding:12px 18px;border-top:1px solid var(--bd)">
+      <button class="btn-ghost" id="mcp-add-cancel">Cancel</button>
+      <button class="btn-primary" id="mcp-add-submit">Add Server</button>
+    </div>
+  </div>
+</div>
+
+<div id="skill-create-overlay" class="skill-create-overlay hidden">
+  <div class="skill-create-form liquid-glass-strong">
+    <div class="skill-create-header"><span>Create Skill</span><button class="skill-create-close" id="skill-create-close">&times;</button></div>
+    <div class="skill-create-body">
+      <label class="skill-create-label">Name <span class="required">*</span></label><input type="text" class="skill-create-input" id="sc-name" placeholder="my-skill" aria-label="Skill name" />
+      <label class="skill-create-label">Description <span class="required">*</span></label><input type="text" class="skill-create-input" id="sc-desc" placeholder="What this skill does" aria-label="Skill description" />
+      <label class="skill-create-label">Version</label><input type="text" class="skill-create-input" id="sc-version" value="1.0" aria-label="Skill version" />
+      <label class="skill-create-label">Tags</label><input type="text" class="skill-create-input" id="sc-tags" placeholder="debug, fix, refactor" aria-label="Skill tags" />
+      <label class="skill-create-label">Tools</label><input type="text" class="skill-create-input" id="sc-tools" placeholder="bash, read_file, edit_file" aria-label="Skill tools" />
+      <label class="skill-create-label">Triggers</label><input type="text" class="skill-create-input" id="sc-triggers" placeholder="fix bug, debug error" aria-label="Skill triggers" />
+      <label class="skill-create-label">Body <span class="required">*</span></label><textarea class="skill-create-textarea skill-create-body-editor" id="sc-body" placeholder="Skill instructions..."></textarea>
+    </div>
+    <div class="skill-create-actions">
+      <button class="skill-create-btn skill-create-cancel">Cancel</button>
+      <button class="skill-create-btn skill-create-submit">Create</button>
+    </div>
+  </div>
+</div>
+
+<div id="arena-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content liquid-glass-strong modal-xl">
+    <div class="modal-head">
+      <span class="modal-title">Arena Mode</span>
+      <button class="icon-btn sm" id="arena-modal-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div id="arena-status" style="text-align:center;padding:20px;color:var(--tx-2)">Loading...</div>
+      <div class="grid-2col" style="gap:16px">
+        <div><div id="arena-header-a" class="label-sm mb-8">Model A</div><div id="arena-panel-a" class="scroll-box"></div></div>
+        <div><div id="arena-header-b" class="label-sm mb-8">Model B</div><div id="arena-panel-b" class="scroll-box"></div></div>
+      </div>
+      <div class="flex-gap-sm mt-16" style="justify-content:center">
+        <button class="btn-ghost sm" id="arena-vote-a">A is Better</button>
+        <button class="btn-ghost sm" id="arena-vote-b">B is Better</button>
+        <button class="btn-ghost sm" id="arena-vote-tie">Tie</button>
+        <button class="btn-ghost sm" id="arena-vote-neither">Neither</button>
+        <button class="btn-primary sm" id="arena-reveal-btn" disabled>Reveal</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="cost-weekly-report-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content liquid-glass-strong modal-lg">
+    <div class="modal-head"><span class="modal-title">Weekly Cost Report</span><button class="icon-btn sm" onclick="this.closest('.modal').classList.add('hidden')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="modal-body"></div>
+  </div>
+</div>
+
+<div id="dag-panel" class="side-panel side-panel-w320 side-panel-z80 hidden" style="bottom:20px;left:70px;max-height:400px;border-radius:var(--r-l);overflow:hidden">
+  <div class="panel-header"><span class="label-sm" style="font-family:var(--font-d);font-size:12px">DAG</span><button id="dag-panel-toggle" class="btn-text-xs" style="font-size:14px">_</button></div>
+  <div id="dag-container" class="scroll-box" style="padding:8px;max-height:340px"></div>
+</div>
+
+<div id="branch-menu" class="branch-menu liquid-glass-strong"></div>
+
+<div id="panel-area" class="panel-area liquid-glass-strong">
+  <div class="panel-tabs" id="panel-tabs"></div>
+  <div id="panel-body-watchdog" class="split-panel flex-1" style="overflow-y:auto;padding:12px"></div>
+  <div id="panel-divider" class="panel-divider"></div>
+</div>
+
+<div id="upload-overlay" class="overlay-modal-bg hidden" style="z-index:500">
+  <div style="padding:24px;background:var(--bg-2);border-radius:var(--r-l);text-align:center"><div class="view-heading mb-8" style="font-size:16px">Uploading...</div><div style="width:200px;height:4px;background:var(--bg-3);border-radius:2px;overflow:hidden"><div id="upload-progress-fill" style="height:100%;background:var(--accent);width:0%;transition:width 200ms"></div></div></div>
+</div>
+
+
+
+<div id="export-data-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content liquid-glass-strong modal-lg">
+    <div class="modal-head"><span class="modal-title">Export Data</span><button class="icon-btn sm" onclick="this.closest('.modal').classList.add('hidden')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="modal-body"><pre id="export-json" class="scroll-box" style="max-height:400px;font-size:11px;color:var(--tx-2)"></pre></div>
+  </div>
+</div>
+
+<div id="focus-exit" class="hidden" style="position:fixed;top:10px;right:10px;z-index:9999">
+  <button class="btn-ghost sm" style="background:rgba(0,0,0,0.6);backdrop-filter:blur(10px);border-color:rgba(255,255,255,0.1);color:#fff">Exit Focus</button>
+</div>
+
+<div id="tool-progress-bar" style="position:sticky;top:0;z-index:5;height:2px;background:var(--accent);width:0;transition:width 200ms"></div>
+
+<button id="btn-arena" class="hidden"></button>
+<button id="btn-focus-mode-alt" class="hidden"></button>
+<button id="btn-install-app" class="hidden"></button>
+<button id="btn-export-data" class="hidden"></button>
+<button id="btn-delete-all-obs-alt" class="hidden"></button>
+
+<div id="error-banner" class="hidden"></div>
+
+<div id="msg-context-menu" class="msg-context-menu liquid-glass-strong hidden" style="position:fixed;z-index:10000;min-width:180px"></div>
+
+<div id="toast-container" class="toast-container"></div>
+
+<div id="search-panel" class="hidden side-panel side-panel-w420 side-panel-z80">
+  <div class="flex-gap-sm" style="padding:12px;border-bottom:1px solid var(--bd)">
+    <input type="text" id="search-input" class="session-search" placeholder="Search messages..." aria-label="Search messages" style="flex:1" />
+  </div>
+  <div class="flex-gap-xs" style="padding:8px 12px;align-items:center">
+    <select id="search-role" class="select-sm"><option value="">All roles</option><option value="user">User</option><option value="assistant">Assistant</option></select>
+    <input type="date" id="search-since" aria-label="Search from date" class="select-sm" />
+    <input type="date" id="search-until" aria-label="Search to date" class="select-sm" />
+  </div>
+  <div id="search-recent" style="padding:4px 12px"></div>
+  <div id="search-results" style="padding:4px 12px;overflow-y:auto;max-height:calc(100vh - 140px)"></div>
+</div>
+
+<div id="canvas-panel" class="hidden side-panel side-panel-w50 side-panel-z85" style="flex-direction:column">
+  <div class="panel-header">
+    <span id="canvas-filename" class="label-sm" style="font-family:var(--font-d)"></span>
+    <div class="flex-gap-2xs">
+      <button class="btn-ghost sm" id="canvas-save">Save</button>
+      <button class="icon-btn sm" id="canvas-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+  </div>
+  <div id="canvas-editor" class="flex-1" style="overflow:hidden"></div>
+  <div id="canvas-divider" style="height:4px;cursor:col-resize;background:var(--bd)"></div>
+</div>
+
+<div id="artifact-panel" class="hidden side-panel side-panel-w50 side-panel-z86" style="flex-direction:column">
+  <div class="panel-header">
+    <span id="artifact-title" class="label-sm"></span>
+    <div class="flex-gap-2xs">
+      <button class="btn-ghost sm" id="artifact-toggle-code">Code</button>
+      <button class="btn-ghost sm" id="artifact-refresh">Refresh</button>
+      <button class="icon-btn sm" id="artifact-close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+  </div>
+  <div id="artifact-preview-content" class="flex-1" style="overflow:hidden"></div>
+  <div id="artifact-mermaid-target" class="hidden"></div>
+  <pre id="artifact-code-view" class="hidden flex-1" style="overflow:auto;padding:12px;font-size:12px;margin:0"></pre>
+</div>
+
+<div id="onboarding-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-backdrop"></div><div class="modal-content liquid-glass-strong"></div></div>
+
+<div id="mobile-nav" style="display:none;position:fixed;bottom:0;left:0;right:0;height:50px;background:var(--bg-1);border-top:1px solid var(--bd);z-index:40;display:flex;align-items:center;justify-content:space-around">
+  <button class="mobile-tab active btn-text-xs" data-tab="chat" style="font-size:10px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Chat</button>
+  <button class="mobile-tab btn-text-xs" data-tab="more" style="font-size:10px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>More</button>
+</div>
+
+</div>
+
+<link rel="stylesheet" href="/static/vendor/atom-one-dark.min.css" />
+<script src="/static/vendor/highlight.min.js"></script>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/dompurify.min.js"></script>
+<script src="/static/vendor/katex.min.js"></script>
+<script src="/static/vendor/auto-render.min.js"></script>
+<script src="/static/vendor/mermaid.min.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/state.js"></script>
+<script src="/static/virtual-list.js"></script>
+<script src="/static/ui.js"></script>
+<script src="/static/ws.js"></script>
+<script src="/static/tabs.js"></script>
+<script src="/static/chat.js"></script>
+<script src="/static/sessions.js"></script>
+<script src="/static/files.js"></script>
+<script src="/static/skills.js"></script>
+<script src="/static/memory.js"></script>
+<script src="/static/wiki.js"></script>
+<script src="/static/agents.js"></script>
+<script src="/static/notifications.js"></script>
+<script src="/static/tools.js"></script>
+<script src="/static/upload.js"></script>
+<script src="/static/share.js"></script>
+<script src="/static/dag.js"></script>
+<script src="/static/voice.js"></script>
+<script src="/static/editor.js"></script>
+<script src="/static/templates.js"></script>
+<script src="/static/search.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/mcp.js"></script>
+<script src="/static/cron.js"></script>
+<script src="/static/cost.js"></script>
+<script src="/static/profile.js"></script>
+<script src="/static/privacy.js"></script>
+<script src="/static/shortcuts.js"></script>
+<script src="/static/panels.js"></script>
+<script src="/static/branches.js"></script>
+<script src="/static/timeline.js"></script>
+<script src="/static/spotlight.js"></script>
+<script src="/static/keyboard.js"></script>
+<script src="/static/theme-aware.js"></script>
+<script src="/static/status-ring.js"></script>
+<script src="/static/particles.js"></script>
+<script src="/static/intent-ribbon.js"></script>
+<script src="/static/adaptive-panels.js"></script>
+<script src="/static/arena.js"></script>
+<script src="/static/artifacts.js"></script>
+<script src="/static/canvas.js"></script>
+<script src="/static/graph.js"></script>
+<script src="/static/watchdog.js"></script>
+<script src="/static/onboarding.js"></script>
+<script src="/static/i18n.js"></script>
+<script src="/static/audio.js"></script>
+<script src="/static/workflow.js"></script>
+<script src="/static/marketplace.js"></script>
+<script src="/static/monitoring.js"></script>
+
+<div class="dir-picker-overlay hidden" id="dir-picker-overlay">
+  <div class="dir-picker-modal">
+    <div class="dir-picker-head">
+      <span class="dir-picker-title">Open Project Directory</span>
+      <button class="icon-btn sm" id="dir-picker-close" title="Close">&times;</button>
+    </div>
+    <div class="dir-picker-path-bar">
+      <button class="icon-btn sm dir-picker-up" id="dir-picker-up" title="Go up">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+      </button>
+      <input type="text" class="dir-picker-path-input" id="dir-picker-path" placeholder="/path/to/directory" />
+      <button class="btn sm" id="dir-picker-go" title="Go">Go</button>
+    </div>
+    <div class="dir-picker-list" id="dir-picker-list"></div>
+    <div class="dir-picker-recent hidden" id="dir-picker-recent">
+      <div class="dir-picker-recent-head">Recent Projects</div>
+      <div class="dir-picker-recent-list" id="dir-picker-recent-list"></div>
+    </div>
+    <div class="dir-picker-foot">
+      <span class="dir-picker-selected-path" id="dir-picker-selected"></span>
+      <div class="dir-picker-actions">
+        <button class="btn sm ghost" id="dir-picker-cancel">Cancel</button>
+        <button class="btn sm accent" id="dir-picker-select" disabled>Select This Folder</button>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
