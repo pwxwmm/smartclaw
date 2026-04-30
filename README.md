@@ -1,3 +1,5 @@
+[English](README.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md) | [Español](docs/README.es.md)
+
 # SmartClaw
 
 A self-improving AI agent that learns your workflow over time.

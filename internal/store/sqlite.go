@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	apperrors "github.com/instructkr/smartclaw/internal/errors"
@@ -18,6 +19,8 @@ type Store struct {
 	db       *sql.DB
 	dbPath   string
 	jsonlDir string
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func NewStore() (*Store, error) {
@@ -40,6 +43,7 @@ func NewStoreWithDir(dir string) (*Store, error) {
 	s := &Store{
 		dbPath:   dbPath,
 		jsonlDir: jsonlDir,
+		stopCh:   make(chan struct{}),
 	}
 
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
@@ -65,6 +69,22 @@ func NewStoreWithDir(dir string) (*Store, error) {
 		slog.Warn("store: user_observations migration failed", "error", err)
 	}
 
+	if err := MigrateSessionsFTS(db); err != nil {
+		slog.Warn("store: sessions_fts migration failed", "error", err)
+	}
+
+	if err := MigrateMessagesFTSExtended(db); err != nil {
+		slog.Warn("store: messages_fts migration failed", "error", err)
+	}
+
+	if err := MigrateTeamsTables(db); err != nil {
+		slog.Warn("store: teams tables migration failed", "error", err)
+	}
+
+	if err := MigrateSkillOutcomesDetails(db); err != nil {
+		slog.Warn("store: skill_outcomes details migration failed", "error", err)
+	}
+
 	var integrity string
 	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
 		slog.Warn("SQLite integrity check failed", "result", integrity, "error", err)
@@ -76,8 +96,13 @@ func NewStoreWithDir(dir string) (*Store, error) {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		for {
+			select {
+			case <-ticker.C:
+				s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+			case <-s.stopCh:
+				return
+			}
 		}
 	}()
 
@@ -87,6 +112,7 @@ func NewStoreWithDir(dir string) (*Store, error) {
 
 func (s *Store) Close() error {
 	if s.db != nil {
+		s.stopOnce.Do(func() { close(s.stopCh) })
 		if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 			slog.Warn("store: WAL checkpoint failed", "error", err)
 		}

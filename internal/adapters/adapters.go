@@ -29,6 +29,7 @@ import (
 	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/topology"
 	"github.com/instructkr/smartclaw/internal/warroom"
+	"github.com/instructkr/smartclaw/internal/watchdog"
 )
 
 type TopologyAdapter struct {
@@ -498,7 +499,6 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create incident from alert: %v\n", err)
 			}
 
-			// Trigger remediation suggestion for high/critical alerts
 			if severity == "high" || severity == "critical" {
 				if re := autoremediation.DefaultRemediationEngine(); re != nil {
 					if _, err := re.SuggestRemediation(alert.Service, "slo_burn"); err != nil {
@@ -507,6 +507,10 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 				}
 			}
 		})
+
+		wd := watchdog.InitDefaultWatchdog()
+		alertEngine.OnAlert(watchdog.WatchdogOnAlert)
+		_ = wd
 
 		ttEngine := timetravel.InitTimeTravelEngine(RecordingStoreAdapter{Store: mm.GetStore()}, TTIncidentStoreAdapter{IM: mm.GetIncidentMemory()})
 		timetravel.SetTimeTravelEngine(ttEngine)
@@ -566,6 +570,7 @@ func InitInnovationPackages(mm *memory.MemoryManager, apiClient *api.Client) {
 	timetravel.RegisterAllTools()
 	autonomous.RegisterAllTools()
 	playbook.RegisterAllTools()
+	watchdog.RegisterWatchdogTools()
 }
 
 func ShutdownInnovationPackages() {

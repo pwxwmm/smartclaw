@@ -14,6 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/instructkr/smartclaw/internal/index"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/logger"
 )
 
@@ -430,16 +431,23 @@ func (t *SkillTool) Execute(ctx context.Context, input map[string]any) (any, err
 
 	userMessage, _ := input["user_message"].(string)
 
-	// Strip leading slash if present
 	name = strings.TrimPrefix(name, "/")
 
-	// Try to load skill from various locations
 	skillContent, skillPath, err := t.loadSkill(name)
 	if err != nil {
+		if tracker := GetGlobalSkillTracker(); tracker != nil {
+			_ = tracker.RecordInvocation(name, "")
+			_ = tracker.RecordOutcome(name, learning.OutcomeFailed, "")
+		}
 		return map[string]any{
 			"success": false,
 			"error":   fmt.Sprintf("Skill not found: %s", name),
 		}, nil
+	}
+
+	if tracker := GetGlobalSkillTracker(); tracker != nil {
+		_ = tracker.RecordInvocation(name, "")
+		_ = tracker.RecordOutcome(name, learning.OutcomeSuccess, "")
 	}
 
 	return map[string]any{

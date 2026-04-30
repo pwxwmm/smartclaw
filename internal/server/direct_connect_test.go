@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// createSessionSafe creates a session with a small delay to avoid UnixNano ID collisions
 func createSessionSafe(t *testing.T, m *DirectConnectManager, ctx context.Context, projectID string) *DirectConnectSession {
 	t.Helper()
 	s, err := m.CreateSession(ctx, projectID)
@@ -24,7 +23,10 @@ func createSessionSafe(t *testing.T, m *DirectConnectManager, ctx context.Contex
 }
 
 func TestNewDirectConnectManager(t *testing.T) {
-	m := NewDirectConnectManager(8080, "token123")
+	m, err := NewDirectConnectManager(8080, "", "token123", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if m.port != 8080 {
 		t.Errorf("expected port 8080, got %d", m.port)
 	}
@@ -37,14 +39,20 @@ func TestNewDirectConnectManager(t *testing.T) {
 }
 
 func TestNewDirectConnectManager_EmptyAuthToken(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if m.authToken != "" {
 		t.Errorf("expected empty auth token, got %q", m.authToken)
 	}
 }
 
 func TestCreateSession(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	session, err := m.CreateSession(ctx, "project-1")
 	if err != nil {
@@ -68,7 +76,10 @@ func TestCreateSession(t *testing.T) {
 }
 
 func TestCreateSession_Multiple(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	s1, _ := m.CreateSession(ctx, "p1")
 	time.Sleep(time.Microsecond)
@@ -79,7 +90,10 @@ func TestCreateSession_Multiple(t *testing.T) {
 }
 
 func TestGetSession_Exists(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	created, _ := m.CreateSession(ctx, "project-x")
 	found, ok := m.GetSession(created.ID)
@@ -92,7 +106,10 @@ func TestGetSession_Exists(t *testing.T) {
 }
 
 func TestGetSession_NotExists(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, ok := m.GetSession("nonexistent")
 	if ok {
 		t.Error("expected session not to be found")
@@ -100,7 +117,10 @@ func TestGetSession_NotExists(t *testing.T) {
 }
 
 func TestUpdateActivity(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	session, _ := m.CreateSession(ctx, "project")
 	original := session.LastActivity
@@ -115,12 +135,18 @@ func TestUpdateActivity(t *testing.T) {
 }
 
 func TestUpdateActivity_NonexistentSession(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.UpdateActivity("nonexistent")
 }
 
 func TestRemoveSession(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	session, _ := m.CreateSession(ctx, "project")
 	m.RemoveSession(session.ID)
@@ -131,12 +157,18 @@ func TestRemoveSession(t *testing.T) {
 }
 
 func TestRemoveSession_Nonexistent(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.RemoveSession("nonexistent")
 }
 
 func TestListSessions_Empty(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sessions := m.ListSessions()
 	if len(sessions) != 0 {
 		t.Errorf("expected 0 sessions, got %d", len(sessions))
@@ -144,7 +176,10 @@ func TestListSessions_Empty(t *testing.T) {
 }
 
 func TestListSessions_Multiple(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	s1, _ := m.CreateSession(ctx, "p1")
 	time.Sleep(time.Microsecond)
@@ -164,7 +199,10 @@ func TestListSessions_Multiple(t *testing.T) {
 }
 
 func TestCleanupStaleSessions_RemovesOld(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	session, _ := m.CreateSession(ctx, "project")
 
@@ -180,7 +218,10 @@ func TestCleanupStaleSessions_RemovesOld(t *testing.T) {
 }
 
 func TestCleanupStaleSessions_KeepsFresh(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	session, _ := m.CreateSession(ctx, "project")
 
@@ -192,7 +233,10 @@ func TestCleanupStaleSessions_KeepsFresh(t *testing.T) {
 }
 
 func TestCleanupStaleSessions_Mixed(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	oldSession := createSessionSafe(t, m, ctx, "old")
 	freshSession := createSessionSafe(t, m, ctx, "fresh")
@@ -214,9 +258,12 @@ func TestCleanupStaleSessions_Mixed(t *testing.T) {
 }
 
 func TestAuthMiddleware_NoToken(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	called := false
-	handler := m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	handler := m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
@@ -234,9 +281,12 @@ func TestAuthMiddleware_NoToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_ValidBearer(t *testing.T) {
-	m := NewDirectConnectManager(0, "secret123")
+	m, err := NewDirectConnectManager(0, "", "secret123", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	called := false
-	handler := m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	handler := m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
@@ -255,8 +305,11 @@ func TestAuthMiddleware_ValidBearer(t *testing.T) {
 }
 
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
-	m := NewDirectConnectManager(0, "secret123")
-	handler := m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	m, err := NewDirectConnectManager(0, "", "secret123", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called with invalid token")
 	})
 
@@ -271,8 +324,11 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_MissingHeader(t *testing.T) {
-	m := NewDirectConnectManager(0, "secret123")
-	handler := m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	m, err := NewDirectConnectManager(0, "", "secret123", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called without auth header")
 	})
 
@@ -286,8 +342,11 @@ func TestAuthMiddleware_MissingHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_WrongScheme(t *testing.T) {
-	m := NewDirectConnectManager(0, "secret123")
-	handler := m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	m, err := NewDirectConnectManager(0, "", "secret123", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called with wrong scheme")
 	})
 
@@ -302,20 +361,26 @@ func TestAuthMiddleware_WrongScheme(t *testing.T) {
 }
 
 func TestGetPort(t *testing.T) {
-	m := NewDirectConnectManager(9999, "")
+	m, err := NewDirectConnectManager(9999, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if m.GetPort() != 9999 {
 		t.Errorf("expected port 9999, got %d", m.GetPort())
 	}
 }
 
 func TestHTTPHandlers_ListSessions(t *testing.T) {
-	m := NewDirectConnectManager(0, "tok")
+	m, err := NewDirectConnectManager(0, "", "tok", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	createSessionSafe(t, m, ctx, "proj1")
 	createSessionSafe(t, m, ctx, "proj2")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sessions", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions", m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			sessions := m.ListSessions()
 			json.NewEncoder(w).Encode(sessions)
@@ -345,10 +410,13 @@ func TestHTTPHandlers_ListSessions(t *testing.T) {
 }
 
 func TestHTTPHandlers_CreateSession(t *testing.T) {
-	m := NewDirectConnectManager(0, "tok")
+	m, err := NewDirectConnectManager(0, "", "tok", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sessions", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions", m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			var req struct {
 				ProjectID string `json:"project_id"`
@@ -391,12 +459,15 @@ func TestHTTPHandlers_CreateSession(t *testing.T) {
 }
 
 func TestHTTPHandlers_GetSession(t *testing.T) {
-	m := NewDirectConnectManager(0, "tok")
+	m, err := NewDirectConnectManager(0, "", "tok", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	created, _ := m.CreateSession(ctx, "proj")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sessions/", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions/", m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Path[len("/sessions/"):]
 		session, exists := m.GetSession(id)
 		if !exists {
@@ -423,10 +494,13 @@ func TestHTTPHandlers_GetSession(t *testing.T) {
 }
 
 func TestHTTPHandlers_GetSession_NotFound(t *testing.T) {
-	m := NewDirectConnectManager(0, "tok")
+	m, err := NewDirectConnectManager(0, "", "tok", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sessions/", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions/", m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Path[len("/sessions/"):]
 		session, exists := m.GetSession(id)
 		if !exists {
@@ -453,10 +527,13 @@ func TestHTTPHandlers_GetSession_NotFound(t *testing.T) {
 }
 
 func TestHTTPHandlers_AuthRequired(t *testing.T) {
-	m := NewDirectConnectManager(0, "mytoken")
+	m, err := NewDirectConnectManager(0, "", "mytoken", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sessions", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions", m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -475,16 +552,22 @@ func TestHTTPHandlers_AuthRequired(t *testing.T) {
 }
 
 func TestStartStop(t *testing.T) {
-	m := NewDirectConnectManager(0, "test-token")
-	ctx := context.Background()
-	err := m.Stop(ctx)
+	m, err := NewDirectConnectManager(0, "", "test-token", false, nil, "")
 	if err != nil {
-		t.Errorf("expected nil from Stop on unstarted server, got %v", err)
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	stopErr := m.Stop(ctx)
+	if stopErr != nil {
+		t.Errorf("expected nil from Stop on unstarted server, got %v", stopErr)
 	}
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	m := NewDirectConnectManager(0, "")
+	m, err := NewDirectConnectManager(0, "", "", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -507,10 +590,13 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestHTTPHandlers_CreateSession_InvalidBody(t *testing.T) {
-	m := NewDirectConnectManager(0, "tok")
+	m, err := NewDirectConnectManager(0, "", "tok", false, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sessions", m.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions", m.legacyAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			var req struct {
 				ProjectID string `json:"project_id"`

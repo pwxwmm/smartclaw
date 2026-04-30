@@ -117,11 +117,12 @@ type VoiceTranscriber struct {
 }
 
 type VoiceManager struct {
-	config      VoiceConfig
-	recorder    *VoiceRecorder
-	transcriber *VoiceTranscriber
-	keyterms    []string
-	mu          sync.RWMutex
+	config          VoiceConfig
+	recorder        *VoiceRecorder
+	transcriber     *VoiceTranscriber
+	keyterms        []string
+	dialogueSession *VoiceDialogueSession
+	mu              sync.RWMutex
 }
 
 func NewVoiceManager(config VoiceConfig) *VoiceManager {
@@ -484,6 +485,274 @@ func createMultipartWriter(body *bytes.Buffer, file *os.File, config VoiceConfig
 
 	writer.Close()
 	return writer
+}
+
+// VoiceDialogueSession manages a continuous voice dialogue with VAD-based
+// speech boundary detection. It records audio in short chunks, runs VAD on
+// each chunk, and when an utterance boundary is detected (silence after
+// speech), it transcribes the accumulated speech and invokes the callback.
+type VoiceDialogueSession struct {
+	vm             *VoiceManager
+	vad            *VoiceActivityDetector
+	onTranscription func(text string)
+	cancel         context.CancelFunc
+	done           chan struct{}
+	mu             sync.Mutex
+	active         bool
+}
+
+// chunkDurationSec is the duration of each recorded audio chunk for VAD analysis.
+const chunkDurationSec = 0.5
+
+// StartDialogue begins the continuous VAD-based dialogue loop.
+// It records audio in short chunks, detects speech boundaries via VAD,
+// and calls onTranscription whenever a complete utterance is detected.
+func (s *VoiceDialogueSession) StartDialogue(ctx context.Context, onTranscription func(text string)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.active {
+		return fmt.Errorf("dialogue session already active")
+	}
+
+	if onTranscription == nil {
+		return fmt.Errorf("onTranscription callback is required")
+	}
+
+	s.onTranscription = onTranscription
+	s.active = true
+
+	dialogueCtx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+	s.done = make(chan struct{})
+
+	go s.dialogueLoop(dialogueCtx)
+
+	return nil
+}
+
+// StopDialogue stops the dialogue session and waits for the loop goroutine to finish.
+func (s *VoiceDialogueSession) StopDialogue() error {
+	s.mu.Lock()
+	if !s.active {
+		s.mu.Unlock()
+		return fmt.Errorf("dialogue session not active")
+	}
+	s.active = false
+	s.cancel()
+	s.mu.Unlock()
+
+	<-s.done
+	return nil
+}
+
+// IsActive returns whether the dialogue session is currently running.
+func (s *VoiceDialogueSession) IsActive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active
+}
+
+// dialogueLoop is the main loop for the always-on dialogue mode.
+// It continuously records short audio chunks, runs VAD on each chunk,
+// and manages speech buffering and utterance boundary detection.
+func (s *VoiceDialogueSession) dialogueLoop(ctx context.Context) {
+	defer close(s.done)
+
+	silenceThreshold := s.vm.config.SilenceThreshold
+	if silenceThreshold <= 0 {
+		silenceThreshold = 3
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		chunkData, err := s.recordChunk(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+				continue
+			}
+		}
+
+		if len(chunkData) == 0 {
+			continue
+		}
+
+		hasVoice := s.vad.Detect(chunkData)
+
+		s.mu.Lock()
+		isActive := s.active
+		s.mu.Unlock()
+		if !isActive {
+			return
+		}
+
+		if hasVoice {
+			s.processVoiceChunk(ctx, chunkData, silenceThreshold)
+		}
+	}
+}
+
+// processVoiceChunk accumulates voice chunks and tracks silence to detect
+// utterance boundaries. When silenceThreshold consecutive non-voice chunks
+// pass after voice was detected, the utterance is transcribed.
+func (s *VoiceDialogueSession) processVoiceChunk(ctx context.Context, chunkData []byte, silenceThreshold int) {
+	speechBuffer := new(bytes.Buffer)
+	speechBuffer.Write(chunkData)
+
+	consecutiveSilence := 0
+
+	for consecutiveSilence < silenceThreshold {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		nextChunk, err := s.recordChunk(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+
+		if s.vad.Detect(nextChunk) {
+			speechBuffer.Write(nextChunk)
+			consecutiveSilence = 0
+		} else {
+			consecutiveSilence++
+		}
+
+		s.mu.Lock()
+		stillActive := s.active
+		s.mu.Unlock()
+		if !stillActive {
+			return
+		}
+	}
+
+	audioData := speechBuffer.Bytes()
+	if len(audioData) == 0 {
+		return
+	}
+
+	result, err := s.vm.transcribe(ctx, audioData)
+	if err != nil {
+		return
+	}
+
+	text := strings.TrimSpace(result.Text)
+	if text != "" && s.onTranscription != nil {
+		s.onTranscription(text)
+	}
+}
+
+// recordChunk records a short audio chunk of chunkDurationSec duration.
+// It spawns a platform-appropriate recording command, captures its output,
+// and returns the raw audio bytes.
+func (s *VoiceDialogueSession) recordChunk(ctx context.Context) ([]byte, error) {
+	platform := detectPlatform()
+	var cmd *exec.Cmd
+
+	sampleRate := s.vm.config.SampleRate
+	if sampleRate == 0 {
+		sampleRate = 16000
+	}
+
+	switch platform {
+	case "darwin":
+		cmd = exec.CommandContext(ctx, "rec", "-q", "-r",
+			fmt.Sprintf("%d", sampleRate),
+			"-c", "1", "-", "trim", "0",
+			fmt.Sprintf("%.1f", chunkDurationSec))
+	case "linux":
+		cmd = exec.CommandContext(ctx, "arecord", "-q", "-r",
+			fmt.Sprintf("%d", sampleRate),
+			"-c", "1", "-f", "S16_LE", "-t", "wav", "-d",
+			fmt.Sprintf("%.1f", chunkDurationSec))
+	default:
+		return nil, fmt.Errorf("unsupported platform for voice recording: %s", platform)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("chunk recording failed: %w", err)
+	}
+
+	return stdout.Bytes(), nil
+}
+
+// transcribe is a helper that uses the VoiceManager's transcriber,
+// selecting API or local whisper based on configuration.
+func (vm *VoiceManager) transcribe(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+	if vm.config.ApiKey != "" {
+		return vm.transcriber.Transcribe(ctx, audioData)
+	}
+	return vm.transcriber.TranscribeLocal(ctx, audioData)
+}
+
+// StartAlwaysOn starts the continuous dialogue mode on the VoiceManager.
+// It creates a VoiceDialogueSession and begins the VAD-based recording loop.
+// Returns an error if already in always-on mode.
+func (vm *VoiceManager) StartAlwaysOn(ctx context.Context, onTranscription func(text string)) error {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+
+	if vm.dialogueSession != nil && vm.dialogueSession.IsActive() {
+		return fmt.Errorf("always-on dialogue already active")
+	}
+
+	vad := NewVAD(vm.config.VadThreshold, vm.config.SampleRate, vm.config.SilenceThreshold*500)
+
+	session := &VoiceDialogueSession{
+		vm:  vm,
+		vad: vad,
+	}
+
+	if err := session.StartDialogue(ctx, onTranscription); err != nil {
+		return err
+	}
+
+	vm.dialogueSession = session
+	return nil
+}
+
+// StopAlwaysOn stops the always-on dialogue session.
+func (vm *VoiceManager) StopAlwaysOn() error {
+	vm.mu.Lock()
+	session := vm.dialogueSession
+	vm.mu.Unlock()
+
+	if session == nil {
+		return fmt.Errorf("no active always-on dialogue session")
+	}
+
+	return session.StopDialogue()
+}
+
+// IsDialogueActive returns whether the always-on dialogue mode is currently active.
+func (vm *VoiceManager) IsDialogueActive() bool {
+	vm.mu.RLock()
+	defer vm.mu.RUnlock()
+	if vm.dialogueSession == nil {
+		return false
+	}
+	return vm.dialogueSession.IsActive()
 }
 
 func (vm *VoiceManager) GetConfig() VoiceConfig {

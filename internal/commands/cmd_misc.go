@@ -350,8 +350,21 @@ func insightsHandler(args []string) error {
 }
 
 func onboardingHandler(args []string) error {
-	fmt.Println("Welcome to SmartClaw!")
-	fmt.Println("  Run /help to get started")
+	fmt.Println("🚀 SmartClaw Onboarding")
+	fmt.Println()
+	fmt.Println("Step 1: Ask me to fix a bug")
+	fmt.Println("  → I'll learn your debugging pattern and create a skill")
+	fmt.Println()
+	fmt.Println("Step 2: Ask me to explain some code")
+	fmt.Println("  → I'll learn your preferred explanation style")
+	fmt.Println()
+	fmt.Println("Step 3: Ask me to run the tests")
+	fmt.Println("  → I'll save your test workflow as a reusable skill")
+	fmt.Println()
+	fmt.Println("💡 Tip: Each step creates a skill that I'll reuse automatically.")
+	fmt.Println("   The more you use me, the smarter I get!")
+	fmt.Println()
+	fmt.Println("For the interactive web tutorial, open the Web UI and click 'Get Started'.")
 	return nil
 }
 

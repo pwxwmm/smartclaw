@@ -23,8 +23,23 @@ import (
 	"github.com/instructkr/smartclaw/internal/tools"
 
 	"github.com/instructkr/smartclaw/internal/adapters"
+	"github.com/instructkr/smartclaw/internal/permissions"
 	"github.com/instructkr/smartclaw/internal/utils"
 )
+
+// AgentConfig holds the active agent's constraints applied to the engine.
+// When an agent is switched via SetCurrentAgent, these fields override
+// the engine's default behaviour for model, system prompt, tool access,
+// and permissions.
+type AgentConfig struct {
+	AgentType       string
+	SystemPrompt    string
+	Model           string
+	AllowedTools    []string
+	DisallowedTools []string
+	PermissionMode  string
+	MaxTurns        int
+}
 
 type QueryEngine struct {
 	client              *api.Client
@@ -52,21 +67,35 @@ type QueryEngine struct {
 	shutdownOnce        sync.Once
 	bgWg                sync.WaitGroup     // tracks background goroutines
 	cancelBg            context.CancelFunc // cancels background goroutine contexts
+	bgCtx               context.Context    // long-lived context for background goroutines
+
+	currentAgent       *AgentConfig
+	agentPermManager   *permissions.AgentPermissionManager
+
+	// Idle and periodic nudge tracking
+	lastActivityTime time.Time
+	lastSkillReview  time.Time
+	pendingNudge     string
+	pendingNudgeMu   sync.Mutex
 }
 
 func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 	registry := tools.GetRegistry()
-	_, cancelBg := context.WithCancel(context.Background())
+	bgCtx, cancelBg := context.WithCancel(context.Background())
+	now := time.Now()
 	e := &QueryEngine{
-		client:          client,
-		cacheClient:     api.NewCacheAwareClient(client),
-		state:           NewQueryState(),
-		config:          config,
-		tools:           registry,
-		hookExecutor:    tools.NewHookAwareExecutor(registry, nil),
-		thinkingManager: NewThinkingManager(),
-		shutdownCh:      make(chan struct{}),
-		cancelBg:        cancelBg,
+		client:           client,
+		cacheClient:      api.NewCacheAwareClient(client),
+		state:            NewQueryState(),
+		config:           config,
+		tools:            registry,
+		hookExecutor:     tools.NewHookAwareExecutor(registry, nil),
+		thinkingManager:  NewThinkingManager(),
+		shutdownCh:       make(chan struct{}),
+		bgCtx:            bgCtx,
+		cancelBg:         cancelBg,
+		lastActivityTime: now,
+		lastSkillReview:  now,
 	}
 
 	if client != nil && config.EnableLLMCompaction {
@@ -79,7 +108,7 @@ func NewQueryEngine(client *api.Client, config QueryConfig) *QueryEngine {
 // NewQueryEngineWithHooks creates a QueryEngine with hook support
 func NewQueryEngineWithHooks(client *api.Client, config QueryConfig, hookManager *hooks.HookManager) *QueryEngine {
 	registry := tools.GetRegistry()
-	_, cancelBg := context.WithCancel(context.Background())
+	bgCtx, cancelBg := context.WithCancel(context.Background())
 	return &QueryEngine{
 		client:          client,
 		cacheClient:     api.NewCacheAwareClient(client),
@@ -90,6 +119,7 @@ func NewQueryEngineWithHooks(client *api.Client, config QueryConfig, hookManager
 		hookManager:     hookManager,
 		thinkingManager: NewThinkingManager(),
 		shutdownCh:      make(chan struct{}),
+		bgCtx:           bgCtx,
 		cancelBg:        cancelBg,
 	}
 }
@@ -107,6 +137,9 @@ func (e *QueryEngine) GetHookManager() *hooks.HookManager {
 
 func (e *QueryEngine) SetLearningLoop(loop *learning.LearningLoop) {
 	e.learningLoop = loop
+	if loop != nil && loop.IsEnabled() {
+		e.startIdleChecker()
+	}
 }
 
 func (e *QueryEngine) SetMemoryManager(mm *memory.MemoryManager) {
@@ -236,6 +269,35 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 	defer observability.EndSpan(querySpan)
 
 	e.state.IncrementTurn()
+
+	e.lastActivityTime = time.Now()
+
+	e.pendingNudgeMu.Lock()
+	if e.pendingNudge != "" {
+		e.state.AddMessage(Message{
+			Role:    "system",
+			Content: e.pendingNudge,
+		})
+		e.pendingNudge = ""
+	}
+	e.pendingNudgeMu.Unlock()
+
+	if e.learningLoop != nil && e.learningLoop.IsEnabled() {
+		if !e.lastSkillReview.IsZero() && time.Since(e.lastSkillReview) > 24*time.Hour {
+			if nudge := e.learningLoop.MaybeSkillReviewNudge(); nudge != nil {
+				slog.Info("learning loop: skill review nudge triggered")
+				e.state.AddMessage(Message{
+					Role:    "system",
+					Content: nudge.Content,
+				})
+				e.lastSkillReview = time.Now()
+			}
+		}
+	}
+
+	if e.currentAgent != nil && e.currentAgent.MaxTurns > 0 && e.state.GetTurnCount() > e.currentAgent.MaxTurns {
+		return nil, fmt.Errorf("agent %q: max turns exceeded (%d)", e.currentAgent.AgentType, e.currentAgent.MaxTurns)
+	}
 
 	if e.memoryManager != nil && e.config.SystemPrompt == "" {
 		_, memSpan := observability.StartSpan(ctx, "memory.build")
@@ -445,6 +507,11 @@ func (e *QueryEngine) Query(ctx context.Context, input string) (*QueryResult, er
 		e.proactive.RecordAction(lastAction)
 		if suggestion := e.proactive.MaybeSuggest(lastAction); suggestion != nil {
 			slog.Info("proactive: suggestion available", "text", suggestion.Text, "confidence", fmt.Sprintf("%.2f", suggestion.Confidence))
+			injectMsg := fmt.Sprintf("[💡 Suggestion] %s", suggestion.Text)
+			e.state.AddMessage(Message{
+				Role:    "user",
+				Content: injectMsg,
+			})
 		}
 	}
 
@@ -456,6 +523,10 @@ func (e *QueryEngine) QueryStream(ctx context.Context, input string, handler Str
 	defer observability.EndSpan(streamSpan)
 
 	e.state.IncrementTurn()
+
+	if e.currentAgent != nil && e.currentAgent.MaxTurns > 0 && e.state.GetTurnCount() > e.currentAgent.MaxTurns {
+		return fmt.Errorf("agent %q: max turns exceeded (%d)", e.currentAgent.AgentType, e.currentAgent.MaxTurns)
+	}
 
 	if e.memoryManager != nil && e.config.SystemPrompt == "" {
 		memCtx := e.memoryManager.BuildSystemContext(ctx, input)
@@ -623,6 +694,10 @@ func (e *QueryEngine) QueryStream(ctx context.Context, input string, handler Str
 }
 
 func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input map[string]any) (any, error) {
+	if !e.IsToolAllowedForAgent(toolName) {
+		return nil, fmt.Errorf("agent %q: tool %q is not permitted", e.currentAgent.AgentType, toolName)
+	}
+
 	if e.hookManager != nil && e.state.GetTurnCount() == 1 {
 		e.hookManager.ExecuteSessionStart(ctx)
 	}
@@ -632,6 +707,11 @@ func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input ma
 		e.usageLearner.RecordUsage(toolName, complexity)
 	}
 
+	if e.learningLoop != nil {
+		e.learningLoop.RecordActivity()
+	}
+	e.lastActivityTime = time.Now()
+
 	startTime := time.Now()
 	result, err := e.hookExecutor.ExecuteWithHooks(ctx, toolName, input)
 	duration := time.Since(startTime)
@@ -639,6 +719,12 @@ func (e *QueryEngine) ExecuteTool(ctx context.Context, toolName string, input ma
 	observability.RecordToolExecution(toolName, duration, err == nil)
 
 	if err != nil {
+		if e.learningLoop != nil && e.learningLoop.IsEnabled() && isSkillTool(toolName) {
+			skillName := extractSkillName(toolName, input)
+			if skillName != "" {
+				e.handleSkillFailure(skillName, err.Error())
+			}
+		}
 		return nil, fmt.Errorf("tool execution failed: %w", err)
 	}
 
@@ -689,9 +775,11 @@ func (e *QueryEngine) prepareMessages() []api.Message {
 func (e *QueryEngine) prepareToolSpecs() []api.ToolDefinition {
 	complexity := e.assessComplexityFromState()
 	toolList := e.tools.SelectToolset(context.Background(), complexity)
-	specs := make([]api.ToolDefinition, 0, len(toolList))
 
-	for _, t := range toolList {
+	filteredList := e.filterToolsByAgent(toolList)
+
+	specs := make([]api.ToolDefinition, 0, len(filteredList))
+	for _, t := range filteredList {
 		specs = append(specs, api.ToolDefinition{
 			Name:        t.Name(),
 			Description: t.Description(),
@@ -700,6 +788,25 @@ func (e *QueryEngine) prepareToolSpecs() []api.ToolDefinition {
 	}
 
 	return specs
+}
+
+func (e *QueryEngine) filterToolsByAgent(toolList []tools.Tool) []tools.Tool {
+	e.mu.RLock()
+	agent := e.currentAgent
+	permMgr := e.agentPermManager
+	e.mu.RUnlock()
+
+	if agent == nil || permMgr == nil {
+		return toolList
+	}
+
+	filtered := make([]tools.Tool, 0, len(toolList))
+	for _, t := range toolList {
+		if permMgr.IsToolAllowed(agent.AgentType, t.Name()) {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
 }
 
 func (e *QueryEngine) assessComplexityFromState() float64 {
@@ -729,6 +836,62 @@ func (e *QueryEngine) SetSystemPrompt(prompt string) {
 	e.config.SystemPrompt = prompt
 }
 
+// SetCurrentAgent switches the active agent profile, propagating the
+// agent's model, system prompt, and tool constraints to the engine.
+// Passing nil resets to the default (build) agent.
+func (e *QueryEngine) SetCurrentAgent(cfg *AgentConfig) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if cfg == nil {
+		e.currentAgent = nil
+		return
+	}
+
+	e.currentAgent = cfg
+
+	if cfg.Model != "" && e.client != nil {
+		e.client.SetModel(cfg.Model)
+		slog.Info("agent: model switched", "agent", cfg.AgentType, "model", cfg.Model)
+	}
+
+	if cfg.SystemPrompt != "" {
+		e.config.SystemPrompt = cfg.SystemPrompt
+		slog.Info("agent: system prompt switched", "agent", cfg.AgentType)
+	}
+
+	slog.Info("agent: switched", "agent", cfg.AgentType, "permission_mode", cfg.PermissionMode)
+}
+
+// GetCurrentAgent returns the active agent configuration, or nil if
+// the default (build) agent is active.
+func (e *QueryEngine) GetCurrentAgent() *AgentConfig {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.currentAgent
+}
+
+// SetAgentPermissionManager sets the per-agent permission manager used
+// to gate tool access based on the active agent.
+func (e *QueryEngine) SetAgentPermissionManager(m *permissions.AgentPermissionManager) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.agentPermManager = m
+}
+
+// IsToolAllowedForAgent checks whether the active agent permits the
+// given tool. Returns true when no agent is active or when the
+// permission manager is not configured.
+func (e *QueryEngine) IsToolAllowedForAgent(toolName string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.currentAgent == nil || e.agentPermManager == nil {
+		return true
+	}
+	return e.agentPermManager.IsToolAllowed(e.currentAgent.AgentType, toolName)
+}
+
 func (e *QueryEngine) AddTool(tool tools.Tool) {
 	e.tools.Register(tool)
 }
@@ -747,6 +910,9 @@ func (e *QueryEngine) createCompactionFunc() func(systemPrompt, userPrompt strin
 		messages := []api.Message{
 			{Role: "user", Content: userPrompt},
 		}
+		// context.Background() is appropriate here: this closure is
+		// invoked by the LLM compactor outside of any request context,
+		// so no request-scoped context is available.
 		resp, err := client.CreateMessage(context.Background(), messages, systemPrompt)
 		if err != nil {
 			return "", err
@@ -790,6 +956,15 @@ func (e *QueryEngine) CompactIfNeeded() {
 			})
 			slog.Info("learning loop: nudge injected before compaction", "turn", turnCount)
 		}
+		if e.learningLoop.IsEnabled() {
+			if kpNudge := e.learningLoop.MaybeKnowledgePersistenceNudge(turnCount); kpNudge != nil {
+				e.state.AddMessage(Message{
+					Role:    "system",
+					Content: kpNudge.Content,
+				})
+				slog.Info("learning loop: knowledge persistence nudge injected before compaction", "turn", turnCount)
+			}
+		}
 	}
 
 	var compacted []Message
@@ -805,6 +980,32 @@ func (e *QueryEngine) CompactIfNeeded() {
 	if e.hookManager != nil {
 		e.hookManager.ExecutePostCompact(context.Background())
 	}
+}
+
+func (e *QueryEngine) startIdleChecker() {
+	e.bgWg.Add(1)
+	utils.Go(func() {
+		defer e.bgWg.Done()
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-e.shutdownCh:
+				return
+			case <-ticker.C:
+				if e.learningLoop == nil || !e.learningLoop.IsEnabled() {
+					continue
+				}
+				if nudge := e.learningLoop.MaybeIdleNudge(); nudge != nil {
+					e.pendingNudgeMu.Lock()
+					e.pendingNudge = nudge.Content
+					e.pendingNudgeMu.Unlock()
+					slog.Info("learning loop: idle nudge queued")
+				}
+			}
+		}
+	})
 }
 
 // Shutdown signals all background goroutines to stop.
@@ -881,7 +1082,7 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 		e.bgWg.Add(1)
 		utils.Go(func() {
 			defer e.bgWg.Done()
-			bgCtx, cancel := context.WithTimeout(context.Background(), constants.BackgroundTaskTimeout)
+			bgCtx, cancel := context.WithTimeout(e.bgCtx, constants.BackgroundTaskTimeout)
 			defer cancel()
 
 			select {
@@ -900,7 +1101,7 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 		e.bgWg.Add(1)
 		utils.Go(func() {
 			defer e.bgWg.Done()
-			bgCtx, cancel := context.WithTimeout(context.Background(), constants.BackgroundTaskTimeout)
+			bgCtx, cancel := context.WithTimeout(e.bgCtx, constants.BackgroundTaskTimeout)
 			defer cancel()
 
 			select {
@@ -918,6 +1119,14 @@ func (e *QueryEngine) triggerLearningIfNeeded(ctx context.Context, result *Query
 			if err := e.learningLoop.OnTaskComplete(bgCtx, "auto", learningMessages, learningResult); err != nil {
 				slog.Error("learning loop: OnTaskComplete failed", "error", err)
 			}
+		})
+	}
+
+	if kpNudge := e.learningLoop.MaybeKnowledgePersistenceNudge(turnCount); kpNudge != nil {
+		slog.Info("learning loop: knowledge persistence nudge triggered", "turn", turnCount)
+		e.state.AddMessage(Message{
+			Role:    "system",
+			Content: kpNudge.Content,
 		})
 	}
 
@@ -970,7 +1179,7 @@ func (e *QueryEngine) persistMessage(role, content string) {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
 		}
-		if err := e.dataStore.InsertMessage(context.Background(), msg); err != nil {
+		if err := e.dataStore.InsertMessage(e.bgCtx, msg); err != nil {
 			lastErr = err
 			slog.Warn("engine: failed to persist message", "attempt", attempt+1, "error", err)
 			continue
@@ -1058,4 +1267,41 @@ func extractLastUserMessage(messages []api.MessageParam) string {
 		}
 	}
 	return ""
+}
+
+func isSkillTool(toolName string) bool {
+	return toolName == "skill" || strings.HasPrefix(toolName, "skill_")
+}
+
+func extractSkillName(toolName string, input map[string]any) string {
+	if name, ok := input["name"].(string); ok && name != "" {
+		return name
+	}
+	if name, ok := input["skill_name"].(string); ok && name != "" {
+		return name
+	}
+	if name, ok := input["skill"].(string); ok && name != "" {
+		return name
+	}
+	return toolName
+}
+
+func (e *QueryEngine) handleSkillFailure(skillName, errorMsg string) {
+	e.bgWg.Add(1)
+	utils.Go(func() {
+		defer e.bgWg.Done()
+		bgCtx, cancel := context.WithTimeout(e.bgCtx, constants.BackgroundTaskTimeout)
+		defer cancel()
+
+		select {
+		case <-e.shutdownCh:
+			return
+		default:
+		}
+
+		failureMessages := []string{errorMsg}
+		if err := e.learningLoop.OnSkillFailure(bgCtx, skillName, e.sessionID, failureMessages); err != nil {
+			slog.Error("learning loop: OnSkillFailure failed", "skill", skillName, "error", err)
+		}
+	})
 }

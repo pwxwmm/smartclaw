@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -16,26 +17,34 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/gateway"
+	"github.com/instructkr/smartclaw/internal/voice"
 )
 
 // TelegramAdapter delivers responses to users via the Telegram Bot API.
 // It also runs a long-poll loop to receive incoming messages and route
 // them through the Gateway.
 type TelegramAdapter struct {
-	token   string
-	apiURL  string
-	gateway *gateway.Gateway
-	client  *http.Client
-	offset  int64
+	token        string
+	apiURL       string
+	gateway      *gateway.Gateway
+	client       *http.Client
+	offset       int64
+	voiceManager *voice.VoiceManager
 }
 
-func NewTelegramAdapter(token string, gw *gateway.Gateway) *TelegramAdapter {
-	return &TelegramAdapter{
+func NewTelegramAdapter(token string, gw *gateway.Gateway, voiceConfig *voice.VoiceConfig) *TelegramAdapter {
+	ta := &TelegramAdapter{
 		token:   token,
 		apiURL:  fmt.Sprintf("https://api.telegram.org/bot%s", token),
 		gateway: gw,
 		client:  &http.Client{Timeout: 60 * time.Second},
 	}
+
+	if voiceConfig != nil {
+		ta.voiceManager = voice.NewVoiceManager(*voiceConfig)
+	}
+
+	return ta
 }
 
 func (ta *TelegramAdapter) Name() string { return "telegram" }
@@ -86,33 +95,28 @@ func (ta *TelegramAdapter) Run() error {
 		for _, update := range updates {
 			ta.offset = update.UpdateID + 1
 
-			if update.Message == nil || update.Message.Text == "" {
+			if update.Message == nil {
 				continue
 			}
 
 			chatID := update.Message.Chat.ID
 			userID := strconv.FormatInt(chatID, 10)
-			text := strings.TrimSpace(update.Message.Text)
 
-			if strings.HasPrefix(text, "/") {
-				ta.handleCommand(chatID, text)
+			if update.Message.Text != "" {
+				text := strings.TrimSpace(update.Message.Text)
+
+				if strings.HasPrefix(text, "/") {
+					ta.handleCommand(chatID, text)
+					continue
+				}
+
+				slog.Info("telegram: received message", "chat_id", chatID, "length", len(text))
+				ta.routeToGateway(userID, chatID, text)
 				continue
 			}
 
-			slog.Info("telegram: received message", "chat_id", chatID, "length", len(text))
-
-			if ta.gateway != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer cancel()
-				resp, err := ta.gateway.HandleMessage(ctx, userID, "telegram", text)
-				if err != nil {
-					slog.Warn("telegram: gateway error", "error", err)
-					ta.sendMessage(chatID, fmt.Sprintf("Error: %v", err))
-					continue
-				}
-				if resp != nil {
-					ta.Send(userID, resp)
-				}
+			if update.Message.Voice != nil {
+				ta.handleVoiceMessage(userID, chatID, update.Message.Voice.FileID)
 			}
 		}
 	}
@@ -155,6 +159,166 @@ func (ta *TelegramAdapter) sendMessage(chatID int64, text string) error {
 	return nil
 }
 
+func (ta *TelegramAdapter) routeToGateway(userID string, chatID int64, text string) {
+	if ta.gateway == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	resp, err := ta.gateway.HandleMessage(ctx, userID, "telegram", text)
+	if err != nil {
+		slog.Warn("telegram: gateway error", "error", err)
+		ta.sendMessage(chatID, fmt.Sprintf("Error: %v", err))
+		return
+	}
+	if resp != nil {
+		ta.Send(userID, resp)
+	}
+}
+
+func (ta *TelegramAdapter) handleVoiceMessage(userID string, chatID int64, fileID string) {
+	if ta.voiceManager == nil {
+		slog.Warn("telegram: voice message received but voice not configured")
+		ta.sendMessage(chatID, "Voice messages are not supported in this configuration.")
+		return
+	}
+
+	slog.Info("telegram: processing voice message", "chat_id", chatID)
+
+	filePath, err := ta.getFile(fileID)
+	if err != nil {
+		slog.Warn("telegram: getFile failed", "error", err)
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+
+	oggData, err := ta.downloadFile(filePath)
+	if err != nil {
+		slog.Warn("telegram: download failed", "error", err)
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+
+	oggFile, err := os.CreateTemp("", "telegram-voice-*.ogg")
+	if err != nil {
+		slog.Warn("telegram: temp file creation failed", "error", err)
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+	oggPath := oggFile.Name()
+	defer os.Remove(oggPath)
+
+	if _, err := oggFile.Write(oggData); err != nil {
+		oggFile.Close()
+		slog.Warn("telegram: temp file write failed", "error", err)
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+	oggFile.Close()
+
+	wavPath, converted, err := ta.convertOggToWav(oggPath)
+	if converted && wavPath != "" {
+		defer os.Remove(wavPath)
+	}
+	if err != nil {
+		slog.Warn("telegram: ogg-to-wav conversion failed", "error", err)
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+
+	transcribePath := oggPath
+	if wavPath != "" {
+		transcribePath = wavPath
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	result, err := ta.voiceManager.TranscribeFile(ctx, transcribePath)
+	if err != nil {
+		slog.Warn("telegram: transcription failed", "error", err)
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+
+	text := strings.TrimSpace(result.Text)
+	if text == "" {
+		slog.Warn("telegram: transcription returned empty text")
+		ta.sendMessage(chatID, "Could not transcribe voice message")
+		return
+	}
+
+	slog.Info("telegram: voice transcribed", "chat_id", chatID, "length", len(text))
+	ta.routeToGateway(userID, chatID, text)
+}
+
+func (ta *TelegramAdapter) getFile(fileID string) (string, error) {
+	resp, err := ta.client.Get(fmt.Sprintf("%s/getFile?file_id=%s", ta.apiURL, fileID))
+	if err != nil {
+		return "", fmt.Errorf("getFile HTTP error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("getFile decode error: %w", err)
+	}
+	if !result.OK {
+		return "", fmt.Errorf("getFile returned not ok")
+	}
+	return result.Result.FilePath, nil
+}
+
+func (ta *TelegramAdapter) downloadFile(filePath string) ([]byte, error) {
+	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", ta.token, filePath)
+	resp, err := ta.client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("download HTTP error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("download read error: %w", err)
+	}
+	return data, nil
+}
+
+func (ta *TelegramAdapter) convertOggToWav(oggPath string) (wavPath string, converted bool, err error) {
+	ffmpegPath, lookupErr := exec.LookPath("ffmpeg")
+	if lookupErr != nil {
+		slog.Info("telegram: ffmpeg not found, passing ogg directly to transcriber")
+		return "", false, nil
+	}
+
+	wavFile, err := os.CreateTemp("", "telegram-voice-*.wav")
+	if err != nil {
+		return "", false, fmt.Errorf("wav temp file creation failed: %w", err)
+	}
+	wavPath = wavFile.Name()
+	wavFile.Close()
+
+	cmd := exec.Command(ffmpegPath, "-y", "-i", oggPath, "-ar", "16000", "-ac", "1", "-f", "wav", wavPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		os.Remove(wavPath)
+		return "", false, fmt.Errorf("ffmpeg conversion failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	return wavPath, true, nil
+}
+
 func (ta *TelegramAdapter) getMe() (string, error) {
 	resp, err := ta.client.Get(ta.apiURL + "/getMe")
 	if err != nil {
@@ -183,7 +347,11 @@ type telegramUpdate struct {
 		Chat struct {
 			ID int64 `json:"id"`
 		} `json:"chat"`
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Caption string `json:"caption"`
+		Voice   *struct {
+			FileID string `json:"file_id"`
+		} `json:"voice"`
 	} `json:"message"`
 }
 

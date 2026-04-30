@@ -51,6 +51,10 @@ func (sr *SessionRouter) Route(userID string) *RoutedSession {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
+		// context.Background() is appropriate here: Route() is an internal
+		// routing method with no request context available. The session
+		// upsert is a fast local operation that should not be tied to any
+		// caller's request lifecycle.
 		if err := sr.store.UpsertSession(context.Background(), session); err != nil {
 			slog.Warn("router: failed to persist session", "error", err)
 		}

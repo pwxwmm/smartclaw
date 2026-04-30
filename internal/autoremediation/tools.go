@@ -3,6 +3,7 @@ package autoremediation
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/instructkr/smartclaw/internal/tools"
@@ -89,8 +90,12 @@ func (t *RemediationSuggestTool) Execute(ctx context.Context, input map[string]a
 	trigger, _ := input["trigger"].(string)
 
 	autonomyOverride, _ := input["autonomy_override"].(string)
+	var autonomyLevel AutonomyLevel
 	if autonomyOverride != "" {
-		_ = AutonomyLevel(autonomyOverride)
+		autonomyLevel = AutonomyLevel(autonomyOverride)
+		if autonomyLevel == "" {
+			slog.Warn("autoremediation: invalid autonomy level", "value", autonomyOverride)
+		}
 	}
 
 	assessment, assessErr := engine.AssessSLO(service)
@@ -107,8 +112,8 @@ func (t *RemediationSuggestTool) Execute(ctx context.Context, input map[string]a
 
 	if assessErr == nil && assessment != nil {
 		result["assessment"] = assessment
-		if autonomyOverride != "" {
-			assessment.AutonomyLevel = AutonomyLevel(autonomyOverride)
+		if autonomyLevel != "" {
+			assessment.AutonomyLevel = autonomyLevel
 		}
 	}
 

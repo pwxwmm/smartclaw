@@ -3,71 +3,66 @@
   'use strict';
 
   function renderWikiResults(data) {
-    const container = SC.$('#wiki-pages');
-    container.innerHTML = '';
+    SC.renderToBoth('wiki-pages', 'wiki-pages-view', '');
     if (!data) return;
     const results = data.results || [];
     if (results.length === 0) {
-      container.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No wiki results</div>';
+      SC.renderToBoth('wiki-pages', 'wiki-pages-view', '<div class="loading-placeholder" style="color:var(--tx-2)">No wiki results</div>');
       return;
     }
-    results.forEach(page => {
-      const el = document.createElement('div');
-      el.className = 'wiki-page';
-      el.dataset.pageId = page.id || '';
-      const title = page.title || page.name || 'Untitled';
-      const meta = page.path || page.url || '';
-      el.innerHTML = `
-        <div class="wiki-page-title">${SC.escapeHtml(title)}</div>
-        ${meta ? `<div class="wiki-page-meta">${SC.escapeHtml(meta)}</div>` : ''}
-      `;
-      el.addEventListener('click', () => {
-        if (page.id) SC.wsSend('wiki_page_content', { page_id: page.id });
-      });
-      container.appendChild(el);
+    SC.renderToBoth('wiki-pages', 'wiki-pages-view', function(el) {
+      results.forEach(page => { el.appendChild(createWikiPageEl(page)); });
     });
   }
 
+  function createWikiPageEl(page) {
+    const el = document.createElement('div');
+    el.className = 'wiki-page';
+    el.dataset.pageId = page.id || '';
+    const title = page.title || page.name || 'Untitled';
+    const meta = page.path || page.url || '';
+    el.innerHTML = `
+      <div class="wiki-page-title">${SC.escapeHtml(title)}</div>
+      ${meta ? `<div class="wiki-page-meta">${SC.escapeHtml(meta)}</div>` : ''}
+    `;
+    el.addEventListener('click', () => {
+      if (page.id) SC.wsSend('wiki_page_content', { page_id: page.id });
+    });
+    return el;
+  }
+
   function renderWikiPages() {
-    const container = SC.$('#wiki-pages');
-    const statusEl = SC.$('#wiki-status');
-    container.innerHTML = '';
-    if (statusEl) {
-      if (SC.state.wikiEnabled) {
-        statusEl.textContent = 'Connected';
-        statusEl.className = 'wiki-status connected';
-      } else {
-        statusEl.textContent = 'Not configured';
-        statusEl.className = 'wiki-status';
-      }
+    SC.renderToBoth('wiki-pages', 'wiki-pages-view', '');
+
+    var statusText = '';
+    var statusClass = 'wiki-status';
+    if (SC.state.wikiEnabled) {
+      statusText = 'Connected';
+      statusClass = 'wiki-status connected';
+    } else {
+      statusText = 'Not configured';
     }
+    var statusEl = SC.$('#wiki-status');
+    if (statusEl) { statusEl.textContent = statusText; statusEl.className = statusClass; }
+    var viewStatusEl = SC.$('#wiki-status-view');
+    if (viewStatusEl) { viewStatusEl.textContent = statusText; viewStatusEl.className = statusClass; }
+
     if (!SC.state.wikiEnabled) {
-      container.innerHTML = '<div class="wiki-not-configured">Wiki is not configured. Enable it in your project settings.</div>';
+      SC.renderToBoth('wiki-pages', 'wiki-pages-view', '<div class="wiki-not-configured">Wiki is not configured. Enable it in your project settings.</div>');
       return;
     }
     if (!SC.state.wikiPages || SC.state.wikiPages.length === 0) {
-      container.innerHTML = '<div class="loading-placeholder" style="color:var(--tx-2)">No wiki pages</div>';
+      SC.renderToBoth('wiki-pages', 'wiki-pages-view', '<div class="loading-placeholder" style="color:var(--tx-2)">No wiki pages</div>');
       return;
     }
-    SC.state.wikiPages.forEach(page => {
-      const el = document.createElement('div');
-      el.className = 'wiki-page';
-      el.dataset.pageId = page.id || '';
-      const title = page.title || page.name || 'Untitled';
-      const meta = page.path || page.url || '';
-      el.innerHTML = `
-        <div class="wiki-page-title">${SC.escapeHtml(title)}</div>
-        ${meta ? `<div class="wiki-page-meta">${SC.escapeHtml(meta)}</div>` : ''}
-      `;
-      el.addEventListener('click', () => {
-        if (page.id) SC.wsSend('wiki_page_content', { page_id: page.id });
-      });
-      container.appendChild(el);
+    SC.renderToBoth('wiki-pages', 'wiki-pages-view', function(el) {
+      SC.state.wikiPages.forEach(page => { el.appendChild(createWikiPageEl(page)); });
+      if (typeof SC.applyListStagger === 'function') SC.applyListStagger(el, '.wiki-page');
     });
   }
 
   function renderWikiPageContent(data) {
-    const container = SC.$('#wiki-pages');
+    const containers = [SC.$('#wiki-pages'), SC.$('#wiki-pages-view')];
     if (!data) return;
     if (data.enabled === false) {
       SC.toast('Wiki not configured', 'warning');
@@ -82,9 +77,9 @@
       `<span class="wiki-page-tag">${SC.escapeHtml(t)}</span>`
     ).join('');
     const contentHtml = SC.renderMarkdown(page.content || '');
-    container.innerHTML = `
+    const pageDetailHtml = `
       <div class="wiki-page-detail">
-        <div class="wiki-page-back" id="wiki-back-btn">
+        <div class="wiki-page-back wiki-back-btn">
           <span class="wiki-back-arrow">←</span> Back to pages
         </div>
         <div class="wiki-page-detail-title">${SC.escapeHtml(page.title || 'Untitled')}</div>
@@ -93,14 +88,19 @@
         <div class="wiki-page-content markdown-body">${contentHtml}</div>
       </div>
     `;
-    const backBtn = SC.$('#wiki-back-btn');
-    if (backBtn) {
-      backBtn.addEventListener('click', () => {
-        renderWikiPages();
-      });
-    }
-    const contentEl = container.querySelector('.wiki-page-content');
-    if (contentEl) SC.postRenderMarkdown(contentEl);
+
+    containers.forEach(function(container) {
+      if (!container) return;
+      container.innerHTML = pageDetailHtml;
+      var backBtn = container.querySelector('.wiki-back-btn');
+      if (backBtn) {
+        backBtn.addEventListener('click', () => {
+          renderWikiPages();
+        });
+      }
+      var contentEl = container.querySelector('.wiki-page-content');
+      if (contentEl) SC.postRenderMarkdown(contentEl);
+    });
   }
 
   SC.renderWikiResults = renderWikiResults;

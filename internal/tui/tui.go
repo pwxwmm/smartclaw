@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,10 +15,12 @@ import (
 
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/compact"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/plans"
 	"github.com/instructkr/smartclaw/internal/services"
 	"github.com/instructkr/smartclaw/internal/session"
+	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/voice"
 )
 
@@ -64,7 +67,7 @@ type Model struct {
 	autocomplete       *AutoComplete
 	streaming          *StreamingOutput
 	imageViewer        *ImageViewer
-	apiClient          *api.Client
+	apiClient          APIClient
 	apiMu              *sync.Mutex
 	messages           []api.Message
 	showThinking       bool
@@ -91,6 +94,7 @@ type Model struct {
 	autoCompactEnabled bool
 	sessionRecorder    *services.SessionRecorder
 	planStore          *plans.PlanStore
+	learningLoop       *learning.LearningLoop
 }
 
 func InitialModel() Model {
@@ -136,6 +140,13 @@ func InitialModel() Model {
 	gitManager := NewGitManager(workDir)
 	editorManager := NewEditorManager(workDir)
 	agentManager := NewAgentManager(workDir)
+	agentManager.SetOnAgentSwitch(func(agentType string) error {
+		_, err := tools.Execute(context.Background(), "agent", map[string]any{
+			"operation":  "switch",
+			"agent_type": agentType,
+		})
+		return err
+	})
 	templateManager := NewTemplateManager()
 	commandPalette := NewCommandPalette()
 	subagentManager := NewSubagentManager(workDir, agentManager)
@@ -218,13 +229,17 @@ func InitialModel() Model {
 	}
 }
 
-func InitialModelWithClient(client *api.Client) Model {
+func InitialModelWithClient(client APIClient) Model {
 	m := InitialModel()
 	m.apiClient = client
 	if client != nil {
-		m.model = client.Model
+		m.model = client.GetModel()
 	}
 	return m
+}
+
+func InitialModelWithLocalClient(client *api.Client) Model {
+	return InitialModelWithClient(NewLocalClient(client))
 }
 
 func (m *Model) GetPlanStore() *plans.PlanStore {
@@ -277,6 +292,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case tea.KeyTab:
+			if !m.editMode {
+				m.cycleAgent(1)
+				return m, nil
+			}
 			m.editMode = !m.editMode
 			return m, nil
 		case tea.KeyEnter:
@@ -745,6 +764,59 @@ func (m Model) View() string {
 	}
 
 	return sb.String()
+}
+
+var primaryAgentOrder = []string{"build", "plan", "ops", "general-purpose", "explore", "code-review", "devops", "security", "architect", "refactor", "docs"}
+
+func (m *Model) cycleAgent(direction int) {
+	if m.agentManager == nil {
+		return
+	}
+
+	current := m.agentManager.GetCurrentAgent()
+	agents := m.agentManager.ListAgents()
+
+	agentOrder := make(map[string]int, len(primaryAgentOrder))
+	for i, name := range primaryAgentOrder {
+		agentOrder[name] = i
+	}
+
+	available := make([]string, 0, len(agents))
+	for _, a := range agents {
+		available = append(available, a.AgentType)
+	}
+
+	if len(available) == 0 {
+		return
+	}
+
+	currentIdx := -1
+	if current != nil {
+		for i, name := range available {
+			if name == current.AgentType {
+				currentIdx = i
+				break
+			}
+		}
+	}
+
+	nextIdx := currentIdx + direction
+	if nextIdx >= len(available) {
+		nextIdx = 0
+	}
+	if nextIdx < 0 {
+		nextIdx = len(available) - 1
+	}
+
+	nextAgent := available[nextIdx]
+	if err := m.agentManager.SetCurrentAgent(nextAgent); err != nil {
+		return
+	}
+
+	agent, _ := m.agentManager.GetAgent(nextAgent)
+	if agent != nil {
+		AddOutput(m, m.formatAssistantOutput(fmt.Sprintf("✓ Agent: %s — %s", agent.AgentType, agent.WhenToUse)))
+	}
 }
 
 func (m Model) Init() tea.Cmd {

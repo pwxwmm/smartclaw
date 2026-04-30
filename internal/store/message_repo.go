@@ -4,9 +4,34 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	globalEmbedder Embedder
+	embedderMu     sync.RWMutex
+)
+
+func SetEmbedder(e Embedder) {
+	embedderMu.Lock()
+	defer embedderMu.Unlock()
+	globalEmbedder = e
+}
+
+func GetGlobalEmbedder() Embedder {
+	embedderMu.RLock()
+	defer embedderMu.RUnlock()
+	return globalEmbedder
+}
+
+func getEmbedder() Embedder {
+	embedderMu.RLock()
+	defer embedderMu.RUnlock()
+	return globalEmbedder
+}
 
 type Message struct {
 	ID           int64
@@ -32,6 +57,14 @@ type SearchResult struct {
 	Snippet   string
 }
 
+type SessionSearchResult struct {
+	SessionID string
+	Title     string
+	Summary   string
+	Rank      float64
+	Snippet   string
+}
+
 // SearchOptions configures an advanced FTS5 search query.
 type SearchOptions struct {
 	UserID    string    // Filter by user via sessions.user_id
@@ -44,12 +77,38 @@ type SearchOptions struct {
 }
 
 func (s *Store) InsertMessage(ctx context.Context, msg *Message) error {
-	return s.WriteWithRetry(ctx, `
+	err := s.WriteWithRetry(ctx, `
 		INSERT INTO messages (session_id, role, content, tokens, tool_calls, tool_name, tool_input, tool_result, finish_reason, timestamp)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, msg.SessionID, msg.Role, msg.Content, msg.Tokens,
 		nullStr(msg.ToolCalls), nullStr(msg.ToolName), nullStr(msg.ToolInput), nullStr(msg.ToolResult),
 		nullStr(msg.FinishReason), msg.Timestamp)
+	if err != nil {
+		return err
+	}
+
+	go embedAsync(s, msg.SessionID, "message", msg.Content)
+
+	return nil
+}
+
+func embedAsync(st *Store, sourceID, sourceType, content string) {
+	emb := getEmbedder()
+	if emb == nil || content == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	vec, err := emb.Embed(ctx, content)
+	if err != nil {
+		slog.Warn("embedder: async embed failed", "source_type", sourceType, "source_id", sourceID, "error", err)
+		return
+	}
+
+	if err := st.StoreEmbedding(ctx, sourceType, sourceID, content, vec); err != nil {
+		slog.Warn("embedder: failed to store embedding", "source_type", sourceType, "source_id", sourceID, "error", err)
+	}
 }
 
 func (s *Store) GetSessionMessages(sessionID string) ([]*Message, error) {
@@ -291,7 +350,11 @@ func (s *Store) SearchMessagesAdvanced(query string, opts SearchOptions) ([]*Sea
 
 	q := fmt.Sprintf(`
 		SELECT m.id, m.session_id, m.role, m.content, m.timestamp, f.rank,
-		       snippet(messages_fts, 0, '>>', '<<', '...', 32) AS snippet
+		       COALESCE(snippet(messages_fts, 0, '>>', '<<', '...', 32), '') ||
+		       CASE WHEN snippet(messages_fts, 1, '>>', '<<', '...', 16) != '' AND snippet(messages_fts, 0, '>>', '<<', '...', 32) != '' THEN ' ... ' ELSE '' END ||
+		       COALESCE(snippet(messages_fts, 1, '>>', '<<', '...', 16), '') ||
+		       CASE WHEN snippet(messages_fts, 2, '>>', '<<', '...', 16) != '' AND (snippet(messages_fts, 0, '>>', '<<', '...', 32) != '' OR snippet(messages_fts, 1, '>>', '<<', '...', 16) != '') THEN ' ... ' ELSE '' END ||
+		       COALESCE(snippet(messages_fts, 2, '>>', '<<', '...', 16), '') AS snippet
 		FROM messages_fts f
 		%s
 		%s
@@ -368,6 +431,73 @@ func scanSearchResultsWithSnippet(rows *sql.Rows) ([]*SearchResult, error) {
 		}
 		if t, err := time.Parse("2006-01-02 15:04:05", val(ts)); err == nil {
 			r.Timestamp = t
+		}
+		r.Snippet = val(snippet)
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+func (s *Store) SearchSessions(query string, limit int) ([]*SessionSearchResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if query == "" {
+		return nil, nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT s.id, s.title, s.summary, f.rank,
+		       snippet(sessions_fts, 0, '>>', '<<', '...', 32) AS snippet
+		FROM sessions_fts f
+		JOIN sessions s ON s.rowid = f.rowid
+		WHERE sessions_fts MATCH ?
+		ORDER BY f.rank
+		LIMIT ?
+	`, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: search sessions: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSessionSearchResults(rows)
+}
+
+func (s *Store) SearchSessionsByUser(query string, userID string, limit int) ([]*SessionSearchResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if query == "" {
+		return nil, nil
+	}
+	if userID == "" || userID == "default" {
+		return s.SearchSessions(query, limit)
+	}
+
+	rows, err := s.db.Query(`
+		SELECT s.id, s.title, s.summary, f.rank,
+		       snippet(sessions_fts, 0, '>>', '<<', '...', 32) AS snippet
+		FROM sessions_fts f
+		JOIN sessions s ON s.rowid = f.rowid
+		WHERE sessions_fts MATCH ? AND s.user_id = ?
+		ORDER BY f.rank
+		LIMIT ?
+	`, query, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: search sessions by user: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSessionSearchResults(rows)
+}
+
+func scanSessionSearchResults(rows *sql.Rows) ([]*SessionSearchResult, error) {
+	var results []*SessionSearchResult
+	for rows.Next() {
+		r := &SessionSearchResult{}
+		var snippet sql.NullString
+		if err := rows.Scan(&r.SessionID, &r.Title, &r.Summary, &r.Rank, &snippet); err != nil {
+			return nil, fmt.Errorf("store: scan session search result: %w", err)
 		}
 		r.Snippet = val(snippet)
 		results = append(results, r)

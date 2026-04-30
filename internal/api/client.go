@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/instructkr/smartclaw/internal/constants"
 	apperrors "github.com/instructkr/smartclaw/internal/errors"
+	"github.com/instructkr/smartclaw/internal/observability"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -77,6 +80,14 @@ func (c *Client) CreateMessage(ctx context.Context, messages []Message, system s
 }
 
 func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message, system any) (*MessageResponse, error) {
+	provider := c.providerName()
+	destHost := c.destinationHost()
+	systemPromptLen := c.systemPromptLength(system)
+	toolCount := 0
+	dataCategories := c.dataCategories(messages, system, toolCount)
+
+	start := time.Now()
+
 	if c.IsGoogle {
 		var systemStr string
 		if sb, ok := system.([]SystemBlock); ok && len(sb) > 0 {
@@ -84,7 +95,10 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 		} else if s, ok := system.(string); ok {
 			systemStr = s
 		}
-		return c.CreateMessageGoogle(messages, systemStr)
+		resp, err := c.CreateMessageGoogle(messages, systemStr)
+		elapsed := time.Since(start)
+		c.recordOutboundAudit(provider, destHost, c.Model, len(messages), systemPromptLen, toolCount, resp, err, elapsed, dataCategories)
+		return resp, err
 	}
 
 	if c.IsOpenAI {
@@ -100,6 +114,9 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 		params := buildSDKOpenAIParams(messages, systemStr, c.Model, constants.APIRequestMaxTokens)
 
 		comp, err := c.openaiSDKClient.Chat.Completions.New(ctx, params)
+		elapsed := time.Since(start)
+		resp := sdkCompletionToResponseIfNoError(comp, err)
+		c.recordOutboundAudit(provider, destHost, c.Model, len(messages), systemPromptLen, toolCount, resp, err, elapsed, dataCategories)
 		if err != nil {
 			return nil, apperrors.Wrap(err, "OPENAI_API_ERROR", "OpenAI API error",
 				apperrors.WithCategory(apperrors.CategoryNetwork))
@@ -113,6 +130,9 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 	params := buildSDKMessages(messages, system, c.Model, constants.APIRequestMaxTokens, c.Thinking, nil)
 
 	msg, err := c.sdkClient.Messages.New(ctx, params)
+	elapsed := time.Since(start)
+	resp := sdkMessageToResponseIfNoError(msg, err)
+	c.recordOutboundAudit(provider, destHost, c.Model, len(messages), systemPromptLen, toolCount, resp, err, elapsed, dataCategories)
 	if err != nil {
 		return nil, apperrors.Wrap(err, "ANTHROPIC_API_ERROR", "Anthropic API error",
 			apperrors.WithCategory(apperrors.CategoryNetwork))
@@ -131,6 +151,84 @@ func (c *Client) ensureOpenAISDKClient() {
 	if c.APIKey != "" && c.openaiSDKClient.Options == nil {
 		c.openaiSDKClient = newOpenAISDKClient(c.APIKey, c.BaseURL, c.ProviderHeaders)
 	}
+}
+
+func (c *Client) providerName() string {
+	if c.IsGoogle {
+		return "google"
+	}
+	if c.IsOpenAI {
+		return "openai"
+	}
+	return "anthropic"
+}
+
+func (c *Client) destinationHost() string {
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	if u, err := url.Parse(baseURL); err == nil {
+		return u.Host
+	}
+	return baseURL
+}
+
+func (c *Client) systemPromptLength(system any) int {
+	if sb, ok := system.([]SystemBlock); ok {
+		total := 0
+		for _, b := range sb {
+			total += len(b.Text)
+		}
+		return total
+	}
+	if s, ok := system.(string); ok {
+		return len(s)
+	}
+	return 0
+}
+
+func (c *Client) dataCategories(messages []Message, system any, toolCount int) []string {
+	cats := []string{"conversation"}
+	if system != nil {
+		cats = append(cats, "system_prompt")
+	}
+	if toolCount > 0 {
+		cats = append(cats, "tools")
+	}
+	return cats
+}
+
+func (c *Client) recordOutboundAudit(provider, destHost, model string, msgCount, systemPromptLen, toolCount int, resp *MessageResponse, err error, elapsed time.Duration, dataCategories []string) {
+	entry := &observability.OutboundAuditEntry{
+		Provider:        provider,
+		DestinationHost: destHost,
+		Model:           model,
+		MessageCount:    msgCount,
+		SystemPromptLen: systemPromptLen,
+		ToolCount:       toolCount,
+		Duration:        elapsed.Milliseconds(),
+		DataCategories:  dataCategories,
+	}
+	if resp != nil {
+		entry.InputTokens = resp.Usage.InputTokens
+		entry.OutputTokens = resp.Usage.OutputTokens
+	}
+	observability.RecordOutboundAudit(entry)
+}
+
+func sdkCompletionToResponseIfNoError(comp *openai.ChatCompletion, err error) *MessageResponse {
+	if err != nil || comp == nil {
+		return nil
+	}
+	return sdkCompletionToResponse(comp)
+}
+
+func sdkMessageToResponseIfNoError(msg *anthropic.Message, err error) *MessageResponse {
+	if err != nil || msg == nil {
+		return nil
+	}
+	return sdkMessageToResponse(msg)
 }
 
 func (c *Client) StreamMessage(ctx context.Context, messages []Message, system string, onEvent func(event string, data []byte)) error {

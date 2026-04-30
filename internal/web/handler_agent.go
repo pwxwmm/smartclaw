@@ -104,3 +104,38 @@ func (h *Handler) handleAgentOutputWS(client *Client, msg WSMessage) {
 	}
 	h.sendToClient(client, WSResponse{Type: "agent_output", Data: result})
 }
+
+func (h *Handler) handleAgentSwitchWS(client *Client, msg WSMessage) {
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		h.sendError(client, "Invalid agent switch request")
+		return
+	}
+	agentType, _ := data["agent_type"].(string)
+	if agentType == "" {
+		h.sendError(client, "agent_type is required")
+		return
+	}
+
+	result, err := tools.Execute(context.Background(), "agent", map[string]any{
+		"operation":  "switch",
+		"agent_type": agentType,
+	})
+	if err != nil {
+		h.sendToClient(client, WSResponse{Type: "agent_switch", Data: map[string]any{
+			"success":    false,
+			"agent_type": agentType,
+			"error":      err.Error(),
+		}})
+		return
+	}
+
+	h.hub.Broadcast(mustMarshalWSResponse(WSResponse{
+		Type: "agent_switched",
+		Data: map[string]any{
+			"success":    true,
+			"agent_type": agentType,
+			"result":     result,
+		},
+	}))
+}

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -96,7 +95,7 @@ func (h *Handler) handleSessionNew(client *Client, msg WSMessage) {
 			CreatedAt: sess.CreatedAt,
 			UpdatedAt: sess.UpdatedAt,
 		}
-		if err := h.dataStore.UpsertSession(context.Background(), storeSess); err != nil {
+		if err := h.dataStore.UpsertSession(h.shutdownCtx, storeSess); err != nil {
 			h.sendError(client, fmt.Sprintf("Failed to save session: %v", err))
 			return
 		}
@@ -245,7 +244,7 @@ func (h *Handler) handleSessionDelete(client *Client, msg WSMessage) {
 			h.sendError(client, "Access denied: session belongs to another user")
 			return
 		}
-		if err := h.dataStore.DeleteSession(context.Background(), msg.ID); err != nil {
+		if err := h.dataStore.DeleteSession(h.shutdownCtx, msg.ID); err != nil {
 			h.sendError(client, fmt.Sprintf("Failed to delete session: %v", err))
 			return
 		}
@@ -291,7 +290,7 @@ func (h *Handler) handleSessionRename(client *Client, msg WSMessage) {
 	}
 
 	if h.dataStore != nil {
-		if err := h.dataStore.UpdateSessionTitle(context.Background(), msg.ID, msg.Title); err != nil {
+		if err := h.dataStore.UpdateSessionTitle(h.shutdownCtx, msg.ID, msg.Title); err != nil {
 			h.sendError(client, fmt.Sprintf("Failed to rename session: %v", err))
 			return
 		}
@@ -335,7 +334,7 @@ func (h *Handler) handleSessionFragmentsWS(client *Client, msg WSMessage) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := h.shutdownCtx
 	fragments, err := h.memMgr.Search(ctx, query, limit)
 	if err != nil {
 		h.sendError(client, "Search failed: "+err.Error())

@@ -2,6 +2,7 @@ package alertengine
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -22,10 +23,14 @@ type AlertEngine struct {
 	corrWindow            time.Duration
 	maxRawAlerts          int
 	autoEscalateThreshold int
+
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // NewAlertEngine creates a new AlertEngine with default configuration.
 func NewAlertEngine() *AlertEngine {
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	return &AlertEngine{
 		rawAlerts:             make([]Alert, config.MaxRawAlerts),
 		head:                  0,
@@ -38,6 +43,15 @@ func NewAlertEngine() *AlertEngine {
 		corrWindow:            config.CorrelationWindow,
 		maxRawAlerts:          config.MaxRawAlerts,
 		autoEscalateThreshold: config.AutoEscalateThreshold,
+		shutdownCtx:           shutdownCtx,
+		shutdownCancel:        shutdownCancel,
+	}
+}
+
+// Close cancels the shutdown context, signalling all in-flight callbacks to stop.
+func (e *AlertEngine) Close() {
+	if e.shutdownCancel != nil {
+		e.shutdownCancel()
 	}
 }
 
@@ -97,7 +111,14 @@ func (e *AlertEngine) Ingest(alert Alert) *DedupedAlert {
 		e.deduped[alert.Fingerprint] = da
 
 		for _, cb := range callbacks {
-			go cb(context.Background(), alert)
+			go func(cb AlertCallback, ctx context.Context, a Alert) {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("alertengine: callback panic recovered", "panic", r)
+					}
+				}()
+				cb(ctx, a)
+			}(cb, e.shutdownCtx, alert)
 		}
 
 		return &DedupedAlert{
@@ -141,7 +162,14 @@ func (e *AlertEngine) Ingest(alert Alert) *DedupedAlert {
 
 	// Deduped alerts may have escalated severity, so callbacks fire again
 	for _, cb := range callbacks {
-		go cb(context.Background(), alert)
+		go func(cb AlertCallback, ctx context.Context, a Alert) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("alertengine: callback panic recovered", "panic", r)
+				}
+			}()
+			cb(ctx, a)
+		}(cb, e.shutdownCtx, alert)
 	}
 
 	return &DedupedAlert{

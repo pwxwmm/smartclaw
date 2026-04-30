@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -155,7 +156,9 @@ func streamWithOpenAISDK(ctx context.Context, sdkClient openai.Client, params op
 	defer func() {
 		if !messageStopSent {
 			msgBytes, _ := json.Marshal(&MessageResponse{StopReason: "end_turn"})
-			_ = handler("message_stop", msgBytes)
+			if stopErr := handler("message_stop", msgBytes); stopErr != nil {
+				slog.Debug("failed to send message_stop event", "error", stopErr)
+			}
 		}
 	}()
 
@@ -237,8 +240,10 @@ func streamWithOpenAISDK(ctx context.Context, sdkClient openai.Client, params op
 				"message": err.Error(),
 			},
 		}
-		_ = emitEvent(handler, "error", errData)
-		return fmt.Errorf("OpenAI API streaming error: %w", err)
+	if emitErr := emitEvent(handler, "error", errData); emitErr != nil {
+		slog.Debug("failed to emit error event", "error", emitErr)
+	}
+	return fmt.Errorf("OpenAI API streaming error: %w", err)
 	}
 
 	return nil

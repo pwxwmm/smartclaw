@@ -129,6 +129,34 @@
     menu.style.top = Math.max(0, top) + 'px';
   };
 
+  SC.fuzzyMatch = function(query, text) {
+    if (!query) return { score: 1, matches: [] };
+    query = query.toLowerCase();
+    text = text.toLowerCase();
+    var qi = 0, score = 0, matches = [], lastMatchIdx = -1;
+    for (var ti = 0; ti < text.length && qi < query.length; ti++) {
+      if (text[ti] === query[qi]) {
+        var bonus = 0;
+        if (ti === 0 || text[ti-1] === ' ' || text[ti-1] === '/' || text[ti-1] === '_') bonus = 2;
+        if (ti === lastMatchIdx + 1) bonus += 1;
+        score += 1 + bonus;
+        matches.push(ti);
+        lastMatchIdx = ti;
+        qi++;
+      }
+    }
+    if (qi < query.length) return null;
+    return { score: score, matches: matches };
+  };
+
+  SC.applyListStagger = function(container, itemSelector) {
+    var items = container.querySelectorAll(itemSelector || ':scope > *');
+    items.forEach(function(el, i) {
+      el.classList.add('list-enter');
+      el.style.animationDelay = (i * 30) + 'ms';
+    });
+  };
+
   function hideContextMenu() {
     var menu = document.getElementById('msg-context-menu');
     if (menu) menu.classList.add('hidden');
@@ -142,4 +170,59 @@
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') hideContextMenu();
   });
+
+  SC.renderToBoth = function(id1, id2, htmlOrFn) {
+    var el1 = SC.$('#' + id1);
+    var el2 = SC.$('#' + id2);
+    if (typeof htmlOrFn === 'function') {
+      if (el1) htmlOrFn(el1);
+      if (el2) htmlOrFn(el2);
+    } else {
+      if (el1) el1.innerHTML = htmlOrFn;
+      if (el2) el2.innerHTML = htmlOrFn;
+    }
+  };
+
+  SC.renderMessageCard = function(role, contentHTML, timestamp, options) {
+    options = options || {};
+    var roleLabels = { user: 'You', assistant: 'SmartClaw', system: 'System' };
+    var roleLabel = options.roleLabel || roleLabels[role] || role;
+    var roleColor = role === 'user' ? 'var(--accent)' : role === 'assistant' ? 'var(--info)' : 'var(--tx-2)';
+    var el = document.createElement('div');
+    el.className = 'message ' + role;
+    el.innerHTML = '<div class="msg-role" style="color:' + roleColor + '">' + SC.escapeHtml(roleLabel) + '</div>' +
+      '<div class="msg-bubble"' + (options.style ? ' style="' + options.style + '"' : '') + '>' + contentHTML + '</div>' +
+      (timestamp ? '<div class="msg-ts">' + SC.escapeHtml(timestamp) + '</div>' : '');
+    return el;
+  };
+
+  SC.makeDraggable = function(container, opts) {
+    opts = opts || {};
+    container.addEventListener('dragstart', function(e) {
+      if (opts.onDragStart) opts.onDragStart(e);
+      e.dataTransfer.effectAllowed = opts.effect || 'move';
+      if (opts.dragData) e.dataTransfer.setData('text/plain', JSON.stringify(opts.dragData(e)));
+      container.classList.add('dragging');
+    });
+    container.addEventListener('dragend', function() {
+      container.classList.remove('dragging');
+      if (opts.onDragEnd) opts.onDragEnd();
+    });
+    if (opts.dropTarget) {
+      opts.dropTarget.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = opts.effect || 'move';
+        opts.dropTarget.classList.add('drag-over');
+        if (opts.onDragOver) opts.onDragOver(e);
+      });
+      opts.dropTarget.addEventListener('dragleave', function() {
+        opts.dropTarget.classList.remove('drag-over');
+      });
+      opts.dropTarget.addEventListener('drop', function(e) {
+        e.preventDefault();
+        opts.dropTarget.classList.remove('drag-over');
+        if (opts.onDrop) opts.onDrop(e);
+      });
+    }
+  };
 })();

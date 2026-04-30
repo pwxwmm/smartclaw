@@ -22,6 +22,11 @@ type MemorySnapshot struct {
 	UserContent   string
 }
 
+type AgentsMDResolver interface {
+	Resolve() string
+	Reload(ctx context.Context) error
+}
+
 type MemoryManager struct {
 	promptMemory    *layers.PromptMemory
 	sessionSearch   *layers.SessionSearch
@@ -31,6 +36,7 @@ type MemoryManager struct {
 	dataStore       *store.Store
 	soulMD          *layers.ManagedFile
 	agentsMD        *layers.ManagedFile
+	agentsMDOrg     AgentsMDResolver
 	contextResolver *ContextFileResolver
 	conventionStore *convention.Store
 	archaeologyLayer *archaeology.ArchaeologyLayer
@@ -528,6 +534,14 @@ func (mm *MemoryManager) GetContextFileResolver() *ContextFileResolver {
 	return mm.contextResolver
 }
 
+func (mm *MemoryManager) SetAgentsMDHierarchy(h AgentsMDResolver) {
+	mm.agentsMDOrg = h
+}
+
+func (mm *MemoryManager) GetAgentsMDHierarchy() AgentsMDResolver {
+	return mm.agentsMDOrg
+}
+
 func (mm *MemoryManager) GetConventionStore() *convention.Store {
 	return mm.conventionStore
 }
@@ -553,21 +567,42 @@ func (mm *MemoryManager) appendContextFileLayers(ctx context.Context, layerConte
 			if !ok || af.Content == "" {
 				continue
 			}
+
+			if af.Priority == PriorityAgents && mm.agentsMDOrg != nil {
+				continue
+			}
+
 			_, span := observability.StartSpan(ctx, "memory.layer."+string(layerName))
 			layerContents = append(layerContents, LayerContent{Name: layerName, Content: af.Content})
 			label := priorityToLabel[af.Priority]
 			observability.RecordMemoryLayerSize(label, len(af.Content))
 			observability.EndSpan(span)
 		}
+
+		if mm.agentsMDOrg != nil {
+			merged := mm.agentsMDOrg.Resolve()
+			if merged != "" {
+				_, span := observability.StartSpan(ctx, "memory.layer.agents")
+				layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: merged})
+				observability.RecordMemoryLayerSize("agents", len(merged))
+				observability.EndSpan(span)
+			}
+		}
+
 		return layerContents
 	}
 
-	// Legacy fallback when resolver is not available.
 	if mm.soulMD != nil && mm.soulMD.Content() != "" {
 		layerContents = append(layerContents, LayerContent{Name: LayerSOUL, Content: mm.soulMD.Content()})
 		observability.RecordMemoryLayerSize("soul", len(mm.soulMD.Content()))
 	}
-	if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
+	if mm.agentsMDOrg != nil {
+		merged := mm.agentsMDOrg.Resolve()
+		if merged != "" {
+			layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: merged})
+			observability.RecordMemoryLayerSize("agents", len(merged))
+		}
+	} else if mm.agentsMD != nil && mm.agentsMD.Content() != "" {
 		layerContents = append(layerContents, LayerContent{Name: LayerAgents, Content: mm.agentsMD.Content()})
 		observability.RecordMemoryLayerSize("agents", len(mm.agentsMD.Content()))
 	}

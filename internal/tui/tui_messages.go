@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/tools"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -105,44 +107,23 @@ func (m *Model) callAPI(input string) tea.Cmd {
 
 		parser := api.NewStreamMessageParser()
 
-		var err error
-		if m.apiClient.IsOpenAI {
-			err = m.apiClient.StreamMessageOpenAI(context.Background(), req, func(event string, data []byte) error {
-				result, err := parser.HandleEvent(event, data)
-				if err != nil {
-					return err
-				}
+		err := m.apiClient.StreamMessage(context.Background(), req, func(event string, data []byte) error {
+			result, err := parser.HandleEvent(event, data)
+			if err != nil {
+				return err
+			}
 
-				m.streamState.mu.Lock()
-				if result.TextDelta != "" {
-					m.streamState.text.WriteString(result.TextDelta)
-				}
-				if result.ThinkingDelta != "" {
-					m.streamState.thinking.WriteString(result.ThinkingDelta)
-				}
-				m.streamState.mu.Unlock()
+			m.streamState.mu.Lock()
+			if result.TextDelta != "" {
+				m.streamState.text.WriteString(result.TextDelta)
+			}
+			if result.ThinkingDelta != "" {
+				m.streamState.thinking.WriteString(result.ThinkingDelta)
+			}
+			m.streamState.mu.Unlock()
 
-				return nil
-			})
-		} else {
-			err = m.apiClient.StreamMessageSSE(context.Background(), req, func(event string, data []byte) error {
-				result, err := parser.HandleEvent(event, data)
-				if err != nil {
-					return err
-				}
-
-				m.streamState.mu.Lock()
-				if result.TextDelta != "" {
-					m.streamState.text.WriteString(result.TextDelta)
-				}
-				if result.ThinkingDelta != "" {
-					m.streamState.thinking.WriteString(result.ThinkingDelta)
-				}
-				m.streamState.mu.Unlock()
-
-				return nil
-			})
-		}
+			return nil
+		})
 
 		if err != nil {
 			return ErrorMsg{err: err.Error()}
@@ -165,6 +146,26 @@ func (m *Model) callAPI(input string) tea.Cmd {
 			Content: []api.ContentBlock{{Type: "text", Text: finalResponse}},
 		}
 		m.messages = append(m.messages, assistantMsg)
+
+		if m.learningLoop != nil && m.learningLoop.IsEnabled() {
+			ll := m.learningLoop
+			msgs := make([]learning.Message, 0, len(m.messages))
+			for _, msg := range m.messages {
+				msgs = append(msgs, learning.Message{
+					Role:    msg.Role,
+					Content: extractTextFromContent(msg.Content),
+				})
+			}
+			sessionID := "tui-session"
+			if m.currentSession != nil {
+				sessionID = m.currentSession.ID
+			}
+			go func() {
+				if err := ll.OnTaskComplete(context.Background(), sessionID, msgs, nil); err != nil {
+					slog.Warn("learning loop: on task complete failed", "error", err)
+				}
+			}()
+		}
 
 		if mcpResults := m.executeMCPCalls(finalResponse); len(mcpResults) > 0 {
 			return APIResponseMsg{text: finalResponse + mcpResults, thinkingBlock: thinkingBlock, tokens: 0}
@@ -358,4 +359,21 @@ func (m *Model) buildToolDefinitions() []api.ToolDefinition {
 	}
 
 	return toolDefs
+}
+
+func extractTextFromContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []api.ContentBlock:
+		var parts []string
+		for _, block := range v {
+			if block.Type == "text" {
+				parts = append(parts, block.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

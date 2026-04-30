@@ -1,0 +1,15 @@
+id = "smartclaw"
+name = "SmartClaw"
+version = "0.1.0"
+description = "Self-improving AI coding agent — ask, explain, fix, and generate tests via ACP"
+authors = ["SmartClaw Team"]
+repository = "https://github.com/instructkr/smartclaw"
+schema_version = 1
+
+[context_servers.smartclaw]
+name = "SmartClaw ACP"
+
+[slash_commands.smartclaw]
+description = "Ask SmartClaw anything — use 'ask' to prompt, 'explain' for selected code, 'fix' to fix code"
+requires_argument = true
+tooltip_text = "SmartClaw AI Agent"

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -35,7 +34,7 @@ func (h *Handler) handleMemorySearchWS(client *Client, msg WSMessage) {
 		h.sendError(client, "Memory manager not available")
 		return
 	}
-	ctx := context.Background()
+	ctx := h.shutdownCtx
 	results, err := h.memMgr.Search(ctx, query, limit)
 	if err != nil {
 		h.sendError(client, "Search failed: "+err.Error())
@@ -55,7 +54,7 @@ func (h *Handler) handleMemoryRecallWS(client *Client, msg WSMessage) {
 		h.sendError(client, "Memory manager not available")
 		return
 	}
-	ctx := context.Background()
+	ctx := h.shutdownCtx
 	contextStr := h.memMgr.BuildSystemContext(ctx, query)
 	h.sendToClient(client, WSResponse{Type: "memory_recall", Data: map[string]any{
 		"query":   query,

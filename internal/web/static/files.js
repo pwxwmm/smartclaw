@@ -124,6 +124,7 @@
         'No files loaded',
         'Open a project directory to see its files here.'
       );
+      renderFileTreeView(nodes);
       return;
     }
     const prefix = parent ? getNodePath(parent) : '';
@@ -171,8 +172,13 @@
         el.innerHTML = `${iconSvg}<span class="fname">${highlightName(node.name, searchQuery)}</span>${dot}`;
         el.addEventListener('click', (e) => {
           e.stopPropagation();
-          SC.state.ui.currentFile = getNodePath(el);
-          SC.wsSend('file_open', { path: SC.state.ui.currentFile });
+          var filePath = getNodePath(el);
+          SC.state.ui.currentFile = filePath;
+          if (SC.state.fileTabs && SC.state.fileTabs[filePath]) {
+            openFileTab(SC.state.fileTabs[filePath].content, filePath);
+          } else {
+            SC.wsSend('file_open', { path: filePath });
+          }
         });
         el.draggable = true;
         el.addEventListener('dragstart', (e) => {
@@ -182,12 +188,28 @@
         container.appendChild(el);
       }
     });
+
+    if (!parent && typeof SC.applyListStagger === 'function') SC.applyListStagger(container, '.file-node');
+
+    if (!parent) {
+      renderFileTreeView(nodes);
+    }
+  }
+
+  function renderFileTreeView(nodes) {
+    var viewContainer = SC.$('#file-tree-view');
+    var viewContainer2 = SC.$('#file-tree-view-2');
+    var savedQuery = searchQuery;
+    dirCounter = 0;
+    if (viewContainer) renderFileTree(nodes, viewContainer);
+    if (viewContainer2) renderFileTree(nodes, viewContainer2);
+    searchQuery = savedQuery;
   }
 
   function getNodePath(el) {
     const parts = [];
     let node = el;
-    while (node && node.id !== 'file-tree') {
+    while (node && node.id !== 'file-tree' && node.id !== 'file-tree-view' && node.id !== 'file-tree-view-2') {
       if (node.classList.contains('file-node')) {
         const name = node.querySelector('.fname')?.textContent;
         if (name) parts.unshift(name);
@@ -225,50 +247,100 @@
     return extToLang[ext] || null;
   }
 
-  function openFileDrawer(content, path) {
-    try {
-    const drawer = SC.$('#file-drawer');
-    SC.$('#drawer-title').textContent = path || 'File Preview';
-    const lines = content.split('\n');
-    const lineCount = lines.length;
-    const padWidth = String(lineCount).length;
-    const lineNums = lines.map((_, i) => String(i + 1).padStart(padWidth, ' ')).join('\n');
-    const container = SC.$('#drawer-content');
-    container.innerHTML = '';
-    const lineNumsEl = document.createElement('span');
+  function renderFileView(content, path) {
+    var container = document.createElement('div');
+    container.className = 'file-view';
+
+    var filename = path ? path.split('/').pop() : 'File';
+    var lang = langFromPath(path);
+
+    var header = document.createElement('div');
+    header.className = 'file-view-header';
+    header.innerHTML = '<span class="fv-filename"><svg class="fv-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' + SC.escapeHtml(path || filename) + '</span>' +
+      '<div class="fv-actions">' +
+      '<button class="btn-ghost sm fv-edit-btn">Edit</button>' +
+      '<button class="btn-ghost sm fv-context-btn">Add to Context</button>' +
+      '</div>';
+
+    var body = document.createElement('div');
+    body.className = 'file-view-body';
+
+    var lines = content.split('\n');
+    var lineCount = lines.length;
+    var padWidth = String(lineCount).length;
+    var lineNums = lines.map(function(_, i) { return String(i + 1).padStart(padWidth, ' '); }).join('\n');
+
+    var lineNumsEl = document.createElement('span');
     lineNumsEl.className = 'line-nums';
     lineNumsEl.textContent = lineNums;
-    const codeEl = document.createElement('code');
-    const lang = langFromPath(path);
+
+    var codeEl = document.createElement('code');
     if (lang && typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
-      try {
-        codeEl.innerHTML = hljs.highlight(content, { language: lang }).value;
-      } catch (e) {
-        codeEl.textContent = content;
-      }
+      try { codeEl.innerHTML = hljs.highlight(content, { language: lang }).value; }
+      catch (e) { codeEl.textContent = content; }
     } else if (typeof hljs !== 'undefined') {
-      try {
-        codeEl.innerHTML = hljs.highlightAuto(content).value;
-      } catch (e) {
-        codeEl.textContent = content;
-      }
+      try { codeEl.innerHTML = hljs.highlightAuto(content).value; }
+      catch (e) { codeEl.textContent = content; }
     } else {
       codeEl.textContent = content;
     }
-    container.appendChild(lineNumsEl);
-    container.appendChild(codeEl);
-    drawer.classList.remove('hidden');
-    requestAnimationFrame(() => drawer.classList.add('visible'));
-    } catch (err) {
-      console.error('[openFileDrawer Error]', err);
-      SC.showErrorBanner('File preview error: ' + err.message, function() { openFileDrawer(content, path); });
-    }
+
+    body.appendChild(lineNumsEl);
+    body.appendChild(codeEl);
+    container.appendChild(header);
+    container.appendChild(body);
+
+    header.querySelector('.fv-edit-btn').addEventListener('click', function() {
+      SC.openEditor(content, path);
+    });
+    header.querySelector('.fv-context-btn').addEventListener('click', function() {
+      var selection = window.getSelection();
+      var selectedText = selection.toString().trim();
+      var input = SC.$('#input');
+      var snippet;
+      if (selectedText) {
+        snippet = '\n```' + path + '\n' + selectedText + '\n```\n';
+      } else {
+        snippet = '\n```' + path + '\n' + content + '\n```\n';
+      }
+      input.value += snippet;
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      input.focus();
+      SC.toast('Added to context', 'success');
+    });
+
+    return container;
   }
 
-  function closeDrawer() {
-    const drawer = SC.$('#file-drawer');
-    drawer.classList.remove('visible');
-    setTimeout(() => drawer.classList.add('hidden'), 340);
+  function openFileTab(content, path) {
+    try {
+      if (!SC.state.fileTabs) SC.state.fileTabs = {};
+
+      var filename = path ? path.split('/').pop() : 'File';
+      var existingTab = null;
+      for (var i = 0; i < SC.Tabs.tabs.length; i++) {
+        if (SC.Tabs.tabs[i].type === 'file' && SC.Tabs.tabs[i].filePath === path) {
+          existingTab = SC.Tabs.tabs[i];
+          break;
+        }
+      }
+
+      SC.state.fileTabs[path] = { content: content, path: path, lang: langFromPath(path) };
+
+      if (existingTab) {
+        SC.Tabs.switch(existingTab.id);
+        SC.Tabs.render();
+        return;
+      }
+
+      var tab = SC.Tabs.createFileTab(filename, path);
+      if (!tab) return;
+
+      SC.Tabs.switch(tab.id);
+    } catch (err) {
+      console.error('[openFileTab Error]', err);
+    }
   }
 
   function openEditor(content, path) {
@@ -305,39 +377,46 @@
     const overlay = SC.$('#drag-overlay');
     let dragCount = 0;
 
-    chat.addEventListener('dragenter', (e) => { e.preventDefault(); dragCount++; overlay.classList.remove('hidden'); });
-    chat.addEventListener('dragleave', (e) => { e.preventDefault(); dragCount--; if (dragCount <= 0) { overlay.classList.add('hidden'); dragCount = 0; } });
-    chat.addEventListener('dragover', (e) => e.preventDefault());
-    chat.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dragCount = 0;
-      overlay.classList.add('hidden');
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        Array.from(files).forEach(f => {
-          if (f.size > 51200) {
-            SC.uploadFile(f);
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            const text = ev.target.result;
-            const isText = typeof text === 'string' && text.length < 50000;
-            if (isText) {
-              const snippet = `\n\`\`\`${f.name}\n${text.slice(0, 10000)}${text.length > 10000 ? '\n... (truncated)' : ''}\n\`\`\`\n`;
-              const input = SC.$('#input');
-              input.value += snippet;
-              input.style.height = 'auto';
-              input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-              SC.toast(`Added ${f.name}`, 'success');
-            } else {
+    SC.makeDraggable(chat, {
+      dropTarget: chat,
+      onDragStart: function(e) { e.preventDefault(); },
+      onDragEnd: function() {},
+      onDragOver: function() {
+        overlay.classList.remove('hidden');
+      },
+      onDrop: function(e) {
+        dragCount = 0;
+        overlay.classList.add('hidden');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          Array.from(files).forEach(f => {
+            if (f.size > 51200) {
               SC.uploadFile(f);
+              return;
             }
-          };
-          reader.readAsText(f);
-        });
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const text = ev.target.result;
+              const isText = typeof text === 'string' && text.length < 50000;
+              if (isText) {
+                const snippet = `\n\`\`\`${f.name}\n${text.slice(0, 10000)}${text.length > 10000 ? '\n... (truncated)' : ''}\n\`\`\`\n`;
+                const input = SC.$('#input');
+                input.value += snippet;
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+                SC.toast(`Added ${f.name}`, 'success');
+              } else {
+                SC.uploadFile(f);
+              }
+            };
+            reader.readAsText(f);
+          });
+        }
       }
     });
+
+    chat.addEventListener('dragenter', (e) => { e.preventDefault(); dragCount++; overlay.classList.remove('hidden'); });
+    chat.addEventListener('dragleave', (e) => { e.preventDefault(); dragCount--; if (dragCount <= 0) { overlay.classList.add('hidden'); dragCount = 0; } });
   }
 
   function initFileMention() {
@@ -371,7 +450,7 @@
         const lastSlash = f.path.lastIndexOf('/');
         const dir = lastSlash > 0 ? f.path.slice(0, lastSlash + 1) : '';
         const name = lastSlash > 0 ? f.path.slice(lastSlash + 1) : f.path;
-        li.innerHTML = `<svg class="fm-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="fm-path">${dir}<span class="fm-name">${name}</span></span>`;
+        li.innerHTML = `<svg class="fm-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="fm-path">${SC.escapeHtml(dir)}<span class="fm-name">${SC.escapeHtml(name)}</span></span>`;
         li.addEventListener('click', () => insertMention(f.path));
         li.addEventListener('mouseenter', () => {
           SC.state.mentionIndex = i;
@@ -453,8 +532,8 @@
 
   SC.flattenFileTree = flattenFileTree;
   SC.renderFileTree = renderFileTree;
-  SC.openFileDrawer = openFileDrawer;
-  SC.closeDrawer = closeDrawer;
+  SC.openFileTab = openFileTab;
+  SC.renderFileView = renderFileView;
   SC.openEditor = openEditor;
   SC.closeEditor = closeEditor;
   SC.saveEditor = saveEditor;
@@ -462,6 +541,7 @@
   SC.initFileMention = initFileMention;
   SC.initFileSearch = initFileSearch;
   SC.requestGitStatus = requestGitStatus;
+  SC.langFromPath = langFromPath;
 
   SC.state.fileTreeData = [];
   SC.state.gitStatus = {};

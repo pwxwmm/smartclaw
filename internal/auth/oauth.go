@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,9 +29,13 @@ type Token struct {
 }
 
 func DefaultOAuthConfig() *OAuthConfig {
+	redirectURI := os.Getenv("SMARTCLAW_OAUTH_REDIRECT_URI")
+	if redirectURI == "" {
+		redirectURI = "http://localhost:8765/callback"
+	}
 	return &OAuthConfig{
 		ClientID:    "claude-code",
-		RedirectURI: "http://localhost:8765/callback",
+		RedirectURI: redirectURI,
 		AuthURL:     "https://claude.ai/oauth/authorize",
 		TokenURL:    "https://claude.ai/oauth/token",
 	}

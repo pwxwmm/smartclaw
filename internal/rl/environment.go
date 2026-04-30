@@ -7,10 +7,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/learning"
 )
 
 type EnvironmentConfig struct {
@@ -260,6 +263,62 @@ func (r *LengthPenaltyReward) Feedback(reward float64, step int) string {
 
 func (r *LengthPenaltyReward) Name() string { return "length_penalty" }
 
+type LLMJudgeReward struct {
+	LLMClient learning.LLMClient
+}
+
+func (r *LLMJudgeReward) Compute(task, response string, step int, obs *Observation) float64 {
+	if r.LLMClient == nil {
+		return 0.5
+	}
+
+	prompt := fmt.Sprintf(`You are a quality judge. Rate the following AI response on a scale of 0.0 to 1.0.
+
+Criteria:
+- Correctness: Does the response address the question accurately?
+- Completeness: Does it cover the key aspects?
+- Clarity: Is it well-organized and easy to understand?
+- Actionability: Can the user act on the advice?
+
+Question: %s
+Response: %s
+
+Respond with ONLY a number between 0.0 and 1.0.`, task, response)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := r.LLMClient.CreateMessage(ctx, "", prompt)
+	if err != nil {
+		return 0.5
+	}
+
+	result = strings.TrimSpace(result)
+	score, err := strconv.ParseFloat(result, 64)
+	if err != nil {
+		return 0.5
+	}
+
+	if score < 0.0 {
+		score = 0.0
+	}
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	return score
+}
+
+func (r *LLMJudgeReward) IsDone(task, response string, step int, obs *Observation) bool {
+	return step >= 5
+}
+
+func (r *LLMJudgeReward) Feedback(reward float64, step int) string {
+	return ""
+}
+
+func (r *LLMJudgeReward) Name() string { return "llm_judge" }
+
 var rewardRegistry = map[string]RewardFunction{
 	"exact_match":    &ExactMatchReward{},
 	"code_quality":   &CodeQualityReward{},
@@ -269,6 +328,9 @@ var rewardRegistry = map[string]RewardFunction{
 func GetRewardFunction(name string) RewardFunction {
 	if fn, ok := rewardRegistry[name]; ok {
 		return fn
+	}
+	if name == "llm_judge" {
+		return &LLMJudgeReward{}
 	}
 	return &ExactMatchReward{}
 }

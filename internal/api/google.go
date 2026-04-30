@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -161,7 +162,9 @@ func (c *Client) StreamMessageGoogle(ctx context.Context, messages []Message, sy
 	defer func() {
 		if !messageStopSent {
 			msgBytes, _ := json.Marshal(&MessageResponse{StopReason: "end_turn"})
-			_ = handler("message_stop", msgBytes)
+			if stopErr := handler("message_stop", msgBytes); stopErr != nil {
+				slog.Debug("failed to send message_stop event", "error", stopErr)
+			}
 		}
 	}()
 

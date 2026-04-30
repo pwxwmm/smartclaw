@@ -11,13 +11,15 @@ import (
 )
 
 type AppState struct {
-	mu            sync.RWMutex
-	Config        *types.Config
-	CurrentModel  string
-	Sessions      map[string]*types.Session
-	ActiveSession *types.Session
-	Cache         map[string]*types.CacheEntry
-	maxSessions   int
+	mu             sync.RWMutex
+	Config         *types.Config
+	CurrentModel   string
+	Sessions       map[string]*types.Session
+	ActiveSession  *types.Session
+	Cache          map[string]*types.CacheEntry
+	maxSessions    int
+	stopCleanup    chan struct{}
+	stopCleanupOnce sync.Once
 }
 
 func NewAppState() *AppState {
@@ -27,6 +29,7 @@ func NewAppState() *AppState {
 		Sessions:     make(map[string]*types.Session),
 		Cache:        make(map[string]*types.CacheEntry),
 		maxSessions:  1000,
+		stopCleanup:  make(chan struct{}),
 	}
 }
 
@@ -243,10 +246,19 @@ func (s *AppState) StartCacheCleanup(interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			s.CleanupCache()
+		for {
+			select {
+			case <-ticker.C:
+				s.CleanupCache()
+			case <-s.stopCleanup:
+				return
+			}
 		}
 	}()
+}
+
+func (s *AppState) StopCacheCleanup() {
+	s.stopCleanupOnce.Do(func() { close(s.stopCleanup) })
 }
 
 type Context struct {

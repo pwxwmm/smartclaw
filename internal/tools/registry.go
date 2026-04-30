@@ -130,7 +130,7 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input map[strin
 			if resultMap, ok := result.(map[string]any); ok {
 				im := getIncidentMemory()
 				if im != nil {
-					_ = im.UpdateIncidentFromToolResult(sopaToolNameToIncidentName(name), resultMap)
+					_ = im.UpdateIncidentFromToolResult(im.Context(), sopaToolNameToIncidentName(name), resultMap)
 				}
 			}
 		}()
@@ -391,6 +391,7 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&BrowserSelectTool{})
 	defaultRegistry.Register(&BrowserFillFormTool{})
 	defaultRegistry.Register(&MemoryRecallTool{})
+	defaultRegistry.Register(&ConversationRecallTool{})
 	defaultRegistry.Register(&GitHubCreatePRTool{})
 	defaultRegistry.Register(&GitHubListPRsTool{})
 	defaultRegistry.Register(&GitHubMergePRTool{})
@@ -420,6 +421,7 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&AuditStatsTool{})
 	defaultRegistry.Register(&InvestigateIncidentTool{})
 	defaultRegistry.Register(&IncidentTimelineTool{})
+	defaultRegistry.Register(&DapTool{})
 }
 
 func GetRegistry() *ToolRegistry {

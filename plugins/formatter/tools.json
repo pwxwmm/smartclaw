@@ -1,0 +1,15 @@
+[
+  {
+    "name": "format",
+    "description": "Format code files using gofmt, prettier, or autopep8",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "file": {"type": "string", "description": "File path to format"},
+        "language": {"type": "string", "enum": ["go", "js", "py"], "description": "Language of the file"}
+      },
+      "required": ["file"]
+    },
+    "command": "sh $PLUGIN_DIR/main.sh"
+  }
+]

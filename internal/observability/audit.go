@@ -15,6 +15,24 @@ import (
 	"github.com/instructkr/smartclaw/internal/lifecycle"
 )
 
+// OutboundAuditEntry records metadata about an outbound API call for privacy auditing.
+// It never logs message content, API keys, or auth tokens — only structural metadata.
+type OutboundAuditEntry struct {
+	ID              string    `json:"id"`
+	Timestamp       time.Time `json:"timestamp"`
+	Provider        string    `json:"provider"`         // "anthropic", "openai", "google"
+	DestinationHost string    `json:"destination_host"` // "api.anthropic.com"
+	Model           string    `json:"model"`
+	MessageCount    int       `json:"message_count"`
+	SystemPromptLen int       `json:"system_prompt_len"`
+	ToolCount       int       `json:"tool_count"`
+	InputTokens     int       `json:"input_tokens"`
+	OutputTokens    int       `json:"output_tokens"`
+	DataCategories  []string  `json:"data_categories"` // ["conversation", "system_prompt", "tools", "images"]
+	Duration        int64     `json:"duration_ms"`
+	SessionID       string    `json:"session_id"`
+}
+
 // AuditEntry represents a single auditable event.
 type AuditEntry struct {
 	ID              string         `json:"id"`
@@ -57,11 +75,14 @@ type AuditStats struct {
 
 // AuditLogger provides append-only audit trail logging to a JSONL file.
 type AuditLogger struct {
-	mu         sync.Mutex
-	entries    []*AuditEntry
-	file       *os.File
-	encoder    *json.Encoder
-	maxEntries int // max in-memory entries
+	mu          sync.Mutex
+	entries     []*AuditEntry
+	file        *os.File
+	encoder     *json.Encoder
+	maxEntries  int // max in-memory entries
+	outboundMu  sync.Mutex
+	outboundLog []*OutboundAuditEntry
+	maxOutbound int // max outbound entries in ring buffer
 }
 
 // DefaultAuditLogger is the global audit logger instance.
@@ -89,10 +110,12 @@ func NewAuditLogger(dataDir string) (*AuditLogger, error) {
 	}
 
 	return &AuditLogger{
-		entries:    make([]*AuditEntry, 0),
-		file:       f,
-		encoder:    json.NewEncoder(f),
-		maxEntries: 10000,
+		entries:     make([]*AuditEntry, 0),
+		file:        f,
+		encoder:     json.NewEncoder(f),
+		maxEntries:  10000,
+		outboundLog: make([]*OutboundAuditEntry, 0),
+		maxOutbound: 200,
 	}, nil
 }
 
@@ -211,6 +234,41 @@ func (l *AuditLogger) Close() error {
 	return nil
 }
 
+func (l *AuditLogger) RecordOutbound(entry *OutboundAuditEntry) {
+	if entry.ID == "" {
+		entry.ID = generateID()
+	}
+	if entry.Timestamp.IsZero() {
+		entry.Timestamp = time.Now()
+	}
+
+	l.outboundMu.Lock()
+	defer l.outboundMu.Unlock()
+
+	l.outboundLog = append(l.outboundLog, entry)
+	if len(l.outboundLog) > l.maxOutbound {
+		l.outboundLog = l.outboundLog[len(l.outboundLog)-l.maxOutbound:]
+	}
+}
+
+func (l *AuditLogger) GetOutboundLog(limit int) []*OutboundAuditEntry {
+	l.outboundMu.Lock()
+	defer l.outboundMu.Unlock()
+
+	n := limit
+	if n > len(l.outboundLog) {
+		n = len(l.outboundLog)
+	}
+	if n <= 0 {
+		return []*OutboundAuditEntry{}
+	}
+
+	start := len(l.outboundLog) - n
+	results := make([]*OutboundAuditEntry, n)
+	copy(results, l.outboundLog[start:])
+	return results
+}
+
 // matchesFilter checks if an entry matches the given filter criteria.
 func matchesFilter(e *AuditEntry, f AuditFilter) bool {
 	if f.StartTime != nil && e.Timestamp.Before(*f.StartTime) {
@@ -318,6 +376,19 @@ func AuditLog(entry *AuditEntry) {
 	if l := getAuditLogger(); l != nil {
 		l.Log(entry)
 	}
+}
+
+func RecordOutboundAudit(entry *OutboundAuditEntry) {
+	if l := getAuditLogger(); l != nil {
+		l.RecordOutbound(entry)
+	}
+}
+
+func GetOutboundAuditLog(limit int) []*OutboundAuditEntry {
+	if l := getAuditLogger(); l != nil {
+		return l.GetOutboundLog(limit)
+	}
+	return []*OutboundAuditEntry{}
 }
 
 // AuditToolExecution records a tool execution in the audit log.

@@ -5,24 +5,22 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"time"
 )
 
-// ToolCall represents a single tool invocation within a trajectory step.
 type ToolCall struct {
 	Name   string         `json:"name"`
 	Input  map[string]any `json:"input"`
 	Output string         `json:"output,omitempty"`
 }
 
-// ToolResult represents the result returned from a tool execution.
 type ToolResult struct {
 	Name    string `json:"name"`
 	Content string `json:"content"`
 	Success bool   `json:"success"`
 }
 
-// TrajectoryStep represents a single step in an RL trajectory.
 type TrajectoryStep struct {
 	Role       string         `json:"role"`
 	Content    string         `json:"content"`
@@ -33,38 +31,34 @@ type TrajectoryStep struct {
 	Timestamp  time.Time      `json:"timestamp"`
 }
 
-// Trajectory represents a complete RL episode with all steps and metadata.
 type Trajectory struct {
 	ID          string           `json:"id"`
 	SessionID   string           `json:"session_id"`
 	Task        string           `json:"task"`
 	Steps       []TrajectoryStep `json:"steps"`
-	Outcome     string           `json:"outcome"` // "success", "failure", "partial"
+	Outcome     string           `json:"outcome"`
 	TotalReward float64          `json:"total_reward"`
 	CreatedAt   time.Time        `json:"created_at"`
 	Compressed  bool             `json:"compressed"`
 }
 
-// RewardMetrics configures weights for computing trajectory reward.
 type RewardMetrics struct {
-	ExactMatch   float64 // weight for exact match (0-1)
-	CodeQuality  float64 // weight for code quality (0-1)
-	LengthPenalty float64 // weight for length penalty (0-1)
-	SuccessBonus float64 // bonus for successful outcome
+	ExactMatch   float64
+	CodeQuality  float64
+	LengthPenalty float64
+	SuccessBonus float64
 }
 
-// TrajectoryCompressor compresses trajectories to fit within a byte budget
-// and exports them in ShareGPT-compatible format for RL training.
 type TrajectoryCompressor struct {
-	maxBytes        int  // default: 64KB
-	preserveSystem  bool // default: true
-	preserveTools   bool // default: true
-	preserveRewards bool // default: true
+	maxBytes        int
+	preserveSystem  bool
+	preserveTools   bool
+	preserveRewards bool
+	lastStats       *CompressionStats
 }
 
-const defaultMaxBytes = 64 * 1024 // 64KB
+const defaultMaxBytes = 64 * 1024
 
-// NewTrajectoryCompressor creates a compressor with 64KB default budget.
 func NewTrajectoryCompressor() *TrajectoryCompressor {
 	return &TrajectoryCompressor{
 		maxBytes:        defaultMaxBytes,
@@ -74,85 +68,263 @@ func NewTrajectoryCompressor() *TrajectoryCompressor {
 	}
 }
 
-// WithMaxBytes sets a custom byte budget.
 func (tc *TrajectoryCompressor) WithMaxBytes(n int) *TrajectoryCompressor {
 	tc.maxBytes = n
 	return tc
 }
 
-// WithPreserveSystem sets whether system messages are preserved during compression.
 func (tc *TrajectoryCompressor) WithPreserveSystem(v bool) *TrajectoryCompressor {
 	tc.preserveSystem = v
 	return tc
 }
 
-// WithPreserveTools sets whether tool calls are preserved during compression.
 func (tc *TrajectoryCompressor) WithPreserveTools(v bool) *TrajectoryCompressor {
 	tc.preserveTools = v
 	return tc
 }
 
-// WithPreserveRewards sets whether reward-bearing steps are preserved during compression.
 func (tc *TrajectoryCompressor) WithPreserveRewards(v bool) *TrajectoryCompressor {
 	tc.preserveRewards = v
 	return tc
 }
 
+func (tc *TrajectoryCompressor) LastCompressionStats() *CompressionStats {
+	return tc.lastStats
+}
+
 // Compress compresses a trajectory to fit within maxBytes.
-// Strategy: truncate long content, remove low-reward steps, preserve key data.
+// Pipeline: size check → semanticDedup → truncateContent → removeLowQualitySteps → removeZeroRewardSteps → aggressiveTruncate → iterativeTruncate
 func (tc *TrajectoryCompressor) Compress(traj *Trajectory) (*Trajectory, error) {
+	compressed, _, err := tc.compressInternal(traj)
+	return compressed, err
+}
+
+// CompressWithStats compresses a trajectory and returns compression statistics.
+func (tc *TrajectoryCompressor) CompressWithStats(traj *Trajectory) (*Trajectory, *CompressionStats, error) {
+	return tc.compressInternal(traj)
+}
+
+func (tc *TrajectoryCompressor) compressInternal(traj *Trajectory) (*Trajectory, *CompressionStats, error) {
 	if traj == nil {
-		return nil, fmt.Errorf("rl: compress: trajectory is nil")
+		return nil, nil, fmt.Errorf("rl: compress: trajectory is nil")
 	}
 
 	compressed := tc.cloneTrajectory(traj)
+	originalStepCount := len(compressed.Steps)
+
+	origData, _ := json.Marshal(compressed)
+	originalBytes := len(origData)
+
+	stats := &CompressionStats{
+		OriginalBytes:     originalBytes,
+		OriginalStepCount: originalStepCount,
+		Timestamp:         time.Now(),
+		Method:            "none",
+	}
 
 	data, err := json.Marshal(compressed)
 	if err != nil {
-		return nil, fmt.Errorf("rl: compress: marshal: %w", err)
+		return nil, nil, fmt.Errorf("rl: compress: marshal: %w", err)
 	}
 	if len(data) <= tc.maxBytes {
-		return compressed, nil
+		stats.CompressedBytes = len(data)
+		stats.CompressedStepCount = len(compressed.Steps)
+		stats.CompressionRatio = safeRatio(len(data), originalBytes)
+		tc.lastStats = stats
+		return compressed, stats, nil
+	}
+
+	compressed = tc.semanticDedup(compressed)
+	stepsAfter := len(compressed.Steps)
+	if stepsAfter < originalStepCount {
+		stats.StepsMerged = originalStepCount - stepsAfter
+		stats.Method = "semantic_dedup"
+	}
+
+	data, err = json.Marshal(compressed)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rl: compress: marshal after semantic dedup: %w", err)
+	}
+	if len(data) <= tc.maxBytes {
+		compressed.Compressed = true
+		stats.CompressedBytes = len(data)
+		stats.CompressedStepCount = len(compressed.Steps)
+		stats.CompressionRatio = safeRatio(len(data), originalBytes)
+		if stats.Method == "none" {
+			stats.Method = "semantic_dedup"
+		}
+		tc.lastStats = stats
+		return compressed, stats, nil
 	}
 
 	compressed = tc.truncateContent(compressed)
+	if stats.Method == "none" || stats.Method == "semantic_dedup" {
+		stats.Method = "truncate"
+	}
 
 	data, err = json.Marshal(compressed)
 	if err != nil {
-		return nil, fmt.Errorf("rl: compress: marshal after truncate: %w", err)
+		return nil, nil, fmt.Errorf("rl: compress: marshal after truncate: %w", err)
 	}
 	if len(data) <= tc.maxBytes {
 		compressed.Compressed = true
-		return compressed, nil
+		stats.CompressedBytes = len(data)
+		stats.CompressedStepCount = len(compressed.Steps)
+		stats.CompressionRatio = safeRatio(len(data), originalBytes)
+		tc.lastStats = stats
+		return compressed, stats, nil
 	}
 
+	stepsBeforeQL := len(compressed.Steps)
+	compressed = tc.removeLowQualitySteps(compressed)
+	stepsRemovedQL := stepsBeforeQL - len(compressed.Steps)
+	stats.StepsRemoved += stepsRemovedQL
+	if stepsRemovedQL > 0 {
+		stats.Method = "remove_zero_reward"
+	}
+
+	data, err = json.Marshal(compressed)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rl: compress: marshal after remove low quality: %w", err)
+	}
+	if len(data) <= tc.maxBytes {
+		compressed.Compressed = true
+		stats.CompressedBytes = len(data)
+		stats.CompressedStepCount = len(compressed.Steps)
+		stats.CompressionRatio = safeRatio(len(data), originalBytes)
+		tc.lastStats = stats
+		return compressed, stats, nil
+	}
+
+	stepsBeforeZR := len(compressed.Steps)
 	compressed = tc.removeZeroRewardSteps(compressed)
+	stats.StepsRemoved += stepsBeforeZR - len(compressed.Steps)
+	if stats.Method == "truncate" {
+		stats.Method = "remove_zero_reward"
+	}
 
 	data, err = json.Marshal(compressed)
 	if err != nil {
-		return nil, fmt.Errorf("rl: compress: marshal after remove zero reward: %w", err)
+		return nil, nil, fmt.Errorf("rl: compress: marshal after remove zero reward: %w", err)
 	}
 	if len(data) <= tc.maxBytes {
 		compressed.Compressed = true
-		return compressed, nil
+		stats.CompressedBytes = len(data)
+		stats.CompressedStepCount = len(compressed.Steps)
+		stats.CompressionRatio = safeRatio(len(data), originalBytes)
+		tc.lastStats = stats
+		return compressed, stats, nil
 	}
 
 	compressed = tc.aggressiveTruncate(compressed)
+	stats.Method = "aggressive"
 
 	data, err = json.Marshal(compressed)
 	if err != nil {
-		return nil, fmt.Errorf("rl: compress: marshal after aggressive truncate: %w", err)
+		return nil, nil, fmt.Errorf("rl: compress: marshal after aggressive truncate: %w", err)
 	}
 
 	if len(data) > tc.maxBytes {
 		compressed = tc.iterativeTruncate(compressed)
+		stats.Method = "iterative"
 	}
 
 	compressed.Compressed = true
-	return compressed, nil
+	data, _ = json.Marshal(compressed)
+	stats.CompressedBytes = len(data)
+	stats.CompressedStepCount = len(compressed.Steps)
+	stats.CompressionRatio = safeRatio(len(data), originalBytes)
+	tc.lastStats = stats
+	return compressed, stats, nil
 }
 
-// cloneTrajectory creates a deep copy of a trajectory.
+func safeRatio(compressed, original int) float64 {
+	if original == 0 {
+		return 0
+	}
+	return float64(compressed) / float64(original)
+}
+
+// CompressBatch compresses multiple trajectories with diversity preservation.
+// Removes exact-duplicate (same ID) and near-duplicate (same Task+Outcome+TotalReward within 0.01) trajectories,
+// keeping the one with more steps. Then compresses each individually.
+func (tc *TrajectoryCompressor) CompressBatch(trajectories []*Trajectory) ([]*Trajectory, *BatchCompressionStats, error) {
+	if len(trajectories) == 0 {
+		return nil, &BatchCompressionStats{}, nil
+	}
+
+	totalOriginal := len(trajectories)
+
+	seenIDs := make(map[string]bool, len(trajectories))
+	deduped := make([]*Trajectory, 0, len(trajectories))
+	for _, t := range trajectories {
+		if seenIDs[t.ID] {
+			continue
+		}
+		seenIDs[t.ID] = true
+		deduped = append(deduped, t)
+	}
+
+	// near-duplicate: same Task, same Outcome, TotalReward within 0.01
+	type nearDedupKey struct {
+		Task    string
+		Outcome string
+		Reward  int64
+	}
+	bestNear := make(map[nearDedupKey]*Trajectory)
+	for _, t := range deduped {
+		key := nearDedupKey{
+			Task:    t.Task,
+			Outcome: t.Outcome,
+			Reward:  int64(math.Round(t.TotalReward * 100)),
+		}
+		if existing, ok := bestNear[key]; ok {
+			if len(t.Steps) > len(existing.Steps) {
+				bestNear[key] = t
+			}
+		} else {
+			bestNear[key] = t
+		}
+	}
+
+	final := make([]*Trajectory, 0, len(bestNear))
+	for _, t := range bestNear {
+		final = append(final, t)
+	}
+
+	duplicatesRemoved := totalOriginal - len(final)
+
+	compressed := make([]*Trajectory, 0, len(final))
+	totalRatio := 0.0
+	for _, t := range final {
+		c, err := tc.Compress(t)
+		if err != nil {
+			return nil, nil, fmt.Errorf("rl: compress batch: trajectory %s: %w", t.ID, err)
+		}
+		compressed = append(compressed, c)
+
+		origData, _ := json.Marshal(t)
+		compData, _ := json.Marshal(c)
+		if len(origData) > 0 {
+			totalRatio += float64(len(compData)) / float64(len(origData))
+		}
+	}
+
+	avgRatio := 0.0
+	if len(compressed) > 0 {
+		avgRatio = totalRatio / float64(len(compressed))
+	}
+
+	batchStats := &BatchCompressionStats{
+		TotalOriginal:       totalOriginal,
+		TotalCompressed:     len(compressed),
+		DuplicatesRemoved:   duplicatesRemoved,
+		AvgCompressionRatio: avgRatio,
+	}
+
+	return compressed, batchStats, nil
+}
+
 func (tc *TrajectoryCompressor) cloneTrajectory(traj *Trajectory) *Trajectory {
 	clone := &Trajectory{
 		ID:          traj.ID,
@@ -212,7 +384,6 @@ const truncateHeadSize = 2000
 const truncateTailSize = 2000
 const truncateMarker = "\n...[truncated]...\n"
 
-// truncateContent truncates long content strings to head+tail.
 func (tc *TrajectoryCompressor) truncateContent(traj *Trajectory) *Trajectory {
 	for i := range traj.Steps {
 		s := &traj.Steps[i]
@@ -232,7 +403,6 @@ func (tc *TrajectoryCompressor) truncateContent(traj *Trajectory) *Trajectory {
 	return traj
 }
 
-// removeZeroRewardSteps removes steps with reward=0, respecting preserve flags.
 func (tc *TrajectoryCompressor) removeZeroRewardSteps(traj *Trajectory) *Trajectory {
 	filtered := make([]TrajectoryStep, 0, len(traj.Steps))
 	for _, s := range traj.Steps {
@@ -257,7 +427,137 @@ func (tc *TrajectoryCompressor) removeZeroRewardSteps(traj *Trajectory) *Traject
 	return traj
 }
 
-// aggressiveTruncate cuts content down further to fit the budget.
+const jaccardThreshold = 0.8
+
+// semanticDedup merges consecutive steps with same role and Jaccard similarity > 0.8.
+func (tc *TrajectoryCompressor) semanticDedup(traj *Trajectory) *Trajectory {
+	if len(traj.Steps) <= 1 {
+		return traj
+	}
+
+	merged := make([]TrajectoryStep, 0, len(traj.Steps))
+	current := traj.Steps[0]
+
+	for i := 1; i < len(traj.Steps); i++ {
+		next := traj.Steps[i]
+		if current.Role == next.Role && jaccardSimilarity(current.Content, next.Content) > jaccardThreshold {
+			current = mergeSteps(current, next)
+		} else {
+			merged = append(merged, current)
+			current = next
+		}
+	}
+	merged = append(merged, current)
+
+	traj.Steps = merged
+	return traj
+}
+
+func mergeSteps(a, b TrajectoryStep) TrajectoryStep {
+	result := TrajectoryStep{
+		Role:      b.Role,
+		Content:   b.Content,
+		Reward:    a.Reward + b.Reward,
+		Timestamp: b.Timestamp,
+	}
+
+	result.ToolCalls = make([]ToolCall, len(a.ToolCalls))
+	copy(result.ToolCalls, a.ToolCalls)
+	result.ToolCalls = append(result.ToolCalls, b.ToolCalls...)
+
+	if b.ToolResult != nil {
+		result.ToolResult = &ToolResult{
+			Name:    b.ToolResult.Name,
+			Content: b.ToolResult.Content,
+			Success: b.ToolResult.Success,
+		}
+	} else if a.ToolResult != nil {
+		result.ToolResult = &ToolResult{
+			Name:    a.ToolResult.Name,
+			Content: a.ToolResult.Content,
+			Success: a.ToolResult.Success,
+		}
+	}
+
+	if len(a.Metadata) > 0 || len(b.Metadata) > 0 {
+		result.Metadata = make(map[string]any, len(a.Metadata)+len(b.Metadata))
+		for k, v := range a.Metadata {
+			result.Metadata[k] = v
+		}
+		for k, v := range b.Metadata {
+			result.Metadata[k] = v
+		}
+	}
+
+	return result
+}
+
+func jaccardSimilarity(a, b string) float64 {
+	setA := wordSet(a)
+	setB := wordSet(b)
+	if len(setA) == 0 && len(setB) == 0 {
+		return 1.0
+	}
+	if len(setA) == 0 || len(setB) == 0 {
+		return 0.0
+	}
+
+	intersection := 0
+	for word := range setA {
+		if setB[word] {
+			intersection++
+		}
+	}
+	union := len(setA) + len(setB) - intersection
+	return float64(intersection) / float64(union)
+}
+
+func wordSet(s string) map[string]bool {
+	words := strings.Fields(s)
+	set := make(map[string]bool, len(words))
+	for _, w := range words {
+		if w != "" {
+			set[w] = true
+		}
+	}
+	return set
+}
+
+var codeIndicators = []string{"func ", "def ", "class ", "import ", "```", "var ", "const ", "let ", "fn ", "pub "}
+
+func hasCodeIndicators(content string) bool {
+	for _, ind := range codeIndicators {
+		if strings.Contains(content, ind) {
+			return true
+		}
+	}
+	return false
+}
+
+// removeLowQualitySteps removes negative-reward steps, then zero-reward steps with no tool calls and no code.
+func (tc *TrajectoryCompressor) removeLowQualitySteps(traj *Trajectory) *Trajectory {
+	filtered := make([]TrajectoryStep, 0, len(traj.Steps))
+	for _, s := range traj.Steps {
+		if tc.preserveSystem && s.Role == "system" {
+			filtered = append(filtered, s)
+			continue
+		}
+		if s.Reward < 0 {
+			continue
+		}
+		if s.Reward == 0 && len(s.ToolCalls) == 0 && !hasCodeIndicators(s.Content) {
+			if tc.preserveTools && s.ToolResult != nil {
+				filtered = append(filtered, s)
+				continue
+			}
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	traj.Steps = filtered
+	return traj
+}
+
 func (tc *TrajectoryCompressor) aggressiveTruncate(traj *Trajectory) *Trajectory {
 	for i := range traj.Steps {
 		s := &traj.Steps[i]
@@ -276,7 +576,6 @@ func (tc *TrajectoryCompressor) aggressiveTruncate(traj *Trajectory) *Trajectory
 	return traj
 }
 
-// iterativeTruncate progressively reduces content until the trajectory fits within maxBytes.
 func (tc *TrajectoryCompressor) iterativeTruncate(traj *Trajectory) *Trajectory {
 	maxContentLen := 250
 	for {
@@ -308,18 +607,16 @@ func (tc *TrajectoryCompressor) iterativeTruncate(traj *Trajectory) *Trajectory 
 	return traj
 }
 
-// roleToShareGPT maps internal roles to ShareGPT format roles.
 var roleToShareGPT = map[string]string{
-	"system":      "system",
-	"user":        "human",
-	"assistant":   "gpt",
-	"tool":        "tool",
-	"function":    "tool",
-	"human":       "human",
-	"gpt":         "gpt",
+	"system":    "system",
+	"user":      "human",
+	"assistant": "gpt",
+	"tool":      "tool",
+	"function":  "tool",
+	"human":     "human",
+	"gpt":       "gpt",
 }
 
-// ExportShareGPT exports a trajectory in ShareGPT-compatible format.
 func (tc *TrajectoryCompressor) ExportShareGPT(traj *Trajectory) ([]map[string]any, error) {
 	if traj == nil {
 		return nil, fmt.Errorf("rl: export sharegpt: trajectory is nil")
@@ -352,8 +649,8 @@ func (tc *TrajectoryCompressor) ExportShareGPT(traj *Trajectory) ([]map[string]a
 		}
 
 		entry := map[string]any{
-			"from":   from,
-			"value":  value,
+			"from":  from,
+			"value": value,
 		}
 		conversations = append(conversations, entry)
 	}
@@ -367,10 +664,79 @@ func (tc *TrajectoryCompressor) ExportShareGPT(traj *Trajectory) ([]map[string]a
 		},
 	}
 
+	if tc.lastStats != nil {
+		result[0]["compression_stats"] = map[string]any{
+			"original_size":   tc.lastStats.OriginalBytes,
+			"compressed_size": tc.lastStats.CompressedBytes,
+			"method":          tc.lastStats.Method,
+		}
+	}
+
 	return result, nil
 }
 
-// ExportJSONL writes trajectories as one JSON object per line to writer.
+// ExportOpenAIFineTuning exports a trajectory in OpenAI fine-tuning format.
+func (tc *TrajectoryCompressor) ExportOpenAIFineTuning(traj *Trajectory) (map[string]any, error) {
+	if traj == nil {
+		return nil, fmt.Errorf("rl: export openai: trajectory is nil")
+	}
+
+	messages := make([]map[string]any, 0, len(traj.Steps))
+
+	for _, s := range traj.Steps {
+		msg := map[string]any{
+			"role":    s.Role,
+			"content": s.Content,
+		}
+
+		if len(s.ToolCalls) > 0 {
+			openAIToolCalls := make([]map[string]any, 0, len(s.ToolCalls))
+			for _, tc2 := range s.ToolCalls {
+				argsBytes, err := json.Marshal(tc2.Input)
+				if err != nil {
+					return nil, fmt.Errorf("rl: export openai: marshal tool_call args: %w", err)
+				}
+				openAIToolCalls = append(openAIToolCalls, map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name":      tc2.Name,
+						"arguments": string(argsBytes),
+					},
+				})
+			}
+			msg["tool_calls"] = openAIToolCalls
+		}
+
+		if s.ToolResult != nil {
+			msg["role"] = "tool"
+			msg["content"] = s.ToolResult.Content
+			msg["tool_call_id"] = s.ToolResult.Name
+		}
+
+		messages = append(messages, msg)
+	}
+
+	result := map[string]any{
+		"messages": messages,
+		"metadata": map[string]any{
+			"trajectory_id": traj.ID,
+			"outcome":       traj.Outcome,
+			"total_reward":  traj.TotalReward,
+			"compressed":    traj.Compressed,
+		},
+	}
+
+	if tc.lastStats != nil {
+		result["metadata"].(map[string]any)["compression_stats"] = map[string]any{
+			"original_size":   tc.lastStats.OriginalBytes,
+			"compressed_size": tc.lastStats.CompressedBytes,
+			"method":          tc.lastStats.Method,
+		}
+	}
+
+	return result, nil
+}
+
 func (tc *TrajectoryCompressor) ExportJSONL(trajectories []*Trajectory, writer io.Writer) error {
 	encoder := json.NewEncoder(writer)
 	for _, traj := range trajectories {
@@ -381,12 +747,11 @@ func (tc *TrajectoryCompressor) ExportJSONL(trajectories []*Trajectory, writer i
 	return nil
 }
 
-// ImportShareGPT parses ShareGPT format data into a Trajectory.
 func (tc *TrajectoryCompressor) ImportShareGPT(data []byte) (*Trajectory, error) {
 	var raw struct {
 		Conversations []struct {
-			From   string `json:"from"`
-			Value  string `json:"value"`
+			From  string `json:"from"`
+			Value string `json:"value"`
 		} `json:"conversations"`
 		ID          string  `json:"id"`
 		Outcome     string  `json:"outcome"`
@@ -427,7 +792,6 @@ func (tc *TrajectoryCompressor) ImportShareGPT(data []byte) (*Trajectory, error)
 	return traj, nil
 }
 
-// CalculateReward computes total reward for a trajectory using the given metrics.
 func (tc *TrajectoryCompressor) CalculateReward(traj *Trajectory, metrics RewardMetrics) float64 {
 	if traj == nil || len(traj.Steps) == 0 {
 		return 0
@@ -439,23 +803,23 @@ func (tc *TrajectoryCompressor) CalculateReward(traj *Trajectory, metrics Reward
 	for _, s := range traj.Steps {
 		stepReward := 0.0
 
-	if s.Reward > 0 {
-		stepReward += metrics.ExactMatch * s.Reward
-	}
+		if s.Reward > 0 {
+			stepReward += metrics.ExactMatch * s.Reward
+		}
 
-	if s.Metadata != nil {
-		if quality, ok := s.Metadata["code_quality"]; ok {
-			if q, ok := quality.(float64); ok {
-				stepReward += metrics.CodeQuality * q
+		if s.Metadata != nil {
+			if quality, ok := s.Metadata["code_quality"]; ok {
+				if q, ok := quality.(float64); ok {
+					stepReward += metrics.CodeQuality * q
+				}
 			}
 		}
-	}
 
-	contentLen := len(s.Content)
-	if contentLen > 5000 {
-		penalty := float64(contentLen) / 50000.0
-		stepReward -= metrics.LengthPenalty * math.Min(penalty, 1.0)
-	}
+		contentLen := len(s.Content)
+		if contentLen > 5000 {
+			penalty := float64(contentLen) / 50000.0
+			stepReward -= metrics.LengthPenalty * math.Min(penalty, 1.0)
+		}
 
 		totalReward += stepReward
 		stepCount++

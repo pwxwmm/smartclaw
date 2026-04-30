@@ -1,24 +1,28 @@
 package runtime
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/instructkr/smartclaw/internal/contextmgr"
 )
 
 // PromptBuilder assembles and caches the system prompt for a session.
 // The system prompt is frozen after initial assembly and only rebuilt
 // on explicit events (compact, model switch, skill load).
 type PromptBuilder struct {
-	mu       sync.RWMutex
-	frozen   string
-	dirty    bool
-	homeDir  string
-	persona  string
-	memory   string
-	skills   []string
-	contexts []string
+	mu          sync.RWMutex
+	frozen      string
+	dirty       bool
+	homeDir     string
+	persona     string
+	memory      string
+	skills      []string
+	contexts    []string
+	agentsMDOrg *contextmgr.AgentsMDHierarchy
 }
 
 // NewPromptBuilder creates a builder that reads from ~/.smartclaw/ files.
@@ -70,6 +74,10 @@ func (pb *PromptBuilder) rebuild() string {
 		if ctx != "" {
 			parts = append(parts, "\n\n<project_context>\n"+ctx+"\n</project_context>")
 		}
+	}
+
+	if agentsCtx := pb.resolveAgentsMD(); agentsCtx != "" {
+		parts = append(parts, "\n\n<agents_context>\n"+agentsCtx+"\n</agents_context>")
 	}
 
 	pb.frozen = strings.Join(parts, "")
@@ -138,6 +146,47 @@ func (pb *PromptBuilder) AddContext(content string) {
 	defer pb.mu.Unlock()
 	pb.contexts = append(pb.contexts, content)
 	pb.dirty = true
+}
+
+// SetAgentsMDHierarchy sets the hierarchical AGENTS.md loader. When set,
+// the builder will include merged AGENTS.md content from all scopes in the
+// system prompt under an <agents_context> tag.
+func (pb *PromptBuilder) SetAgentsMDHierarchy(h *contextmgr.AgentsMDHierarchy) {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	pb.agentsMDOrg = h
+	pb.dirty = true
+}
+
+// InjectFileContext loads directory-scoped AGENTS.md for a file being read
+// and adds it to the context list. This enables the OpenCode-style dynamic
+// context injection where AGENTS.md files in subdirectories are included
+// when files in that subtree are accessed.
+func (pb *PromptBuilder) InjectFileContext(filePath string) {
+	pb.mu.Lock()
+	h := pb.agentsMDOrg
+	pb.mu.Unlock()
+
+	if h == nil {
+		return
+	}
+
+	ctx := h.ResolveForFile(context.Background(), filePath)
+	if ctx == "" {
+		return
+	}
+
+	pb.mu.Lock()
+	pb.contexts = append(pb.contexts, ctx)
+	pb.dirty = true
+	pb.mu.Unlock()
+}
+
+func (pb *PromptBuilder) resolveAgentsMD() string {
+	if pb.agentsMDOrg == nil {
+		return ""
+	}
+	return pb.agentsMDOrg.Resolve()
 }
 
 // MarkDirty forces a rebuild on next Build() call.

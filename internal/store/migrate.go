@@ -210,6 +210,210 @@ func splitLines(s string) []string {
 	return lines
 }
 
+// MigrateSessionsFTS creates the sessions_fts virtual table and sync triggers
+// if they don't already exist. Safe to call idempotently.
+func MigrateSessionsFTS(db *sql.DB) error {
+	// Check if sessions_fts already exists
+	var exists bool
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name='sessions_fts'`)
+	if err != nil {
+		return fmt.Errorf("migrate: check sessions_fts: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		exists = true
+	}
+	rows.Close()
+	if exists {
+		return nil
+	}
+
+	// Create sessions_fts and triggers
+	stmts := []string{
+		`CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(title, summary, content='sessions', content_rowid='rowid')`,
+		`CREATE TRIGGER IF NOT EXISTS sessions_fts_insert AFTER INSERT ON sessions BEGIN
+			INSERT INTO sessions_fts(rowid, title, summary) VALUES (new.rowid, new.title, new.summary);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS sessions_fts_delete AFTER DELETE ON sessions BEGIN
+			INSERT INTO sessions_fts(sessions_fts, rowid, title, summary) VALUES ('delete', old.rowid, old.title, old.summary);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS sessions_fts_update AFTER UPDATE ON sessions BEGIN
+			INSERT INTO sessions_fts(sessions_fts, rowid, title, summary) VALUES ('delete', old.rowid, old.title, old.summary);
+			INSERT INTO sessions_fts(rowid, title, summary) VALUES (new.rowid, new.title, new.summary);
+		END`,
+		// Backfill from existing sessions
+		`INSERT INTO sessions_fts(rowid, title, summary) SELECT rowid, title, summary FROM sessions`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate: create sessions_fts: %w", err)
+		}
+	}
+
+	slog.Info("migrate: created sessions_fts with sync triggers")
+	return nil
+}
+
+// MigrateMessagesFTSExtended rebuilds messages_fts to include tool_input and
+// tool_result columns. Safe to call idempotently — it checks column count first.
+func MigrateMessagesFTSExtended(db *sql.DB) error {
+	// Check how many columns messages_fts currently has
+	colCount := 0
+	rows, err := db.Query(`PRAGMA table_info(messages_fts)`)
+	if err != nil {
+		return fmt.Errorf("migrate: check messages_fts columns: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		colCount++
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+	}
+	_ = rows.Close()
+
+	// New schema has 3 columns: content, tool_input, tool_result
+	// Old schema had 1 column: content
+	// FTS5 adds hidden columns, so we count only named ones.
+	// If colCount >= 3 (content + tool_input + tool_result + possibly hidden), already migrated.
+	if colCount >= 3 {
+		return nil
+	}
+
+	slog.Info("migrate: rebuilding messages_fts with tool_input and tool_result columns")
+
+	// Drop old triggers first
+	dropTriggers := []string{
+		`DROP TRIGGER IF EXISTS messages_fts_insert`,
+		`DROP TRIGGER IF EXISTS messages_fts_delete`,
+		`DROP TRIGGER IF EXISTS messages_fts_update`,
+	}
+	for _, stmt := range dropTriggers {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate: drop old triggers: %w", err)
+		}
+	}
+
+	// Drop old FTS table
+	if _, err := db.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
+		return fmt.Errorf("migrate: drop old messages_fts: %w", err)
+	}
+
+	// Create new FTS table with extended columns
+	if _, err := db.Exec(`CREATE VIRTUAL TABLE messages_fts USING fts5(content, tool_input, tool_result, content='messages', content_rowid='id', tokenize='unicode61')`); err != nil {
+		return fmt.Errorf("migrate: create new messages_fts: %w", err)
+	}
+
+	// Backfill from existing messages
+	if _, err := db.Exec(`INSERT INTO messages_fts(rowid, content, tool_input, tool_result) SELECT id, content, COALESCE(tool_input, ''), COALESCE(tool_result, '') FROM messages`); err != nil {
+		return fmt.Errorf("migrate: backfill messages_fts: %w", err)
+	}
+
+	// Recreate triggers
+	createTriggers := []string{
+		`CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+			INSERT INTO messages_fts(rowid, content, tool_input, tool_result) VALUES (new.id, new.content, new.tool_input, new.tool_result);
+		END`,
+		`CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, content, tool_input, tool_result) VALUES ('delete', old.id, old.content, old.tool_input, old.tool_result);
+		END`,
+		`CREATE TRIGGER messages_fts_update AFTER UPDATE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, content, tool_input, tool_result) VALUES ('delete', old.id, old.content, old.tool_input, old.tool_result);
+			INSERT INTO messages_fts(rowid, content, tool_input, tool_result) VALUES (new.id, new.content, new.tool_input, new.tool_result);
+		END`,
+	}
+	for _, stmt := range createTriggers {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate: create new triggers: %w", err)
+		}
+	}
+
+	slog.Info("migrate: messages_fts rebuilt with tool_input and tool_result")
+	return nil
+}
+
+func MigrateTeamsTables(db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS teams (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT DEFAULT '',
+			settings TEXT DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS team_members (
+			team_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			role TEXT DEFAULT 'member',
+			joined_at TEXT NOT NULL,
+			PRIMARY KEY (team_id, user_id),
+			FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS team_memories (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			team_id TEXT NOT NULL,
+			memory_id TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL,
+			content TEXT NOT NULL,
+			type TEXT DEFAULT 'conversation',
+			visibility TEXT DEFAULT 'team',
+			tags TEXT DEFAULT '[]',
+			author_id TEXT DEFAULT '',
+			created_at TEXT NOT NULL,
+			FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_team_memories_team ON team_memories(team_id)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate: create teams tables: %w", err)
+		}
+	}
+
+	slog.Info("migrate: teams tables ensured")
+	return nil
+}
+
+// MigrateSkillOutcomesDetails adds a details column to skill_outcomes if it
+// doesn't already exist. The column stores free-text failure descriptions.
+func MigrateSkillOutcomesDetails(db *sql.DB) error {
+	var hasDetails bool
+	rows, err := db.Query(`PRAGMA table_info(skill_outcomes)`)
+	if err != nil {
+		return fmt.Errorf("migrate: check skill_outcomes columns: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		if name == "details" {
+			hasDetails = true
+			break
+		}
+	}
+	if !hasDetails {
+		if _, err := db.Exec(`ALTER TABLE skill_outcomes ADD COLUMN details TEXT DEFAULT ''`); err != nil {
+			return fmt.Errorf("migrate: add details to skill_outcomes: %w", err)
+		}
+		slog.Info("migrate: added details column to skill_outcomes")
+	}
+	return nil
+}
+
 func MigrateUserObservationsUserID(db *sql.DB) error {
 	var hasUserID bool
 	rows, err := db.Query(`PRAGMA table_info(user_observations)`)

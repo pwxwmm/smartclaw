@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -101,7 +102,9 @@ func (b *EventBus) PublishAsync(ctx context.Context, event Event) {
 
 	for _, s := range subs {
 		go func(h EventHandler) {
-			_ = h(ctx, event)
+			if err := h(ctx, event); err != nil {
+				slog.Debug("acp eventbus: handler error", "error", err)
+			}
 		}(s.handler)
 	}
 }

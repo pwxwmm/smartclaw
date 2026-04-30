@@ -442,7 +442,7 @@ func TestIncidentMemory_SetAndGetSLOStatus(t *testing.T) {
 		Status:               "at_risk",
 	}
 
-	err := im.SetSLOStatus(slo)
+	err := im.SetSLOStatus(context.Background(), slo)
 	if err != nil {
 		t.Fatalf("SetSLOStatus failed: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestIncidentMemory_SetSLOStatus_Upsert(t *testing.T) {
 		Current: 0.95,
 		Status:  "at_risk",
 	}
-	im.SetSLOStatus(slo1)
+	im.SetSLOStatus(context.Background(), slo1)
 
 	slo2 := &SLOStatus{
 		Service: "api",
@@ -488,7 +488,7 @@ func TestIncidentMemory_SetSLOStatus_Upsert(t *testing.T) {
 		Current: 0.98,
 		Status:  "healthy",
 	}
-	im.SetSLOStatus(slo2)
+	im.SetSLOStatus(context.Background(), slo2)
 
 	statuses, _ := im.GetSLOStatuses()
 	if len(statuses) != 1 {
@@ -537,7 +537,7 @@ func TestIncidentMemory_BuildIncidentPrompt_SLO(t *testing.T) {
 	s := newTestStore(t)
 	im := NewIncidentMemory(s)
 
-	im.SetSLOStatus(&SLOStatus{
+	im.SetSLOStatus(context.Background(), &SLOStatus{
 		Service: "api",
 		SLOName: "availability",
 		Target:  0.999,
@@ -594,7 +594,7 @@ func TestIncidentMemory_UpdateIncidentFromToolResult(t *testing.T) {
 		},
 	}
 
-	err := im.UpdateIncidentFromToolResult("sopa_list_faults", result)
+	err := im.UpdateIncidentFromToolResult(context.Background(), "sopa_list_faults", result)
 	if err != nil {
 		t.Fatalf("UpdateIncidentFromToolResult failed: %v", err)
 	}
@@ -615,7 +615,7 @@ func TestIncidentMemory_UpdateIncidentFromToolResult_UnknownTool(t *testing.T) {
 	s := newTestStore(t)
 	im := NewIncidentMemory(s)
 
-	err := im.UpdateIncidentFromToolResult("unknown_tool", map[string]any{})
+	err := im.UpdateIncidentFromToolResult(context.Background(), "unknown_tool", map[string]any{})
 	if err != nil {
 		t.Fatalf("unknown tool should not return error: %v", err)
 	}

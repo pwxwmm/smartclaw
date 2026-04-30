@@ -13,8 +13,10 @@ import (
 )
 
 type SkillAuditor struct {
-	store     *store.Store
-	skillsDir string
+	store          *store.Store
+	skillsDir      string
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 type AuditConfig struct {
@@ -34,9 +36,18 @@ func NewSkillAuditor(s *store.Store, skillsDir string) *SkillAuditor {
 		home, _ := os.UserHomeDir()
 		skillsDir = filepath.Join(home, ".smartclaw", "skills")
 	}
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	return &SkillAuditor{
-		store:     s,
-		skillsDir: skillsDir,
+		store:          s,
+		skillsDir:      skillsDir,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+	}
+}
+
+func (sa *SkillAuditor) Close() {
+	if sa.shutdownCancel != nil {
+		sa.shutdownCancel()
 	}
 }
 
@@ -111,7 +122,7 @@ func (sa *SkillAuditor) RecordSkillUse(name string) {
 	if sa.store == nil {
 		return
 	}
-	if err := sa.store.IncrementSkillUseCount(context.Background(), name); err != nil {
+	if err := sa.store.IncrementSkillUseCount(sa.shutdownCtx, name); err != nil {
 		slog.Warn("skill auditor: failed to record skill use", "name", name, "error", err)
 	}
 }
@@ -147,7 +158,7 @@ func (sa *SkillAuditor) SyncLearnedSkillsToStore() error {
 			UseCount: 0,
 		}
 
-		if err := sa.store.UpsertSkill(context.Background(), record); err != nil {
+		if err := sa.store.UpsertSkill(sa.shutdownCtx, record); err != nil {
 			slog.Warn("skill auditor: failed to sync skill to store", "name", entry.Name(), "error", err)
 		}
 	}

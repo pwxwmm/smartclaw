@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,11 +21,16 @@ func sopaGetBaseURL() string {
 	if v := os.Getenv("SOPA_API_URL"); v != "" {
 		return v
 	}
+	slog.Warn("SOPA_API_URL not set, using default localhost URL")
 	return sopaDefaultBaseURL
 }
 
 func sopaGetToken() string {
-	return os.Getenv("SOPA_API_TOKEN")
+	token := os.Getenv("SOPA_API_TOKEN")
+	if token == "" {
+		slog.Warn("SOPA_API_TOKEN not set, API requests may fail with 401")
+	}
+	return token
 }
 
 var (

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="250" fill="#0f172a"/>
+  <circle cx="256" cy="256" r="250" fill="url(#bgGrad)" opacity="0.6"/>
+  
+  <!-- Gradient definitions -->
+  <defs>
+    <radialGradient id="bgGrad" cx="40%" cy="35%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </radialGradient>
+    <radialGradient id="eyeGlow" cx="50%" cy="50%">
+      <stop offset="0%" stop-color="#f0c050"/>
+      <stop offset="60%" stop-color="#c8a44e"/>
+      <stop offset="100%" stop-color="#a07828"/>
+    </radialGradient>
+    <radialGradient id="bodyGrad" cx="50%" cy="30%">
+      <stop offset="0%" stop-color="#4a5568"/>
+      <stop offset="100%" stop-color="#2d3748"/>
+    </radialGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Ear tufts (V-shape horns) -->
+  <path d="M148 148L108 52L192 132Z" fill="#2d3748" filter="url(#softShadow)"/>
+  <path d="M364 148L404 52L320 132Z" fill="#2d3748" filter="url(#softShadow)"/>
+  <!-- Inner ear detail -->
+  <path d="M150 140L122 70L184 126Z" fill="#3d4a5c"/>
+  <path d="M362 140L390 70L328 126Z" fill="#3d4a5c"/>
+
+  <!-- Body / wing shapes -->
+  <path d="M96 260Q56 330 80 400Q120 370 148 320Q155 275 140 250Z" fill="url(#bodyGrad)" filter="url(#softShadow)"/>
+  <path d="M416 260Q456 330 432 400Q392 370 364 320Q357 275 372 250Z" fill="url(#bodyGrad)" filter="url(#softShadow)"/>
+
+  <!-- Main body ellipse -->
+  <ellipse cx="256" cy="340" rx="110" ry="120" fill="url(#bodyGrad)" filter="url(#softShadow)"/>
+  
+  <!-- Head -->
+  <ellipse cx="256" cy="210" rx="100" ry="85" fill="url(#bodyGrad)" filter="url(#softShadow)"/>
+  
+  <!-- Facial disc (owl face ring) -->
+  <ellipse cx="256" cy="220" rx="88" ry="72" fill="#1e293b" opacity="0.4"/>
+  
+  <!-- Eye rings (outer) -->
+  <circle cx="216" cy="200" r="36" fill="#1a202c"/>
+  <circle cx="296" cy="200" r="36" fill="#1a202c"/>
+  
+  <!-- Iris (amber/orange) -->
+  <circle cx="216" cy="200" r="28" fill="url(#eyeGlow)"/>
+  <circle cx="296" cy="200" r="28" fill="url(#eyeGlow)"/>
+  
+  <!-- Iris ring detail -->
+  <circle cx="216" cy="200" r="28" fill="none" stroke="#d4a840" stroke-width="1.5" opacity="0.5"/>
+  <circle cx="296" cy="200" r="28" fill="none" stroke="#d4a840" stroke-width="1.5" opacity="0.5"/>
+  
+  <!-- Pupils -->
+  <circle cx="216" cy="200" r="14" fill="#0d0d1a"/>
+  <circle cx="296" cy="200" r="14" fill="#0d0d1a"/>
+  
+  <!-- Inner pupil -->
+  <circle cx="216" cy="200" r="8" fill="#000"/>
+  <circle cx="296" cy="200" r="8" fill="#000"/>
+  
+  <!-- Eye highlights -->
+  <circle cx="208" cy="192" r="5" fill="#fff" opacity="0.85"/>
+  <circle cx="288" cy="192" r="5" fill="#fff" opacity="0.85"/>
+  <!-- Secondary highlight -->
+  <circle cx="222" cy="206" r="2.5" fill="#fff" opacity="0.4"/>
+  <circle cx="302" cy="206" r="2.5" fill="#fff" opacity="0.4"/>
+
+  <!-- Beak -->
+  <path d="M248 228L256 250L264 228Z" fill="#c8a44e"/>
+  <!-- Beak line detail -->
+  <path d="M248 228L256 238L264 228" fill="none" stroke="#a07828" stroke-width="1"/>
+
+  <!-- Chest feather detail -->
+  <ellipse cx="256" cy="340" rx="60" ry="70" fill="none" stroke="#3d4a5c" stroke-width="0.8" opacity="0.4"/>
+  <path d="M220 300Q256 310 292 300" fill="none" stroke="#3d4a5c" stroke-width="0.8" opacity="0.3"/>
+  <path d="M215 330Q256 342 297 330" fill="none" stroke="#3d4a5c" stroke-width="0.8" opacity="0.3"/>
+  <path d="M218 360Q256 370 294 360" fill="none" stroke="#3d4a5c" stroke-width="0.8" opacity="0.3"/>
+</svg>

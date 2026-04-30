@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -429,8 +430,10 @@ func streamWithSDK(ctx context.Context, sdkClient anthropic.Client, params anthr
 				"message": err.Error(),
 			},
 		}
-		_ = emitEvent(handler, "error", errData)
-		return fmt.Errorf("Anthropic API error: %w", err)
+	if emitErr := emitEvent(handler, "error", errData); emitErr != nil {
+		slog.Debug("failed to emit error event", "error", emitErr)
+	}
+	return fmt.Errorf("Anthropic API error: %w", err)
 	}
 
 	return nil

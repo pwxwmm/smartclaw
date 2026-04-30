@@ -36,14 +36,15 @@ type PromptMemoryWriter interface {
 }
 
 type LearningLoop struct {
-	evaluator    *Evaluator
-	extractor    *Extractor
-	skillWriter  *SkillWriter
-	skillAuditor *SkillAuditor
-	skillTracker *SkillTracker
-	nudgeEngine  *NudgeEngine
-	promptMem    PromptMemoryWriter
-	enabled      bool
+	evaluator     *Evaluator
+	extractor     *Extractor
+	skillWriter   *SkillWriter
+	skillAuditor  *SkillAuditor
+	skillTracker  *SkillTracker
+	skillImprover *SkillImprover
+	nudgeEngine   *NudgeEngine
+	promptMem     PromptMemoryWriter
+	enabled       bool
 }
 
 func NewLearningLoop(llmClient LLMClient, promptMem PromptMemoryWriter, skillsDir string) *LearningLoop {
@@ -53,12 +54,13 @@ func NewLearningLoop(llmClient LLMClient, promptMem PromptMemoryWriter, skillsDi
 	}
 
 	return &LearningLoop{
-		evaluator:   NewEvaluator(llmClient),
-		extractor:   NewExtractor(llmClient),
-		skillWriter: NewSkillWriter(skillsDir),
-		nudgeEngine: NewNudgeEngine(DefaultNudgeConfig()),
-		promptMem:   promptMem,
-		enabled:     true,
+		evaluator:     NewEvaluator(llmClient),
+		extractor:     NewExtractor(llmClient),
+		skillWriter:   NewSkillWriter(skillsDir),
+		skillImprover: NewSkillImprover(llmClient),
+		nudgeEngine:   NewNudgeEngine(DefaultNudgeConfig()),
+		promptMem:     promptMem,
+		enabled:       true,
 	}
 }
 
@@ -70,6 +72,10 @@ func (l *LearningLoop) SetSkillTracker(tracker *SkillTracker) {
 	l.skillTracker = tracker
 }
 
+func (l *LearningLoop) SetSkillImprover(improver *SkillImprover) {
+	l.skillImprover = improver
+}
+
 func (l *LearningLoop) SetStore(s *store.Store) {
 	if l.skillAuditor == nil && s != nil {
 		l.skillAuditor = NewSkillAuditor(s, l.skillWriter.GetSkillsDir())
@@ -78,6 +84,18 @@ func (l *LearningLoop) SetStore(s *store.Store) {
 
 func (l *LearningLoop) IsEnabled() bool {
 	return l.enabled
+}
+
+func (l *LearningLoop) GetSkillTracker() *SkillTracker {
+	return l.skillTracker
+}
+
+func (l *LearningLoop) GetSkillImprover() *SkillImprover {
+	return l.skillImprover
+}
+
+func (l *LearningLoop) GetSkillWriter() *SkillWriter {
+	return l.skillWriter
 }
 
 func (l *LearningLoop) OnTaskComplete(ctx context.Context, sessionID string, messages []Message, result *TaskResult) error {
@@ -201,6 +219,102 @@ func (l *LearningLoop) OnNudge(ctx context.Context, sessionID string, messages [
 	return nil
 }
 
+func (l *LearningLoop) OnSkillFailure(ctx context.Context, skillName, sessionID string, failureMessages []string) error {
+	if !l.enabled {
+		return nil
+	}
+
+	slog.Info("learning loop: skill failure detected", "skill", skillName, "session", sessionID, "failures", len(failureMessages))
+
+	if l.skillTracker != nil {
+		if err := l.skillTracker.RecordInvocation(skillName, sessionID); err != nil {
+			slog.Warn("learning loop: failed to record failed invocation", "error", err)
+		}
+		if err := l.skillTracker.RecordOutcome(skillName, OutcomeFailed, sessionID); err != nil {
+			slog.Warn("learning loop: failed to record failure outcome", "error", err)
+		}
+	}
+
+	if l.skillImprover != nil && l.skillTracker != nil {
+		if l.skillImprover.ShouldImprove(l.skillTracker, skillName) {
+			slog.Info("learning loop: skill qualifies for improvement", "skill", skillName)
+
+			originalSkill, err := l.loadOriginalSkill(skillName)
+			if err != nil {
+				slog.Warn("learning loop: failed to load original skill for improvement", "skill", skillName, "error", err)
+				return nil
+			}
+
+			improved, err := l.skillImprover.Improve(ctx, skillName, failureMessages, originalSkill)
+			if err != nil {
+				slog.Warn("learning loop: skill improvement failed", "skill", skillName, "error", err)
+				return nil
+			}
+
+			if err := l.skillImprover.ApplyImprovement(l.skillWriter, improved); err != nil {
+				slog.Warn("learning loop: failed to apply skill improvement", "skill", skillName, "error", err)
+				return nil
+			}
+
+			slog.Info("learning loop: skill improved successfully",
+				"skill", skillName,
+				"version", improved.Version,
+				"changes", improved.ChangeSummary,
+			)
+
+			if l.promptMem != nil {
+				if err := l.promptMem.AppendToSection("Learned Patterns",
+					fmt.Sprintf("- %s: %s (v%d improved)", skillName, improved.ChangeSummary, improved.Version)); err != nil {
+					slog.Warn("learning loop: failed to update MEMORY.md with improvement", "error", err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (l *LearningLoop) GetSkillHealthReport() (*SkillHealthReport, error) {
+	if l.skillTracker == nil {
+		return &SkillHealthReport{GeneratedAt: time.Now()}, nil
+	}
+	return l.skillTracker.GetHealthReport()
+}
+
 func (l *LearningLoop) MaybeNudge(currentTurn int) *NudgePrompt {
 	return l.nudgeEngine.MaybeNudge(currentTurn)
+}
+
+func (l *LearningLoop) MaybeIdleNudge() *NudgePrompt {
+	return l.nudgeEngine.MaybeIdleNudge()
+}
+
+func (l *LearningLoop) MaybeKnowledgePersistenceNudge(currentTurn int) *NudgePrompt {
+	return l.nudgeEngine.MaybeKnowledgePersistenceNudge(currentTurn)
+}
+
+func (l *LearningLoop) MaybeSkillReviewNudge() *NudgePrompt {
+	return l.nudgeEngine.MaybeSkillReviewNudge()
+}
+
+func (l *LearningLoop) RecordActivity() {
+	l.nudgeEngine.RecordActivity()
+}
+
+func (l *LearningLoop) loadOriginalSkill(skillName string) (*ExtractedSkill, error) {
+	skillDir := l.skillWriter.GetSkillsDir()
+	skillPath := skillDir + "/" + skillName + "/SKILL.md"
+
+	content, err := readSkillFile(skillPath)
+	if err != nil {
+		return &ExtractedSkill{
+			Name:        skillName,
+			Description: "Original skill (content unavailable)",
+			Steps:       []string{"Execute the skill"},
+			Tools:       []string{"bash"},
+			Tags:        []string{"learned"},
+		}, nil
+	}
+
+	return ParseExistingSkill(skillName, content), nil
 }

@@ -10,22 +10,19 @@ import (
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/serverauth"
 )
 
 func newTestAuthManager(apiKey string) *AuthManager {
-	am := &AuthManager{
-		secretKey: make([]byte, 32),
-		sessions:  make(map[string]*Session),
-		apiKey:    apiKey,
-	}
-	copy(am.secretKey, []byte("test-secret-key-32-bytes-long!!"))
-	return am
+	secretKey := make([]byte, 32)
+	copy(secretKey, []byte("test-secret-key-32-bytes-long!!"))
+	return serverauth.NewAuthManagerWithKey(secretKey, apiKey, "")
 }
 
 func newTestAuthManagerWithLegacy(apiKey, legacyToken string) *AuthManager {
-	am := newTestAuthManager(apiKey)
-	am.legacyToken = legacyToken
-	return am
+	secretKey := make([]byte, 32)
+	copy(secretKey, []byte("test-secret-key-32-bytes-long!!"))
+	return serverauth.NewAuthManagerWithKey(secretKey, apiKey, legacyToken)
 }
 
 func TestWriteJSON(t *testing.T) {
@@ -260,9 +257,7 @@ func TestAuthMiddleware_QueryToken(t *testing.T) {
 }
 
 func TestRateLimiter_UnderLimit(t *testing.T) {
-	rl := &rateLimiter{
-		visitors: make(map[string]*visitorInfo),
-	}
+	rl := serverauth.NewRateLimiter()
 	handler := rl.Middleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -280,9 +275,7 @@ func TestRateLimiter_UnderLimit(t *testing.T) {
 }
 
 func TestRateLimiter_OverLimit(t *testing.T) {
-	rl := &rateLimiter{
-		visitors: make(map[string]*visitorInfo),
-	}
+	rl := serverauth.NewRateLimiter()
 	handler := rl.Middleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -306,9 +299,7 @@ func TestRateLimiter_OverLimit(t *testing.T) {
 }
 
 func TestRateLimiter_DifferentIPs(t *testing.T) {
-	rl := &rateLimiter{
-		visitors: make(map[string]*visitorInfo),
-	}
+	rl := serverauth.NewRateLimiter()
 	handler := rl.Middleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -333,9 +324,7 @@ func TestRateLimiter_DifferentIPs(t *testing.T) {
 }
 
 func TestRateLimiter_Concurrent(t *testing.T) {
-	rl := &rateLimiter{
-		visitors: make(map[string]*visitorInfo),
-	}
+	rl := serverauth.NewRateLimiter()
 	handler := rl.Middleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -353,9 +342,7 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	rl.mu.Lock()
-	count := rl.visitors["9.8.7.6"].count
-	rl.mu.Unlock()
+	count := rl.VisitorCount("9.8.7.6")
 
 	if count != 20 {
 		t.Errorf("expected 20 requests counted, got %d", count)
@@ -363,12 +350,9 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 }
 
 func TestNewRateLimiter(t *testing.T) {
-	rl := newRateLimiter()
+	rl := serverauth.NewRateLimiter()
 	if rl == nil {
-		t.Fatal("newRateLimiter returned nil")
-	}
-	if rl.visitors == nil {
-		t.Error("visitors map should be initialized")
+		t.Fatal("NewRateLimiter returned nil")
 	}
 }
 
@@ -668,10 +652,7 @@ func TestAuthManager_TokenExpiry(t *testing.T) {
 		t.Fatalf("GenerateToken failed: %v", err)
 	}
 
-	am.mu.Lock()
-	session := am.sessions[token]
-	session.ExpiresAt = time.Now().Add(-1 * time.Hour)
-	am.mu.Unlock()
+	am.ExpireSession(token)
 
 	_, err = am.ValidateToken(token)
 	if err == nil {
@@ -869,29 +850,15 @@ func TestAuthManager_CleanupExpired(t *testing.T) {
 
 	token, _ := am.GenerateToken("user1")
 
-	am.mu.Lock()
-	am.sessions[token].ExpiresAt = time.Now().Add(-1 * time.Hour)
-	am.mu.Unlock()
+	am.ExpireSession(token)
 
-	am.mu.Lock()
-	cleaned := 0
-	for tok, session := range am.sessions {
-		if time.Now().After(session.ExpiresAt) {
-			delete(am.sessions, tok)
-			cleaned++
-		}
-	}
-	am.mu.Unlock()
+	cleaned := am.CleanupExpiredNow()
 
 	if cleaned != 1 {
 		t.Errorf("expected 1 expired session cleaned, got %d", cleaned)
 	}
 
-	am.mu.Lock()
-	_, exists := am.sessions[token]
-	am.mu.Unlock()
-
-	if exists {
+	if am.SessionExists(token) {
 		t.Error("expired session should be removed from sessions map")
 	}
 }

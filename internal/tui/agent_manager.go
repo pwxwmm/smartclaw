@@ -89,6 +89,7 @@ type AgentManager struct {
 	currentAgent *AgentDefinition
 	configPath   string
 	projectDir   string
+	onAgentSwitch func(agentType string) error
 }
 
 func NewAgentManager(projectDir string) *AgentManager {
@@ -378,13 +379,27 @@ func (am *AgentManager) GetCurrentAgent() *AgentDefinition {
 
 func (am *AgentManager) SetCurrentAgent(agentType string) error {
 	am.mu.Lock()
-	defer am.mu.Unlock()
 	agent, exists := am.agents[agentType]
 	if !exists {
+		am.mu.Unlock()
 		return fmt.Errorf("agent not found: %s", agentType)
 	}
 	am.currentAgent = agent
+	callback := am.onAgentSwitch
+	am.mu.Unlock()
+
+	if callback != nil {
+		if err := callback(agentType); err != nil {
+			return fmt.Errorf("agent switch callback failed: %w", err)
+		}
+	}
 	return nil
+}
+
+func (am *AgentManager) SetOnAgentSwitch(fn func(agentType string) error) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.onAgentSwitch = fn
 }
 
 func (am *AgentManager) GetAgent(agentType string) (*AgentDefinition, error) {

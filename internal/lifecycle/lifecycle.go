@@ -72,11 +72,11 @@ func (m *Manager) Shutdown(timeout time.Duration) {
 	}
 }
 
-func WaitForSignal() {
+func WaitForSignal() os.Signal {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	slog.Info("lifecycle: received signal, shutting down", "signal", sig)
 	Default().Shutdown(15 * time.Second)
-	os.Exit(0)
+	return sig
 }

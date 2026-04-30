@@ -54,6 +54,14 @@ func NewCronTrigger(s *store.Store, gw *Gateway) *CronTrigger {
 	return NewCronTriggerWithConfig(s, gw, defaultCronConfig())
 }
 
+// SetGateway replaces the gateway reference so that cron tasks can
+// be executed through a gateway that was created after the trigger.
+func (ct *CronTrigger) SetGateway(gw *Gateway) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	ct.gateway = gw
+}
+
 func NewCronTriggerWithConfig(s *store.Store, gw *Gateway, cfg CronConfig) *CronTrigger {
 	home, _ := os.UserHomeDir()
 	cronDir := filepath.Join(home, ".smartclaw", "cron")
@@ -74,7 +82,7 @@ func NewCronTriggerWithConfig(s *store.Store, gw *Gateway, cfg CronConfig) *Cron
 		gateway:   gw,
 		cronDir:   cronDir,
 		lockDir:   filepath.Join(home, ".smartclaw", "cron", ".locks"),
-		stopCh:    make(chan struct{}),
+		stopCh:    make(chan struct{}, 1),
 		lockFiles: make(map[string]*os.File),
 		config:    cfg,
 	}
@@ -334,4 +342,35 @@ func (ct *CronTrigger) DisableTask(taskID string) error {
 	}
 
 	return fmt.Errorf("cron: task %q not found", taskID)
+}
+
+func (ct *CronTrigger) EnableTask(taskID string) error {
+	tasks, err := ct.loadAllTasks()
+	if err != nil {
+		return err
+	}
+
+	for _, task := range tasks {
+		if task.ID == taskID {
+			task.Enabled = true
+			return ct.saveTask(task)
+		}
+	}
+
+	return fmt.Errorf("cron: task %q not found", taskID)
+}
+
+func (ct *CronTrigger) GetTask(taskID string) (*CronTask, error) {
+	tasks, err := ct.loadAllTasks()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, task := range tasks {
+		if task.ID == taskID {
+			return task, nil
+		}
+	}
+
+	return nil, fmt.Errorf("cron: task %q not found", taskID)
 }

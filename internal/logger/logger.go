@@ -163,7 +163,7 @@ func (l *Logger) Error(format string, args ...any) {
 
 func (l *Logger) Fatal(format string, args ...any) {
 	l.log(LevelError, format, args...)
-	os.Exit(1)
+	panic(sprintf(format, args...))
 }
 
 func (l *Logger) Panic(format string, args ...any) {

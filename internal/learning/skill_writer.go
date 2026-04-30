@@ -85,3 +85,90 @@ func toTitle(kebab string) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+func readSkillFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read skill file: %w", err)
+	}
+	return string(data), nil
+}
+
+func ParseExistingSkill(name, content string) *ExtractedSkill {
+	skill := &ExtractedSkill{
+		Name:  name,
+		Steps: []string{},
+		Tags:  []string{},
+	}
+
+	lines := strings.Split(content, "\n")
+	section := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "# ") {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(trimmed, "## Triggers"):
+			section = "triggers"
+		case strings.HasPrefix(trimmed, "## Tools"):
+			section = "tools"
+		case strings.HasPrefix(trimmed, "## Instructions"):
+			section = "instructions"
+		case strings.HasPrefix(trimmed, "## Tags"):
+			section = "tags"
+		case strings.HasPrefix(trimmed, "## "):
+			section = ""
+		case trimmed == "":
+			continue
+		default:
+			switch section {
+			case "triggers":
+				if strings.HasPrefix(trimmed, "- ") {
+					skill.Triggers = append(skill.Triggers, strings.TrimPrefix(trimmed, "- "))
+				}
+			case "tools":
+				if strings.HasPrefix(trimmed, "- ") {
+					skill.Tools = append(skill.Tools, strings.TrimPrefix(trimmed, "- "))
+				}
+			case "instructions":
+				if len(trimmed) > 2 && trimmed[0] >= '0' && trimmed[0] <= '9' {
+					step := trimmed
+					if idx := strings.Index(trimmed, ". "); idx >= 0 {
+						step = strings.TrimSpace(trimmed[idx+2:])
+					}
+					skill.Steps = append(skill.Steps, step)
+				}
+			case "tags":
+				if strings.Contains(trimmed, ",") {
+					for _, tag := range strings.Split(trimmed, ",") {
+						t := strings.TrimSpace(tag)
+						if t != "" {
+							skill.Tags = append(skill.Tags, t)
+						}
+					}
+				} else if trimmed != "" {
+					skill.Tags = append(skill.Tags, trimmed)
+				}
+			default:
+				if skill.Description == "" && trimmed != "" {
+					skill.Description = trimmed
+				}
+			}
+		}
+	}
+
+	if skill.Description == "" {
+		skill.Description = "Learned skill: " + name
+	}
+	if len(skill.Steps) == 0 {
+		skill.Steps = []string{"Execute the skill as originally defined"}
+	}
+	if len(skill.Tools) == 0 {
+		skill.Tools = []string{"bash"}
+	}
+
+	return skill
+}

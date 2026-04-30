@@ -4,16 +4,20 @@ import (
 	"context"
 	"crypto/aes"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/services"
+	"github.com/instructkr/smartclaw/internal/store"
 )
 
 type TeamRegistry struct {
 	teams map[string]*services.TeamMemorySync
+	store *store.Store
 	mu    sync.RWMutex
 }
 
@@ -23,6 +27,12 @@ var defaultTeamRegistry = &TeamRegistry{
 
 func GetTeamRegistry() *TeamRegistry {
 	return defaultTeamRegistry
+}
+
+func (tr *TeamRegistry) SetStore(s *store.Store) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.store = s
 }
 
 func (tr *TeamRegistry) GetOrCreate(teamID string) *services.TeamMemorySync {
@@ -49,6 +59,12 @@ func (tr *TeamRegistry) Remove(teamID string) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	delete(tr.teams, teamID)
+
+	if tr.store != nil {
+		if err := tr.store.DeleteTeam(context.Background(), teamID); err != nil {
+			slog.Warn("team: failed to delete team from store", "team_id", teamID, "error", err)
+		}
+	}
 }
 
 func (tr *TeamRegistry) List() []string {
@@ -59,6 +75,97 @@ func (tr *TeamRegistry) List() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (tr *TeamRegistry) PersistTeam(ctx context.Context, team *services.Team) {
+	if tr.store == nil {
+		return
+	}
+
+	settingsJSON, _ := json.Marshal(team.Settings)
+	record := &store.TeamRecord{
+		ID:          team.ID,
+		Name:        team.Name,
+		Description: team.Description,
+		Settings:    string(settingsJSON),
+		CreatedAt:   team.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:   team.UpdatedAt.Format("2006-01-02 15:04:05"),
+	}
+	if err := tr.store.SaveTeam(ctx, record); err != nil {
+		slog.Warn("team: failed to persist team", "team_id", team.ID, "error", err)
+	}
+}
+
+func (tr *TeamRegistry) PersistMemory(ctx context.Context, teamID string, memory *services.Memory) {
+	if tr.store == nil {
+		return
+	}
+
+	tagsJSON, _ := json.Marshal(memory.Tags)
+	record := &store.TeamMemoryRecord{
+		TeamID:     teamID,
+		MemoryID:   memory.ID,
+		Title:      memory.Title,
+		Content:    memory.Content,
+		Type:       memoryTypeStr(memory.Type),
+		Visibility: visibilityStr(memory.Visibility),
+		Tags:       string(tagsJSON),
+		AuthorID:   memory.UserID,
+		CreatedAt:  memory.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+	if err := tr.store.SaveTeamMemory(ctx, record); err != nil {
+		slog.Warn("team: failed to persist memory", "team_id", teamID, "error", err)
+	}
+}
+
+func (tr *TeamRegistry) LoadFromStore(ctx context.Context) {
+	if tr.store == nil {
+		return
+	}
+
+	teams, err := tr.store.ListTeams(ctx)
+	if err != nil {
+		slog.Warn("team: failed to load teams from store", "error", err)
+		return
+	}
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	for _, record := range teams {
+		if _, exists := tr.teams[record.ID]; exists {
+			continue
+		}
+
+		tms := services.NewTeamMemorySync(record.ID)
+
+		var settings services.TeamSettings
+		if record.Settings != "" {
+			json.Unmarshal([]byte(record.Settings), &settings)
+		}
+
+		var createdAt, updatedAt time.Time
+		if t, err := time.Parse("2006-01-02 15:04:05", record.CreatedAt); err == nil {
+			createdAt = t
+		}
+		if t, err := time.Parse("2006-01-02 15:04:05", record.UpdatedAt); err == nil {
+			updatedAt = t
+		}
+
+		team := &services.Team{
+			ID:          record.ID,
+			Name:        record.Name,
+			Description: record.Description,
+			Members:     []services.TeamMember{},
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+			Settings:    settings,
+		}
+		tms.SetTeam(team)
+		tr.teams[record.ID] = tms
+	}
+
+	slog.Info("team: loaded teams from store", "count", len(teams))
 }
 
 type TeamCreateTool struct{ BaseTool }
@@ -103,6 +210,8 @@ func (t *TeamCreateTool) Execute(ctx context.Context, input map[string]any) (any
 		},
 	}
 	tms.SetTeam(team)
+
+	registry.PersistTeam(ctx, team)
 
 	return map[string]any{
 		"id":          teamID,
@@ -192,6 +301,8 @@ func (t *TeamShareMemoryTool) Execute(ctx context.Context, input map[string]any)
 	if err := tms.ShareMemory(ctx, memory); err != nil {
 		return nil, err
 	}
+
+	registry.PersistMemory(ctx, teamID, memory)
 
 	return map[string]any{
 		"memory_id": memory.ID,
@@ -416,6 +527,8 @@ func (t *TeamShareSessionTool) Execute(ctx context.Context, input map[string]any
 	if err := tms.ShareMemory(ctx, memory); err != nil {
 		return nil, err
 	}
+
+	registry.PersistMemory(ctx, teamID, memory)
 
 	return map[string]any{
 		"memory_id":  memory.ID,

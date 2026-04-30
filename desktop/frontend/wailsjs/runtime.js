@@ -1,0 +1,30 @@
+window.runtime = {
+  invoke: function(method, ...args) {
+    return Promise.resolve(null);
+  },
+  EventsEmit: function(event, ...data) {},
+  EventsOn: function(event, callback) {},
+  EventsOff: function(event) {},
+  WindowSetTitle: function(title) {},
+  WindowShow: function() {},
+  WindowHide: function() {},
+  WindowClose: function() {},
+  WindowMinimise: function() {},
+  WindowMaximise: function() {},
+  WindowUnmaximise: function() {},
+  WindowIsMaximised: function() { return false; },
+  WindowIsNormal: function() { return true; },
+  WindowSetSize: function(width, height) {},
+  WindowSetPosition: function(x, y) {},
+  WindowGetPosition: function() { return {x: 0, y: 0}; },
+  WindowGetSize: function() { return {w: 1200, h: 800}; },
+  BrowserOpenURL: function(url) { window.open(url, '_blank'); },
+  Environment: function() { return Promise.resolve({platform: 'desktop', arch: ''}); },
+  LogPrint: function(message) { console.log('[wails]', message); },
+  LogTrace: function(message) { console.trace('[wails]', message); },
+  LogDebug: function(message) { console.debug('[wails]', message); },
+  LogInfo: function(message) { console.info('[wails]', message); },
+  LogWarning: function(message) { console.warn('[wails]', message); },
+  LogError: function(message) { console.error('[wails]', message); },
+  LogFatal: function(message) { console.error('[FATAL]', message); }
+};

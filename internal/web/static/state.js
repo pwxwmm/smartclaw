@@ -38,12 +38,21 @@
     wikiPages: [],
     wikiEnabled: false,
     uploads: [],
+    pendingImages: [],
     gitStatus: {},
     fileTreeData: [],
+    cronTasks: [],
+    errorCount: 0,
+    runningTools: 0,
+    projectPath: '',
+    projectName: 'Project',
+    recentProjects: [],
+    fileTabs: {},
   };
 
   const subscribers = {};
   function subscribe(key, fn) { (subscribers[key] = subscribers[key] || []).push(fn); }
+  function emit(key, data) { (subscribers[key] || []).forEach(fn => fn(data)); }
   function setState(path, val) {
     const parts = path.split('.');
     let obj = state;
@@ -63,6 +72,7 @@
     { name: '/subagent', desc: 'Subagent tasks', shortcut: '' },
     { name: '/clear', desc: 'Clear chat', shortcut: 'Ctrl+L' },
     { name: '/help', desc: 'Show help', shortcut: 'Ctrl+H' },
+    { name: '/schedule', desc: 'Manage cron tasks', shortcut: '' },
   ];
 
   const toolColors = {
@@ -88,6 +98,7 @@
 
   SC.state = state;
   SC.subscribe = subscribe;
+  SC.emit = emit;
   SC.setState = setState;
   SC.commands = commands;
   SC.toolColors = toolColors;

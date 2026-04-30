@@ -1,6 +1,7 @@
 package costguard
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -26,6 +27,7 @@ type BudgetConfig struct {
 	DowngradeThreshold float64 `json:"downgrade_threshold"` // fraction to trigger model downgrade
 	DowngradeModel     string  `json:"downgrade_model"`     // cheaper model to fall back to
 	Enabled            bool    `json:"enabled"`
+	ShowPreEstimate    bool    `json:"show_pre_estimate"`
 }
 
 // DefaultBudgetConfig returns a sensible default configuration.
@@ -61,6 +63,7 @@ type CostSnapshot struct {
 type CostGuard struct {
 	config BudgetConfig
 	prices map[string]PricingTier
+	db     *sql.DB
 
 	sessionInputTokens  atomic.Int64
 	sessionOutputTokens atomic.Int64
@@ -102,6 +105,11 @@ func (cg *CostGuard) OnBlock(fn func(CostSnapshot)) {
 	cg.onBlock = fn
 }
 
+// SetDB sets the database connection for cost analytics persistence.
+func (cg *CostGuard) SetDB(db *sql.DB) {
+	cg.db = db
+}
+
 // RecordUsage records token usage for a model and checks budget thresholds.
 // Returns the current CostSnapshot after recording.
 func (cg *CostGuard) RecordUsage(model string, inputTokens, outputTokens, cacheRead, cacheCreate int) CostSnapshot {
@@ -123,6 +131,8 @@ func (cg *CostGuard) RecordUsage(model string, inputTokens, outputTokens, cacheR
 	if cg.config.Enabled {
 		cg.checkThresholds(snapshot)
 	}
+
+	go RecordCostSnapshot(cg.db, model, int64(inputTokens), int64(outputTokens), int64(cacheRead), int64(cacheCreate), cost)
 
 	return snapshot
 }
@@ -309,6 +319,39 @@ func (cg *CostGuard) checkDailyReset() {
 		cg.dailyOutputTokens = 0
 		cg.dailyCostUSD = 0
 		cg.dailyResetDate = today
+	}
+}
+
+// PreTaskEstimate returns a quick cost estimate based on model pricing and estimated tokens.
+func (cg *CostGuard) PreTaskEstimate(model string, estimatedTokens int) *TaskCostEstimate {
+	tier, ok := cg.prices[model]
+	if !ok {
+		tier = PricingTier{
+			InputPricePer1M:  3.0,
+			OutputPricePer1M: 15.0,
+		}
+	}
+
+	inputTokens := estimatedTokens * 60 / 100
+	outputTokens := estimatedTokens * 40 / 100
+	inputCost := float64(inputTokens) * tier.InputPricePer1M / 1_000_000
+	outputCost := float64(outputTokens) * tier.OutputPricePer1M / 1_000_000
+	estimatedCost := inputCost + outputCost
+
+	haikuTier, haikuOk := cg.prices["claude-3-5-haiku-20241022"]
+	if !haikuOk {
+		haikuTier = PricingTier{InputPricePer1M: 0.8, OutputPricePer1M: 4.0}
+	}
+	haikuInputCost := float64(inputTokens) * haikuTier.InputPricePer1M / 1_000_000
+	haikuOutputCost := float64(outputTokens) * haikuTier.OutputPricePer1M / 1_000_000
+	haikuCost := haikuInputCost + haikuOutputCost
+
+	return &TaskCostEstimate{
+		TaskType:      "general",
+		EstimatedCost: estimatedCost,
+		Confidence:    0.6,
+		CheaperAlt:    "claude-3-5-haiku-20241022",
+		CheaperCost:   haikuCost,
 	}
 }
 

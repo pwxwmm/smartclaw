@@ -127,15 +127,32 @@ const maxIncidentPromptChars = 2000
 
 // IncidentMemory implements L5: real-time SRE context for incident response.
 type IncidentMemory struct {
-	store *store.Store
-	mu    sync.RWMutex
+	store         *store.Store
+	shutdownCtx   context.Context
+	shutdownCancel context.CancelFunc
+	mu            sync.RWMutex
 }
 
 // NewIncidentMemory creates a new incident memory layer backed by SQLite.
 func NewIncidentMemory(s *store.Store) *IncidentMemory {
-	im := &IncidentMemory{store: s}
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	im := &IncidentMemory{
+		store:          s,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+	}
 	im.initSchema()
 	return im
+}
+
+func (im *IncidentMemory) Close() {
+	if im.shutdownCancel != nil {
+		im.shutdownCancel()
+	}
+}
+
+func (im *IncidentMemory) Context() context.Context {
+	return im.shutdownCtx
 }
 
 func (im *IncidentMemory) initSchema() {
@@ -441,12 +458,12 @@ func (im *IncidentMemory) ListPostmortems(limit int) ([]*Postmortem, error) {
 }
 
 // SetSLOStatus upserts an SLO status record.
-func (im *IncidentMemory) SetSLOStatus(slo *SLOStatus) error {
+func (im *IncidentMemory) SetSLOStatus(ctx context.Context, slo *SLOStatus) error {
 	if im.store == nil {
 		return nil
 	}
 
-	return im.store.WriteWithRetry(context.Background(),
+	return im.store.WriteWithRetry(ctx,
 		`INSERT INTO slo_statuses (service, slo_name, target, current, error_budget_remaining, burn_rate, status, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(service, slo_name) DO UPDATE SET
@@ -599,21 +616,21 @@ func (im *IncidentMemory) BuildIncidentPrompt() string {
 
 // UpdateIncidentFromToolResult parses SOPA tool results and auto-creates or updates incidents.
 // This method is called by the tool execution layer to feed real-time SRE data into the memory system.
-func (im *IncidentMemory) UpdateIncidentFromToolResult(toolName string, result map[string]any) error {
+func (im *IncidentMemory) UpdateIncidentFromToolResult(ctx context.Context, toolName string, result map[string]any) error {
 	if im.store == nil {
 		return nil
 	}
 
 	switch toolName {
 	case "sopa_list_faults", "sopa_get_fault":
-		return im.ingestAlertEvents(result)
+		return im.ingestAlertEvents(ctx, result)
 	default:
 		return nil
 	}
 }
 
 // ingestAlertEvents processes alert event results and creates/updates incidents.
-func (im *IncidentMemory) ingestAlertEvents(result map[string]any) error {
+func (im *IncidentMemory) ingestAlertEvents(ctx context.Context, result map[string]any) error {
 	eventsRaw, ok := result["data"]
 	if !ok {
 		eventsRaw, ok = result["events"]
@@ -697,7 +714,7 @@ func (im *IncidentMemory) ingestAlertEvents(result map[string]any) error {
 					now := time.Now().UTC()
 					updates["resolved_at"] = now
 				}
-				if err := im.UpdateIncident(context.Background(), id, updates); err != nil {
+				if err := im.UpdateIncident(ctx, id, updates); err != nil {
 					slog.Warn("incident memory: failed to update incident from alert", "id", id, "error", err)
 				}
 			}
@@ -712,7 +729,7 @@ func (im *IncidentMemory) ingestAlertEvents(result map[string]any) error {
 				AlertSource: alertSource,
 				StartedAt:   time.Now().UTC(),
 			}
-			if err := im.CreateIncident(context.Background(), incident); err != nil {
+			if err := im.CreateIncident(ctx, incident); err != nil {
 				slog.Warn("incident memory: failed to create incident from alert", "id", id, "error", err)
 			}
 		}
@@ -722,7 +739,7 @@ func (im *IncidentMemory) ingestAlertEvents(result map[string]any) error {
 }
 
 // ingestFaultTrackings processes fault tracking results and creates/updates incidents.
-func (im *IncidentMemory) ingestFaultTrackings(result map[string]any) error {
+func (im *IncidentMemory) ingestFaultTrackings(ctx context.Context, result map[string]any) error {
 	itemsRaw, ok := result["items"]
 	if !ok {
 		itemsRaw, ok = result["faults"]
@@ -802,7 +819,7 @@ func (im *IncidentMemory) ingestFaultTrackings(result map[string]any) error {
 				now := time.Now().UTC()
 				updates["resolved_at"] = now
 			}
-			if err := im.UpdateIncident(context.Background(), id, updates); err != nil {
+			if err := im.UpdateIncident(ctx, id, updates); err != nil {
 				slog.Warn("incident memory: failed to update incident from fault", "id", id, "error", err)
 			}
 		} else if status != "resolved" {
@@ -817,7 +834,7 @@ func (im *IncidentMemory) ingestFaultTrackings(result map[string]any) error {
 				Remediation: remediation,
 				StartedAt:   time.Now().UTC(),
 			}
-			if err := im.CreateIncident(context.Background(), incident); err != nil {
+			if err := im.CreateIncident(ctx, incident); err != nil {
 				slog.Warn("incident memory: failed to create incident from fault", "id", id, "error", err)
 			}
 		}

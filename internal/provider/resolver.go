@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -101,6 +102,20 @@ func LoadFromConfig() (*Resolver, error) {
 
 // loadFromEnv falls back to environment variables when no config file exists.
 func (r *Resolver) loadFromEnv() {
+	envKeys := []string{
+		"ANTHROPIC_API_KEY",
+		"OPENAI_API_KEY",
+		"GOOGLE_API_KEY",
+		"MISTRAL_API_KEY",
+		"DEEPSEEK_API_KEY",
+		"OPENROUTER_API_KEY",
+	}
+	for _, key := range envKeys {
+		if os.Getenv(key) == "" {
+			slog.Warn("provider env var not set", "env", key)
+		}
+	}
+
 	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
 		r.Register("anthropic", &Provider{
 			Name:    "anthropic",

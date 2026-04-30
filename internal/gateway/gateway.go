@@ -21,11 +21,13 @@ type GatewayConfig struct {
 }
 
 type GatewayResponse struct {
-	Content   string
-	SessionID string
-	Platform  string
-	Usage     UsageInfo
-	Duration  time.Duration
+	Content          string
+	SessionID        string
+	Platform         string
+	Usage            UsageInfo
+	Duration         time.Duration
+	RequiresApproval bool   `json:"requires_approval,omitempty"`
+	ApprovalTaskID   string `json:"approval_task_id,omitempty"`
 }
 
 type UsageInfo struct {
@@ -44,13 +46,14 @@ type Gateway struct {
 	store       *store.Store
 	jsonlWriter *store.JSONLWriter
 
-	engineFactory EngineFactory
-	mu            sync.RWMutex
-	engines       map[string]*runtime.QueryEngine
-	lastAccess    map[string]time.Time
-	maxIdle       time.Duration
-	stopCleanup   chan struct{}
-	cleanupOnce   sync.Once
+	engineFactory   EngineFactory
+	currentAgentCfg *runtime.AgentConfig
+	mu              sync.RWMutex
+	engines         map[string]*runtime.QueryEngine
+	lastAccess      map[string]time.Time
+	maxIdle         time.Duration
+	stopCleanup     chan struct{}
+	cleanupOnce     sync.Once
 }
 
 type EngineFactory func() *runtime.QueryEngine
@@ -60,7 +63,10 @@ func NewGateway(engineFactory EngineFactory, memManager *memory.MemoryManager, l
 }
 
 func NewGatewayWithConfig(engineFactory EngineFactory, memManager *memory.MemoryManager, learningLoop *learning.LearningLoop, cfg GatewayConfig) *Gateway {
-	s := memManager.GetStore()
+	var s *store.Store
+	if memManager != nil {
+		s = memManager.GetStore()
+	}
 
 	var jsonlDir string
 	if s == nil {
@@ -91,7 +97,9 @@ func NewGatewayWithConfig(engineFactory EngineFactory, memManager *memory.Memory
 		gw.jsonlWriter = store.NewJSONLWriter(jsonlDir)
 	}
 
-	gw.cronTrigger = NewCronTriggerWithConfig(s, gw, cfg.CronConfig)
+	if s != nil {
+		gw.cronTrigger = NewCronTriggerWithConfig(s, gw, cfg.CronConfig)
+	}
 
 	go gw.cleanupLoop()
 
@@ -143,8 +151,8 @@ func (g *Gateway) HandleMessageWithSession(ctx context.Context, userID, platform
 		},
 	}
 
-	g.persistMessage(sessionID, "user", content, platform)
-	g.persistMessage(sessionID, "assistant", response.Content, platform)
+	g.persistMessage(ctx, sessionID, "user", content, platform)
+	g.persistMessage(ctx, sessionID, "assistant", response.Content, platform)
 
 	g.delivery.Deliver(userID, platform, response)
 
@@ -171,6 +179,9 @@ func (g *Gateway) getOrCreateEngine(sessionID string) *runtime.QueryEngine {
 	}
 
 	engine := g.engineFactory()
+	if g.currentAgentCfg != nil {
+		engine.SetCurrentAgent(g.currentAgentCfg)
+	}
 	g.engines[sessionID] = engine
 	g.lastAccess[sessionID] = time.Now()
 	return engine
@@ -213,7 +224,7 @@ func (g *Gateway) evictIdleEngines() {
 	}
 }
 
-func (g *Gateway) persistMessage(sessionID, role, content, source string) {
+func (g *Gateway) persistMessage(ctx context.Context, sessionID, role, content, source string) {
 	msg := &store.Message{
 		SessionID: sessionID,
 		Role:      role,
@@ -222,7 +233,7 @@ func (g *Gateway) persistMessage(sessionID, role, content, source string) {
 	}
 
 	if g.store != nil {
-		if err := g.store.InsertMessage(context.Background(), msg); err != nil {
+		if err := g.store.InsertMessage(ctx, msg); err != nil {
 			slog.Warn("gateway: failed to persist message to SQLite", "error", err)
 			g.persistToJSONL(msg)
 		}
@@ -266,6 +277,15 @@ func (g *Gateway) Close() error {
 
 func (g *Gateway) GetRouter() *SessionRouter {
 	return g.router
+}
+
+func (g *Gateway) SetCurrentAgentConfig(cfg *runtime.AgentConfig) {
+	g.mu.Lock()
+	g.currentAgentCfg = cfg
+	for _, engine := range g.engines {
+		engine.SetCurrentAgent(cfg)
+	}
+	g.mu.Unlock()
 }
 
 func (g *Gateway) GetCronTrigger() *CronTrigger {

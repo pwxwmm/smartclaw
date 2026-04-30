@@ -5,20 +5,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/instructkr/smartclaw/internal/adapters"
+	"github.com/instructkr/smartclaw/internal/agents"
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/auth"
 	"github.com/instructkr/smartclaw/internal/commands"
+	"github.com/instructkr/smartclaw/internal/contextmgr"
+	"github.com/instructkr/smartclaw/internal/gateway"
 	"github.com/instructkr/smartclaw/internal/lifecycle"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/permissions"
+	"github.com/instructkr/smartclaw/internal/plugins"
 	"github.com/instructkr/smartclaw/internal/runtime"
+	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/tui"
 )
@@ -41,6 +51,8 @@ func init() {
 	rootCmd.AddCommand(replCmd)
 	rootCmd.AddCommand(tuiCmd)
 	replCmd.Flags().Bool("simple", false, "Use simple CLI instead of TUI")
+	tuiCmd.Flags().String("remote", "", "Remote server URL (e.g., http://localhost:8080)")
+	tuiCmd.Flags().String("remote-token", "", "Authentication token for remote server")
 }
 
 type REPLSession struct {
@@ -55,6 +67,7 @@ type REPLSession struct {
 	ctxMgr       *runtime.ContextManager
 	totalTokens  int
 	totalCost    float64
+	learningLoop *learning.LearningLoop
 }
 
 func runREPL(cmd *cobra.Command, args []string) {
@@ -121,12 +134,72 @@ func runREPL(cmd *cobra.Command, args []string) {
 	adapters.InitInnovationPackages(mm, session.apiClient)
 	if mm != nil && session.apiClient != nil {
 		mm.SetLLMClient(session.apiClient)
+		llmAdapter := learning.NewAPIClientAdapter(session.apiClient, "")
+		tools.SetLLMClientForConversationRecall(llmAdapter)
+	}
+	if mm != nil {
+		tools.SetStoreForConversationRecall(mm.GetStore())
 	}
 	lifecycle.Register(adapters.NewInnovationShutdown())
+
+	var replStore *store.Store
+	if mm != nil {
+		replStore = mm.GetStore()
+	}
+	session.learningLoop = buildLearningLoop(session.apiClient, mm, replStore)
 
 	if shutdown, err := observability.InitOTLP(); err == nil {
 		defer shutdown(context.Background())
 	}
+
+	profileRegistry := agents.NewProfileRegistry()
+	agentPermMgr := permissions.NewAgentPermissionManager()
+
+	for _, profile := range profileRegistry.List() {
+		permSet := permissions.NewAgentPermissionSet(
+			profile.AgentType,
+			profile.Tools,
+			profile.DisallowedTools,
+			permissions.AgentPermissionMode(profile.PermissionMode),
+		)
+		agentPermMgr.Register(permSet)
+	}
+
+	tools.SetGlobalProfileRegistry(&profileRegistryAdapter{reg: profileRegistry})
+	tools.SetGlobalAgentSwitchFunc(func(cfg *tools.AgentSwitchConfig) error {
+		slog.Info("repl: agent switch requested", "agent", cfg.AgentType)
+		if cfg.Model != "" {
+			session.model = cfg.Model
+			if session.apiClient != nil {
+				session.apiClient.SetModel(cfg.Model)
+			}
+		}
+		return nil
+	})
+
+	homeDir, _ := os.UserHomeDir()
+	smartclawDir := filepath.Join(homeDir, ".smartclaw")
+	agentsMDHierarchy := contextmgr.NewAgentsMDHierarchy(workDir, smartclawDir)
+	if err := agentsMDHierarchy.Load(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: AGENTS.md hierarchy load failed: %v\n", err)
+	}
+	if mm != nil {
+		mm.SetAgentsMDHierarchy(agentsMDHierarchy)
+	}
+
+	contextAdapter := commands.NewAgentsMDContextAdapter(agentsMDHierarchy)
+	commands.SetGlobalContextManager(contextAdapter)
+
+	cronTrigger := gateway.NewCronTrigger(nil, nil)
+	commands.SetGlobalCronTrigger(&cronTriggerAdapter{ct: cronTrigger})
+	commands.SetGlobalScheduleParser(&scheduleParserAdapter{})
+
+	pluginRegistry := plugins.NewPluginRegistry("")
+	if err := pluginRegistry.Initialize(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Plugin registry init failed: %v\n", err)
+	}
+	pluginRegistry.RegisterToolsInRegistry(tools.GetRegistry())
+	commands.SetGlobalPluginRegistry(pluginRegistry)
 
 	fmt.Println("💡 SmartClaw REPL")
 	fmt.Printf("Model: %s\n", model)
@@ -450,9 +523,19 @@ func runTUI(cmd *cobra.Command, args []string) {
 	isOpenAI := viper.GetBool("openai")
 	apiKeyFlag := viper.GetString("api_key")
 	baseURLFlag := viper.GetString("url")
+	remoteURL, _ := cmd.Flags().GetString("remote")
+	remoteToken, _ := cmd.Flags().GetString("remote-token")
 
 	if baseURLFlag == "" {
 		baseURLFlag = viper.GetString("base_url")
+	}
+
+	if remoteURL != "" {
+		if err := tui.StartTUIWithRemoteClient(remoteURL, remoteToken, model); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	apiKey := apiKeyFlag
@@ -487,6 +570,11 @@ func runTUI(cmd *cobra.Command, args []string) {
 	adapters.InitInnovationPackages(mm, apiClient)
 	if mm != nil && apiClient != nil {
 		mm.SetLLMClient(apiClient)
+		llmAdapter := learning.NewAPIClientAdapter(apiClient, "")
+		tools.SetLLMClientForConversationRecall(llmAdapter)
+	}
+	if mm != nil {
+		tools.SetStoreForConversationRecall(mm.GetStore())
 	}
 	lifecycle.Register(adapters.NewInnovationShutdown())
 
@@ -494,8 +582,155 @@ func runTUI(cmd *cobra.Command, args []string) {
 		defer shutdown(context.Background())
 	}
 
-	if err := tui.StartTUIWithClient(apiClient); err != nil {
+	profileRegistry := agents.NewProfileRegistry()
+	agentPermMgr := permissions.NewAgentPermissionManager()
+
+	for _, profile := range profileRegistry.List() {
+		permSet := permissions.NewAgentPermissionSet(
+			profile.AgentType,
+			profile.Tools,
+			profile.DisallowedTools,
+			permissions.AgentPermissionMode(profile.PermissionMode),
+		)
+		agentPermMgr.Register(permSet)
+	}
+
+	tools.SetGlobalProfileRegistry(&profileRegistryAdapter{reg: profileRegistry})
+	tools.SetGlobalAgentSwitchFunc(func(cfg *tools.AgentSwitchConfig) error {
+		slog.Info("tui: agent switch requested", "agent", cfg.AgentType)
+		if cfg.Model != "" {
+			apiClient.SetModel(cfg.Model)
+		}
+		return nil
+	})
+
+	homeDir, _ := os.UserHomeDir()
+	smartclawDir := filepath.Join(homeDir, ".smartclaw")
+	agentsMDHierarchy := contextmgr.NewAgentsMDHierarchy(workDir, smartclawDir)
+	if err := agentsMDHierarchy.Load(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: AGENTS.md hierarchy load failed: %v\n", err)
+	}
+	if mm != nil {
+		mm.SetAgentsMDHierarchy(agentsMDHierarchy)
+	}
+
+	contextAdapter := commands.NewAgentsMDContextAdapter(agentsMDHierarchy)
+	commands.SetGlobalContextManager(contextAdapter)
+
+	cronTrigger := gateway.NewCronTrigger(nil, nil)
+	commands.SetGlobalCronTrigger(&cronTriggerAdapter{ct: cronTrigger})
+	commands.SetGlobalScheduleParser(&scheduleParserAdapter{})
+
+	pluginRegistry := plugins.NewPluginRegistry("")
+	if err := pluginRegistry.Initialize(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Plugin registry init failed: %v\n", err)
+	}
+	pluginRegistry.RegisterToolsInRegistry(tools.GetRegistry())
+	commands.SetGlobalPluginRegistry(pluginRegistry)
+
+	var tuiStore *store.Store
+	if mm != nil {
+		tuiStore = mm.GetStore()
+	}
+	tuiLearningLoop := buildLearningLoop(apiClient, mm, tuiStore)
+
+	if err := tui.StartTUIWithClientAndLearningLoop(apiClient, tuiLearningLoop); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type cronTriggerAdapter struct {
+	ct *gateway.CronTrigger
+}
+
+func (a *cronTriggerAdapter) ListTasks() ([]commands.CronTaskInfo, error) {
+	tasks, err := a.ct.ListTasks()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]commands.CronTaskInfo, 0, len(tasks))
+	for _, t := range tasks {
+		var lastRun, createdAt time.Time
+		if t.LastRunAt != "" {
+			lastRun, _ = time.Parse(time.RFC3339, t.LastRunAt)
+		}
+		if t.CreatedAt != "" {
+			createdAt, _ = time.Parse(time.RFC3339, t.CreatedAt)
+		}
+		result = append(result, commands.CronTaskInfo{
+			ID:          t.ID,
+			Schedule:    t.Schedule,
+			Instruction: t.Instruction,
+			Enabled:     t.Enabled,
+			LastRunAt:   lastRun,
+			CreatedAt:   createdAt,
+		})
+	}
+	return result, nil
+}
+
+func (a *cronTriggerAdapter) CreateTask(schedule, instruction string) (string, error) {
+	taskID := fmt.Sprintf("cron_%d", time.Now().UnixNano())
+	return taskID, a.ct.ScheduleCron(taskID, "default", instruction, schedule, "terminal")
+}
+
+func (a *cronTriggerAdapter) DeleteTask(id string) error {
+	return a.ct.DeleteTask(id)
+}
+
+func (a *cronTriggerAdapter) ToggleTask(id string) error {
+	task, err := a.ct.GetTask(id)
+	if err != nil {
+		return err
+	}
+	if task.Enabled {
+		return a.ct.DisableTask(id)
+	}
+	return a.ct.EnableTask(id)
+}
+
+func (a *cronTriggerAdapter) RunTask(id string) error {
+	task, err := a.ct.GetTask(id)
+	if err != nil {
+		return err
+	}
+	err = a.ct.ScheduleCron(task.ID, task.UserID, task.Instruction, task.Schedule, task.Platform)
+	return err
+}
+
+type scheduleParserAdapter struct{}
+
+func (s *scheduleParserAdapter) ParseNaturalLanguage(input string) (string, error) {
+	return gateway.ParseNaturalLanguage(input)
+}
+
+type profileRegistryAdapter struct {
+	reg *agents.ProfileRegistry
+}
+
+func (a *profileRegistryAdapter) Get(name string) (string, string, string, []string, []string, string, int, error) {
+	p, err := a.reg.Get(name)
+	if err != nil {
+		return "", "", "", nil, nil, "", 0, err
+	}
+	return p.AgentType, p.SystemPrompt, p.Model, p.Tools, p.DisallowedTools, string(p.PermissionMode), p.MaxTurns, nil
+}
+
+func (a *profileRegistryAdapter) List() []tools.ProfileEntry {
+	profiles := a.reg.List()
+	entries := make([]tools.ProfileEntry, 0, len(profiles))
+	for _, p := range profiles {
+		entries = append(entries, tools.ProfileEntry{
+			AgentType:       p.AgentType,
+			WhenToUse:       p.WhenToUse,
+			SystemPrompt:    p.SystemPrompt,
+			Tools:           p.Tools,
+			DisallowedTools: p.DisallowedTools,
+			Model:           p.Model,
+			PermissionMode:  string(p.PermissionMode),
+			MaxTurns:        p.MaxTurns,
+		})
+	}
+	return entries
 }

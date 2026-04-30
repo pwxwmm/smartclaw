@@ -19,7 +19,7 @@ type SkillRecord struct {
 }
 
 func (s *Store) UpsertSkill(ctx context.Context, skill *SkillRecord) error {
-	return s.WriteWithRetry(ctx, `
+	err := s.WriteWithRetry(ctx, `
 		INSERT INTO skills (name, description, content, source, use_count, last_used_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(name) DO UPDATE SET
@@ -30,6 +30,17 @@ func (s *Store) UpsertSkill(ctx context.Context, skill *SkillRecord) error {
 			last_used_at = excluded.last_used_at,
 			updated_at = CURRENT_TIMESTAMP
 	`, skill.Name, skill.Description, skill.Content, skill.Source, skill.UseCount, nullTime(skill.LastUsedAt))
+	if err != nil {
+		return err
+	}
+
+	embedText := skill.Name
+	if skill.Description != "" {
+		embedText = skill.Name + " " + skill.Description
+	}
+	go embedAsync(s, skill.Name, "skill", embedText)
+
+	return nil
 }
 
 func (s *Store) IncrementSkillUseCount(ctx context.Context, name string) error {
@@ -122,4 +133,30 @@ func nullTime(t *time.Time) any {
 		return nil
 	}
 	return t.Format("2006-01-02 15:04:05")
+}
+
+func (s *Store) GetSkill(ctx context.Context, name string) (*SkillRecord, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT name, description, content, source, use_count, last_used_at, created_at, updated_at
+		 FROM skills WHERE name = ?`, name)
+
+	skill := &SkillRecord{}
+	var lastUsed, createdAt, updatedAt sql.NullString
+	if err := row.Scan(&skill.Name, &skill.Description, &skill.Content, &skill.Source,
+		&skill.UseCount, &lastUsed, &createdAt, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("store: get skill %q: %w", name, err)
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", lastUsed.String); err == nil {
+		skill.LastUsedAt = &t
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", createdAt.String); err == nil {
+		skill.CreatedAt = t
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", updatedAt.String); err == nil {
+		skill.UpdatedAt = t
+	}
+	return skill, nil
 }

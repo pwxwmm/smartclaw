@@ -3,11 +3,14 @@ package platform
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -31,15 +34,35 @@ type WhatsAppAdapter struct {
 	server  *http.Server
 }
 
+func generateVerifyToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based token if crypto/rand fails
+		return fmt.Sprintf("smartclaw_%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
 func NewWhatsAppAdapter(phoneNumberID, accessToken string, gw *gateway.Gateway) *WhatsAppAdapter {
+	webhookAddr := os.Getenv("WHATSAPP_WEBHOOK_ADDR")
+	if webhookAddr == "" {
+		webhookAddr = ":8089"
+	}
+
+	verifyToken := os.Getenv("WHATSAPP_VERIFY_TOKEN")
+	if verifyToken == "" {
+		verifyToken = generateVerifyToken()
+		slog.Warn("whatsapp: WHATSAPP_VERIFY_TOKEN not set, using auto-generated token; set env var for production use")
+	}
+
 	return &WhatsAppAdapter{
 		phoneNumberID: phoneNumberID,
 		accessToken:   accessToken,
 		gateway:       gw,
 		client:        &http.Client{Timeout: 30 * time.Second},
 		apiURL:        "https://graph.facebook.com/v18.0",
-		verifyToken:   "smartclaw_verify",
-		webhookAddr:   ":8089",
+		verifyToken:   verifyToken,
+		webhookAddr:   webhookAddr,
 	}
 }
 

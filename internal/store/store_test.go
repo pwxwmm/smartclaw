@@ -422,3 +422,268 @@ func TestToolCallsColumn(t *testing.T) {
 		t.Errorf("ToolCalls = %q, want %q", got[0].ToolCalls, msg.ToolCalls)
 	}
 }
+
+func TestSessionsFTS(t *testing.T) {
+	s := newTestStore(t)
+
+	sessions := []*Session{
+		{ID: "fts-sess-1", UserID: "user-1", Title: "Debugging Go authentication", Summary: "Resolved JWT token expiry bug in middleware", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "fts-sess-2", UserID: "user-1", Title: "Deploy to production", Summary: "Deployed v2.3 to kubernetes cluster", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "fts-sess-3", UserID: "user-2", Title: "Writing documentation", Summary: "Updated API docs for authentication endpoints", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	}
+
+	for _, sess := range sessions {
+		if err := s.UpsertSession(context.Background(), sess); err != nil {
+			t.Fatalf("UpsertSession: %v", err)
+		}
+	}
+
+	results, err := s.SearchSessions("authentication", 10)
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("SearchSessions should find results for 'authentication'")
+	}
+
+	found := false
+	for _, r := range results {
+		if r.SessionID == "fts-sess-1" || r.SessionID == "fts-sess-3" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("SearchSessions should match sessions with 'authentication' in title or summary")
+	}
+
+	results2, err := s.SearchSessions("kubernetes", 10)
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if len(results2) == 0 {
+		t.Error("SearchSessions should find results for 'kubernetes'")
+	}
+	if len(results2) > 0 && results2[0].SessionID != "fts-sess-2" {
+		t.Errorf("SearchSessions kubernetes result = %q, want fts-sess-2", results2[0].SessionID)
+	}
+}
+
+func TestMessagesFTS_ToolFields(t *testing.T) {
+	s := newTestStore(t)
+
+	session := &Session{
+		ID:        "toolfts-test-session",
+		UserID:    "user-1",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.UpsertSession(context.Background(), session); err != nil {
+		t.Fatalf("UpsertSession: %v", err)
+	}
+
+	msgs := []*Message{
+		{
+			SessionID:  "toolfts-test-session",
+			Role:       "assistant",
+			Content:    "I will read the config file",
+			ToolName:   "read_file",
+			ToolInput:  `{"path": "/etc/app/config.yaml"}`,
+			ToolResult: "database_url: postgres://localhost:5432/myapp",
+			Timestamp:  time.Now(),
+		},
+		{
+			SessionID:  "toolfts-test-session",
+			Role:       "assistant",
+			Content:    "Running database migration",
+			ToolName:   "bash",
+			ToolInput:  `{"command": "migrate -path ./migrations -database $DB_URL up"}`,
+			ToolResult: "Migration completed successfully",
+			Timestamp:  time.Now(),
+		},
+		{
+			SessionID: "toolfts-test-session",
+			Role:      "user",
+			Content:   "Check the logs for errors",
+			Timestamp: time.Now(),
+		},
+	}
+
+	for _, msg := range msgs {
+		if err := s.InsertMessage(context.Background(), msg); err != nil {
+			t.Fatalf("InsertMessage: %v", err)
+		}
+	}
+
+	results, err := s.SearchMessages("config", 10)
+	if err != nil {
+		t.Fatalf("SearchMessages for tool_input: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("FTS5 search should find 'config' in tool_input field")
+	}
+
+	results2, err := s.SearchMessages("postgres", 10)
+	if err != nil {
+		t.Fatalf("SearchMessages for tool_result: %v", err)
+	}
+	if len(results2) == 0 {
+		t.Error("FTS5 search should find 'postgres' in tool_result field")
+	}
+
+	results3, err := s.SearchMessages("migration", 10)
+	if err != nil {
+		t.Fatalf("SearchMessages for combined content+tool: %v", err)
+	}
+	if len(results3) == 0 {
+		t.Error("FTS5 search should find 'migration' in content or tool fields")
+	}
+}
+
+func TestMessagesFTS_Rebuild(t *testing.T) {
+	s := newTestStore(t)
+	db := s.DB()
+
+	session := &Session{
+		ID:        "rebuild-test-session",
+		UserID:    "user-1",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.UpsertSession(context.Background(), session); err != nil {
+		t.Fatalf("UpsertSession: %v", err)
+	}
+
+	msg := &Message{
+		SessionID:  "rebuild-test-session",
+		Role:       "assistant",
+		Content:    "Checking server health",
+		ToolName:   "bash",
+		ToolInput:  `{"command": "curl http://localhost:8080/health"}`,
+		ToolResult: `{"status": "ok", "uptime": 3600}`,
+		Timestamp:  time.Now(),
+	}
+	if err := s.InsertMessage(context.Background(), msg); err != nil {
+		t.Fatalf("InsertMessage: %v", err)
+	}
+
+	// Verify search works before rebuild
+	results, err := s.SearchMessages("health", 10)
+	if err != nil {
+		t.Fatalf("SearchMessages before rebuild: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("Search should find 'health' before rebuild")
+	}
+
+	// Run the migration (should be idempotent since schema already has the new columns)
+	if err := MigrateMessagesFTSExtended(db); err != nil {
+		t.Fatalf("MigrateMessagesFTSExtended: %v", err)
+	}
+
+	// Verify search still works after rebuild
+	results2, err := s.SearchMessages("health", 10)
+	if err != nil {
+		t.Fatalf("SearchMessages after rebuild: %v", err)
+	}
+	if len(results2) == 0 {
+		t.Error("Search should still find 'health' after rebuild")
+	}
+
+	// Verify tool fields are still searchable
+	results3, err := s.SearchMessages("uptime", 10)
+	if err != nil {
+		t.Fatalf("SearchMessages for tool_result after rebuild: %v", err)
+	}
+	if len(results3) == 0 {
+		t.Error("Search should find 'uptime' in tool_result after rebuild")
+	}
+}
+
+func TestSearchSessions(t *testing.T) {
+	s := newTestStore(t)
+
+	sessions := []*Session{
+		{ID: "search-sess-1", UserID: "user-1", Title: "Refactor database layer", Summary: "Replaced ORM with raw SQL queries for performance", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "search-sess-2", UserID: "user-1", Title: "Fix memory leak", Summary: "Fixed goroutine leak in WebSocket handler", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "search-sess-3", UserID: "user-2", Title: "Add caching layer", Summary: "Implemented Redis caching for database queries", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	}
+
+	for _, sess := range sessions {
+		if err := s.UpsertSession(context.Background(), sess); err != nil {
+			t.Fatalf("UpsertSession: %v", err)
+		}
+	}
+
+	results, err := s.SearchSessions("database", 10)
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if len(results) < 2 {
+		t.Errorf("SearchSessions 'database' found %d results, want at least 2", len(results))
+	}
+
+	for _, r := range results {
+		if r.SessionID == "" {
+			t.Error("SessionSearchResult.SessionID should not be empty")
+		}
+		if r.Rank == 0 {
+			t.Error("SessionSearchResult.Rank should not be zero")
+		}
+	}
+
+	emptyResults, err := s.SearchSessions("nonexistent_xyz_12345", 10)
+	if err != nil {
+		t.Fatalf("SearchSessions for nonexistent: %v", err)
+	}
+	if len(emptyResults) != 0 {
+		t.Errorf("SearchSessions for nonexistent should return 0 results, got %d", len(emptyResults))
+	}
+
+	nilResults, err := s.SearchSessions("", 10)
+	if err != nil {
+		t.Fatalf("SearchSessions for empty: %v", err)
+	}
+	if nilResults != nil {
+		t.Error("SearchSessions for empty query should return nil")
+	}
+}
+
+func TestSearchSessionsByUser(t *testing.T) {
+	s := newTestStore(t)
+
+	sessions := []*Session{
+		{ID: "user-sess-1", UserID: "alice", Title: "Setup CI pipeline", Summary: "Configured GitHub Actions for automated testing", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "user-sess-2", UserID: "bob", Title: "Setup deployment", Summary: "Configured GitHub Actions for deployment", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "user-sess-3", UserID: "alice", Title: "Code review", Summary: "Reviewed PR for authentication module", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	}
+
+	for _, sess := range sessions {
+		if err := s.UpsertSession(context.Background(), sess); err != nil {
+			t.Fatalf("UpsertSession: %v", err)
+		}
+	}
+
+	results, err := s.SearchSessionsByUser("GitHub", "alice", 10)
+	if err != nil {
+		t.Fatalf("SearchSessionsByUser: %v", err)
+	}
+
+	for _, r := range results {
+		if r.SessionID == "user-sess-2" {
+			t.Error("SearchSessionsByUser should not return bob's session")
+		}
+	}
+
+	if len(results) == 0 {
+		t.Error("SearchSessionsByUser should find alice's GitHub sessions")
+	}
+
+	defaultResults, err := s.SearchSessionsByUser("GitHub", "default", 10)
+	if err != nil {
+		t.Fatalf("SearchSessionsByUser with default user: %v", err)
+	}
+	if len(defaultResults) < 2 {
+		t.Errorf("SearchSessionsByUser with default user should search all sessions, got %d", len(defaultResults))
+	}
+}

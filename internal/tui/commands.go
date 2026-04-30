@@ -15,6 +15,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/plans"
 	"github.com/instructkr/smartclaw/internal/services"
@@ -85,7 +86,53 @@ func StartTUIWithClient(client *api.Client) error {
 	initColorProfile()
 
 	p := tea.NewProgram(
-		InitialModelWithClient(client),
+		InitialModelWithLocalClient(client),
+		tea.WithAltScreen(),
+	)
+
+	m, err := p.Run()
+	if err != nil {
+		return err
+	}
+
+	if model, ok := m.(Model); ok {
+		_ = model
+	}
+
+	return nil
+}
+
+func StartTUIWithClientAndLearningLoop(client *api.Client, loop *learning.LearningLoop) error {
+	initColorProfile()
+
+	m := InitialModelWithLocalClient(client)
+	m.learningLoop = loop
+
+	p := tea.NewProgram(
+		m,
+		tea.WithAltScreen(),
+	)
+
+	result, err := p.Run()
+	if err != nil {
+		return err
+	}
+
+	if model, ok := result.(Model); ok {
+		_ = model
+	}
+
+	return nil
+}
+
+func StartTUIWithRemoteClient(baseURL, token, model string) error {
+	initColorProfile()
+
+	remoteClient := NewRemoteClient(baseURL, token)
+	remoteClient.SetModel(model)
+
+	p := tea.NewProgram(
+		InitialModelWithClient(remoteClient),
 		tea.WithAltScreen(),
 	)
 

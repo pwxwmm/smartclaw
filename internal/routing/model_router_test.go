@@ -2,6 +2,7 @@ package routing
 
 import (
 	"testing"
+	"time"
 )
 
 func TestNewModelRouter(t *testing.T) {
@@ -208,5 +209,52 @@ func TestSetConfig(t *testing.T) {
 	got := r.GetConfig()
 	if got.FastModel != "custom-fast" {
 		t.Errorf("expected custom-fast, got %s", got.FastModel)
+	}
+}
+
+func TestArenaVotesApplyToRouter(t *testing.T) {
+	cfg := DefaultRoutingConfig()
+	router := NewModelRouter(cfg)
+
+	votes := NewArenaVotes()
+	votes.Record(ArenaVote{
+		WinnerModel: "model-a",
+		LoserModel:  "model-b",
+		Prompt:      "test prompt",
+		Timestamp:   time.Now(),
+	})
+	votes.Record(ArenaVote{
+		WinnerModel: "model-a",
+		LoserModel:  "model-c",
+		Prompt:      "another prompt",
+		Timestamp:   time.Now(),
+	})
+
+	votes.ApplyToRouter(router)
+
+	stats := router.GetStats()
+
+	aStats, ok := stats.ByModel["model-a"]
+	if !ok {
+		t.Fatal("expected model-a in stats")
+	}
+	if aStats.TotalCalls != 2 || aStats.Successes != 2 {
+		t.Errorf("expected model-a 2 calls 2 successes, got %d calls %d successes", aStats.TotalCalls, aStats.Successes)
+	}
+
+	bStats, ok := stats.ByModel["model-b"]
+	if !ok {
+		t.Fatal("expected model-b in stats")
+	}
+	if bStats.TotalCalls != 1 || bStats.Successes != 0 {
+		t.Errorf("expected model-b 1 call 0 successes, got %d calls %d successes", bStats.TotalCalls, bStats.Successes)
+	}
+
+	cStats, ok := stats.ByModel["model-c"]
+	if !ok {
+		t.Fatal("expected model-c in stats")
+	}
+	if cStats.TotalCalls != 1 || cStats.Successes != 0 {
+		t.Errorf("expected model-c 1 call 0 successes, got %d calls %d successes", cStats.TotalCalls, cStats.Successes)
 	}
 }

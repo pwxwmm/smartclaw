@@ -51,6 +51,8 @@ type SettingsSync struct {
 	maxVersions    int
 	lastSyncTime   time.Time
 	syncInterval   time.Duration
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 func NewSettingsSync() (*SettingsSync, error) {
@@ -60,6 +62,7 @@ func NewSettingsSync() (*SettingsSync, error) {
 	}
 
 	settingsPath := filepath.Join(home, ".smartclaw", "settings.json")
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 
 	s := &SettingsSync{
 		settingsPath:   settingsPath,
@@ -67,6 +70,8 @@ func NewSettingsSync() (*SettingsSync, error) {
 		versionHistory: make([]SettingsVersion, 0),
 		maxVersions:    10,
 		syncInterval:   5 * time.Minute,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
 	}
 
 	s.load()
@@ -195,7 +200,7 @@ func (s *SettingsSync) UpdateSettings(ctx context.Context, updates map[string]an
 	}
 
 	if s.syncEnabled && s.remoteURL != "" {
-		utils.Go(func() { s.Sync(context.Background()) })
+		utils.Go(func() { s.Sync(s.shutdownCtx) })
 	}
 
 	return nil
@@ -383,8 +388,16 @@ func (s *SettingsSync) StartAutoSync(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.shutdownCtx.Done():
+			return
 		case <-ticker.C:
 			s.Sync(ctx)
 		}
+	}
+}
+
+func (s *SettingsSync) Stop() {
+	if s.shutdownCancel != nil {
+		s.shutdownCancel()
 	}
 }

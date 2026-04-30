@@ -15,25 +15,29 @@ import (
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/rl"
 	"github.com/instructkr/smartclaw/internal/runtime"
+	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/utils"
 )
 
 type BatchConfig struct {
-	PromptsFile  string
-	OutputDir    string
-	Parallelism  int
-	Model        string
-	MaxTokens    int
-	Timeout      time.Duration
-	SystemPrompt string
+	PromptsFile   string
+	OutputDir     string
+	Parallelism   int
+	Model         string
+	MaxTokens     int
+	Timeout       time.Duration
+	SystemPrompt  string
+	EnableTools   bool
+	MaxToolRounds int
 }
 
 func DefaultBatchConfig() BatchConfig {
 	return BatchConfig{
-		Parallelism: 4,
-		Model:       "claude-sonnet-4-5",
-		MaxTokens:   4096,
-		Timeout:     120 * time.Second,
+		Parallelism:   4,
+		Model:         "claude-sonnet-4-5",
+		MaxTokens:     4096,
+		Timeout:       120 * time.Second,
+		MaxToolRounds: 5,
 	}
 }
 
@@ -44,15 +48,16 @@ type PromptItem struct {
 }
 
 type BatchResult struct {
-	ID        string        `json:"id"`
-	Prompt    string        `json:"prompt"`
-	Response  string        `json:"response"`
-	Model     string        `json:"model"`
-	Duration  time.Duration `json:"duration"`
-	TokensIn  int           `json:"tokens_in"`
-	TokensOut int           `json:"tokens_out"`
-	Cost      float64       `json:"cost"`
-	Error     string        `json:"error,omitempty"`
+	ID         string        `json:"id"`
+	Prompt     string        `json:"prompt"`
+	Response   string        `json:"response"`
+	Model      string        `json:"model"`
+	Duration   time.Duration `json:"duration"`
+	TokensIn   int           `json:"tokens_in"`
+	TokensOut  int           `json:"tokens_out"`
+	Cost       float64       `json:"cost"`
+	Error      string        `json:"error,omitempty"`
+	ToolCalls  int           `json:"tool_calls,omitempty"`
 }
 
 type BatchStats struct {
@@ -187,16 +192,93 @@ func (r *Runner) executePrompt(ctx context.Context, prompt PromptItem) *BatchRes
 	}
 
 	var content string
+	totalTokensIn := resp.Usage.InputTokens
+	totalTokensOut := resp.Usage.OutputTokens
+	toolCallCount := 0
+
 	for _, block := range resp.Content {
 		if block.Type == "text" {
 			content += block.Text
 		}
 	}
 
+	if r.config.EnableTools {
+		maxRounds := r.config.MaxToolRounds
+		if maxRounds <= 0 {
+			maxRounds = 5
+		}
+
+		for round := 0; round < maxRounds; round++ {
+			var toolUses []api.ContentBlock
+			for _, block := range resp.Content {
+				if block.Type == "tool_use" {
+					toolUses = append(toolUses, block)
+				}
+			}
+
+			if len(toolUses) == 0 {
+				break
+			}
+
+			assistantContent := make([]api.ContentBlock, len(resp.Content))
+			copy(assistantContent, resp.Content)
+			messages = append(messages, api.Message{Role: "assistant", Content: assistantContent})
+
+			var toolResults []api.ContentBlock
+			for _, tu := range toolUses {
+				toolCallCount++
+				toolName := tu.Name
+				toolInput := tu.Input
+
+				toolResultContent := ""
+				result2, err := tools.Execute(ctx, toolName, toolInput)
+				if err != nil {
+					toolResultContent = fmt.Sprintf("Error: %s", err.Error())
+					toolResults = append(toolResults, api.ContentBlock{
+						Type:      "tool_result",
+						ToolUseID: tu.ID,
+						Content:   toolResultContent,
+						IsError:   true,
+					})
+				} else {
+					resultBytes, marshalErr := json.Marshal(result2)
+					if marshalErr != nil {
+						toolResultContent = fmt.Sprintf("%v", result2)
+					} else {
+						toolResultContent = string(resultBytes)
+					}
+					toolResults = append(toolResults, api.ContentBlock{
+						Type:      "tool_result",
+						ToolUseID: tu.ID,
+						Content:   toolResultContent,
+					})
+				}
+			}
+
+			messages = append(messages, api.Message{Role: "user", Content: toolResults})
+
+			resp, err = r.client.CreateMessageWithSystem(ctx, messages, systemParam)
+			if err != nil {
+				result.Error = fmt.Sprintf("tool round %d: %s", round, err.Error())
+				break
+			}
+
+			totalTokensIn += resp.Usage.InputTokens
+			totalTokensOut += resp.Usage.OutputTokens
+
+			for _, block := range resp.Content {
+				if block.Type == "text" {
+					content += block.Text
+				}
+			}
+		}
+	}
+
 	result.Response = content
-	result.TokensIn = resp.Usage.InputTokens
-	result.TokensOut = resp.Usage.OutputTokens
-	result.Cost = runtime.CalculateCost(resp.Usage)
+	result.TokensIn = totalTokensIn
+	result.TokensOut = totalTokensOut
+	result.Cost = runtime.CalculateCost(api.Usage{InputTokens: totalTokensIn, OutputTokens: totalTokensOut})
+	result.ToolCalls = toolCallCount
 
 	return result
 }

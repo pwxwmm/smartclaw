@@ -4,6 +4,7 @@
 
   var notifIdCounter = 0;
   var desktopPermissionRequested = false;
+  var expireInterval = null;
 
   var levelIcons = {
     info:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--info)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
@@ -95,6 +96,7 @@
     SC.notifications.forEach(function(notif) {
       var item = document.createElement('div');
       item.className = 'notif-item' + (notif.read ? ' read' : '');
+      item.setAttribute('role', 'menuitem');
       item.innerHTML =
         '<div class="notif-icon">' + (levelIcons[notif.level] || levelIcons.info) + '</div>' +
         '<div class="notif-body">' +
@@ -182,7 +184,14 @@
       SC.clearNotifications();
     });
 
-    setInterval(maybeExpireNotifications, 60000);
+    expireInterval = setInterval(maybeExpireNotifications, 60000);
     updateBadge();
+  };
+
+  SC.destroyNotifications = function() {
+    if (expireInterval) {
+      clearInterval(expireInterval);
+      expireInterval = null;
+    }
   };
 })();

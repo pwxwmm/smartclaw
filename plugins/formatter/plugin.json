@@ -1,0 +1,13 @@
+{
+  "name": "formatter",
+  "version": "1.0.0",
+  "description": "Code formatting plugin using gofmt/prettier",
+  "author": "SmartClaw",
+  "type": "tool",
+  "main": "main.sh",
+  "tools": ["format"],
+  "config": {
+    "go_formatter": "gofmt",
+    "js_formatter": "prettier"
+  }
+}

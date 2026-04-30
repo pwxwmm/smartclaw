@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,52 @@ import (
 	"sync"
 	"time"
 )
+
+// ProfileLookup is the interface that agents.ProfileRegistry satisfies.
+// We use an interface to avoid importing the agents package (which
+// imports tui, creating a circular dependency).
+type ProfileLookup interface {
+	Get(name string) (agentType string, systemPrompt string, model string, tools []string, disallowedTools []string, permissionMode string, maxTurns int, err error)
+	List() []ProfileEntry
+}
+
+// ProfileEntry is a lightweight representation of an agent profile
+// used to avoid importing the agents package.
+type ProfileEntry struct {
+	AgentType       string
+	WhenToUse       string
+	SystemPrompt    string
+	Tools           []string
+	DisallowedTools []string
+	Model           string
+	PermissionMode  string
+	MaxTurns        int
+}
+
+// AgentSwitchConfig mirrors runtime.AgentConfig to avoid import cycles.
+type AgentSwitchConfig struct {
+	AgentType       string
+	SystemPrompt    string
+	Model           string
+	AllowedTools    []string
+	DisallowedTools []string
+	PermissionMode  string
+	MaxTurns        int
+}
+
+var globalProfileRegistry ProfileLookup
+var globalAgentSwitchFunc func(*AgentSwitchConfig) error
+
+// SetGlobalProfileRegistry registers the profile registry so that the
+// "switch" operation can look up agent profiles by name.
+func SetGlobalProfileRegistry(reg ProfileLookup) {
+	globalProfileRegistry = reg
+}
+
+// SetGlobalAgentSwitchFunc registers the callback that applies an AgentSwitchConfig.
+func SetGlobalAgentSwitchFunc(fn func(*AgentSwitchConfig) error) {
+	globalAgentSwitchFunc = fn
+}
 
 type AgentDefinition struct {
 	Name        string            `json:"name"`
@@ -58,7 +105,7 @@ func (t *AgentTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"operation": map[string]any{
 				"type":        "string",
-				"enum":        []string{"spawn", "resume", "list", "stop", "output"},
+				"enum":        []string{"spawn", "resume", "list", "stop", "output", "switch"},
 				"description": "Operation to perform",
 			},
 			"agent_type": map[string]any{
@@ -111,6 +158,8 @@ func (t *AgentTool) Execute(ctx context.Context, input map[string]any) (any, err
 		return t.stopAgent(input)
 	case "output":
 		return t.getOutput(input)
+	case "switch":
+		return t.switchAgent(input)
 	default:
 		return nil, &Error{Code: "INVALID_OPERATION", Message: "unknown operation: " + operation}
 	}
@@ -313,6 +362,49 @@ func (t *AgentTool) getOutput(input map[string]any) (any, error) {
 		"status":    instance.Status,
 		"output":    instance.Output,
 		"exit_code": instance.ExitCode,
+	}, nil
+}
+
+func (t *AgentTool) switchAgent(input map[string]any) (any, error) {
+	agentType, _ := input["agent_type"].(string)
+	if agentType == "" {
+		return nil, ErrRequiredField("agent_type")
+	}
+
+	if globalProfileRegistry == nil {
+		return nil, &Error{Code: "NOT_CONFIGURED", Message: "agent profile registry not configured"}
+	}
+
+	at, systemPrompt, model, tools, disallowedTools, permMode, maxTurns, err := globalProfileRegistry.Get(agentType)
+	if err != nil {
+		return nil, &Error{Code: "NOT_FOUND", Message: err.Error()}
+	}
+
+	cfg := &AgentSwitchConfig{
+		AgentType:       at,
+		SystemPrompt:    systemPrompt,
+		Model:           model,
+		AllowedTools:    tools,
+		DisallowedTools: disallowedTools,
+		PermissionMode:  permMode,
+		MaxTurns:        maxTurns,
+	}
+
+	if globalAgentSwitchFunc != nil {
+		if applyErr := globalAgentSwitchFunc(cfg); applyErr != nil {
+			return nil, &Error{Code: "SWITCH_FAILED", Message: applyErr.Error()}
+		}
+	}
+
+	slog.Info("agent: switched via tool", "agent", at, "permission_mode", permMode)
+
+	return map[string]any{
+		"success":        true,
+		"agent_type":     at,
+		"system_prompt":  systemPrompt,
+		"model":          model,
+		"permission_mode": permMode,
+		"max_turns":      maxTurns,
 	}, nil
 }
 

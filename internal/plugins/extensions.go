@@ -320,7 +320,7 @@ func (t *PluginTool) Execute(ctx context.Context, input map[string]any) (any, er
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("tool failed: %s", string(exitErr.Stderr))
+			return nil, fmt.Errorf("tool failed: %w: %s", err, string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("tool failed: %w", err)
 	}
