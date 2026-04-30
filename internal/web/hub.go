@@ -15,10 +15,12 @@ type Hub struct {
 }
 
 type Client struct {
-	ID     string
-	UserID string // user identity, from ?user=xxx URL param
-	hub    *Hub
-	send   chan []byte
+	ID            string
+	UserID        string
+	SessionID     string
+	hub           *Hub
+	send          chan []byte
+	sendImmediate chan []byte
 }
 
 func NewHub() *Hub {
@@ -55,7 +57,8 @@ func (h *Hub) Run() {
 					h.mu.RUnlock()
 					h.mu.Lock()
 					delete(h.clients, client)
-					close(client.send)
+			close(client.send)
+				close(client.sendImmediate)
 					h.mu.Unlock()
 					h.mu.RLock()
 				}
@@ -88,9 +91,10 @@ func NewClient(hub *Hub, userID string) *Client {
 		userID = "default"
 	}
 	return &Client{
-		ID:     uuid.New().String()[:8],
-		UserID: userID,
-		hub:    hub,
-		send:   make(chan []byte, 256),
+		ID:            uuid.New().String()[:8],
+		UserID:        userID,
+		hub:           hub,
+		send:          make(chan []byte, 256),
+		sendImmediate: make(chan []byte, 256),
 	}
 }

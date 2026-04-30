@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
@@ -67,6 +68,51 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 		messages = append(messages, api.Message{Role: m.Role, Content: m.Content})
 	}
 
+	if len(msg.Images) > 0 {
+		var imageData []struct {
+			Data string `json:"data"`
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(msg.Images, &imageData) == nil && len(imageData) > 0 {
+			if len(messages) > 0 {
+				lastMsg := messages[len(messages)-1]
+				if reqClient.IsOpenAI {
+					var contentBlocks []map[string]any
+					for _, img := range imageData {
+						contentBlocks = append(contentBlocks, map[string]any{
+							"type": "image_url",
+							"image_url": map[string]string{
+								"url": "data:" + img.Type + ";base64," + img.Data,
+							},
+						})
+					}
+					contentBlocks = append(contentBlocks, map[string]any{
+						"type": "text",
+						"text": lastMsg.Content,
+					})
+					messages[len(messages)-1] = api.Message{Role: "user", Content: contentBlocks}
+				} else {
+					var contentBlocks []map[string]any
+					for _, img := range imageData {
+						contentBlocks = append(contentBlocks, map[string]any{
+							"type": "image",
+							"source": map[string]any{
+								"type":       "base64",
+								"media_type": img.Type,
+								"data":       img.Data,
+							},
+						})
+					}
+					contentBlocks = append(contentBlocks, map[string]any{
+						"type": "text",
+						"text": lastMsg.Content,
+					})
+					messages[len(messages)-1] = api.Message{Role: "user", Content: contentBlocks}
+				}
+			}
+		}
+	}
+
 	var systemPrompt string
 	if h.memMgr != nil {
 		userMem := h.memMgr.ForUser(client.UserID)
@@ -102,8 +148,6 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 						fullContentBuilder.WriteString(payload.Delta.Text)
 						openaiOutputChars += len(payload.Delta.Text)
 						h.sendToClient(client, WSResponse{Type: "token", Content: payload.Delta.Text})
-					} else if payload.Delta.Type == "thinking_delta" && payload.Delta.Thinking != "" {
-						h.sendToClient(client, WSResponse{Type: "thinking", Content: payload.Delta.Thinking})
 					}
 				}
 			case "message_stop":
@@ -193,11 +237,13 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 
 		toolResults := make([]api.ContentBlock, 0, len(toolUseBlocks))
 		for _, block := range toolUseBlocks {
+			annotations := generateEditAnnotations(block.Name, block.Input)
 			h.sendToClient(client, WSResponse{
-				Type:  "tool_start",
-				ID:    block.ID,
-				Tool:  block.Name,
-				Input: block.Input,
+				Type:        "tool_start",
+				ID:          block.ID,
+				Tool:        block.Name,
+				Input:       block.Input,
+				Annotations: annotations,
 			})
 
 			isAgentTool := block.Name == "agent"
@@ -291,9 +337,10 @@ func (h *Handler) handleChat(client *Client, msg WSMessage) {
 					Content:   output,
 				})
 				h.sendToClient(client, WSResponse{
-					Type:   "tool_output",
-					ID:     block.ID,
-					Output: output,
+					Type:        "tool_output",
+					ID:          block.ID,
+					Output:      output,
+					Annotations: annotations,
 				})
 			}
 
@@ -426,4 +473,86 @@ func resultToString(result any) string {
 		pool.PutJSONEncoder(pe)
 		return s
 	}
+}
+
+func generateEditAnnotations(toolName string, input map[string]any) []DiffAnnotation {
+	if toolName != "edit_file" && toolName != "diff_edit" && toolName != "line_edit" {
+		return nil
+	}
+
+	oldStr, _ := input["old_string"].(string)
+	newStr, _ := input["new_string"].(string)
+	if oldStr == "" && newStr == "" {
+		return nil
+	}
+
+	reason := annotateDiff(oldStr, newStr)
+	return []DiffAnnotation{{HunkIndex: 0, Reason: reason}}
+}
+
+func annotateDiff(oldStr, newStr string) string {
+	oldLower := strings.ToLower(oldStr)
+	newLower := strings.ToLower(newStr)
+
+	hasOldErr := strings.Contains(oldLower, "error") || strings.Contains(oldLower, "err")
+	hasNewErr := strings.Contains(newLower, "error") || strings.Contains(newLower, "err")
+	hasNewReturn := strings.Contains(newLower, "return")
+
+	if !hasOldErr && hasNewErr {
+		return "Added error handling for failure path"
+	}
+	if !hasNewErr && hasOldErr {
+		return "Simplified error handling"
+	}
+	if hasNewReturn && !strings.Contains(oldLower, "return") {
+		return "Added early return to prevent fall-through"
+	}
+	if len(newStr) > len(oldStr) {
+		return "Extended functionality with additional logic"
+	}
+	if len(oldStr) > len(newStr) {
+		return "Simplified by removing redundant code"
+	}
+	if isRenameOnly(oldStr, newStr) {
+		return "Renamed for clarity"
+	}
+	return "Modified logic"
+}
+
+func isRenameOnly(oldStr, newStr string) bool {
+	oldTokens := tokenizeIdentifiers(oldStr)
+	newTokens := tokenizeIdentifiers(newStr)
+	if len(oldTokens) != len(newTokens) {
+		return false
+	}
+	renames := 0
+	for i := range oldTokens {
+		if oldTokens[i] != newTokens[i] {
+			renames++
+		}
+	}
+	return renames > 0 && renames <= 2
+}
+
+func tokenizeIdentifiers(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	for _, r := range s {
+		if isIdentRune(r) {
+			cur.WriteRune(r)
+		} else {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
+func isIdentRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }

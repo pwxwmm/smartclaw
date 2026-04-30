@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,21 +15,31 @@ import (
 
 	"github.com/instructkr/smartclaw/internal/acp"
 	"github.com/instructkr/smartclaw/internal/adapters"
+	"github.com/instructkr/smartclaw/internal/agents"
 	"github.com/instructkr/smartclaw/internal/api"
+	apiserver "github.com/instructkr/smartclaw/internal/api/server"
 	"github.com/instructkr/smartclaw/internal/auth"
 	"github.com/instructkr/smartclaw/internal/batch"
 	"github.com/instructkr/smartclaw/internal/constants"
+	"github.com/instructkr/smartclaw/internal/costguard"
 	"github.com/instructkr/smartclaw/internal/gateway"
 	"github.com/instructkr/smartclaw/internal/gateway/platform"
 	"github.com/instructkr/smartclaw/internal/hooks"
 	"github.com/instructkr/smartclaw/internal/lifecycle"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/logger"
+	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/permissions"
 	"github.com/instructkr/smartclaw/internal/rl"
 	"github.com/instructkr/smartclaw/internal/runtime"
+	"github.com/instructkr/smartclaw/internal/session"
+	"github.com/instructkr/smartclaw/internal/skills"
+	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
 	"github.com/instructkr/smartclaw/internal/tui"
+	"github.com/instructkr/smartclaw/internal/voice"
 	"github.com/instructkr/smartclaw/internal/web"
 )
 
@@ -164,17 +175,29 @@ func init() {
 
 			model := viper.GetString("model")
 			baseURL := viper.GetString("base_url")
+			isOpenAIFlag := viper.GetBool("openai")
+
+			baseURL = sanitizeBaseURLCLI(baseURL)
+			if !isOpenAIFlag && isBaseURLOpenAICompatible(baseURL) {
+				isOpenAIFlag = true
+			}
 
 			var apiClient *api.Client
 			if apiKey != "" {
-				apiClient = api.NewClientWithModel(apiKey, baseURL, model)
-				if viper.GetBool("openai") {
-					apiClient.SetOpenAI(true)
+				if isOpenAIFlag {
+					apiClient = api.NewOpenAICompatibleClient(apiKey, baseURL, model)
+				} else {
+					apiClient = api.NewClientWithModel(apiKey, baseURL, model)
 				}
+				fmt.Fprintf(os.Stderr, "SmartClaw: baseURL=%s openai=%v model=%s\n", baseURL, isOpenAIFlag, model)
 			}
 
 			workDir, _ := os.Getwd()
-			server := web.NewWebServer(webPort, workDir, apiClient, webNoAuth)
+			server, err := web.NewWebServer(webPort, workDir, apiClient, webNoAuth)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 			lifecycle.Register(server)
 			if err := server.Start(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -185,6 +208,177 @@ func init() {
 	webCmd.Flags().IntVar(&webPort, "port", 8080, "WebUI server port")
 	webCmd.Flags().BoolVar(&webNoAuth, "no-auth", false, "Disable authentication for local development")
 	rootCmd.AddCommand(webCmd)
+
+	var servePort int
+	var serveHost string
+	var serveNoAuth bool
+	var serveToken string
+	serveCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start SmartClaw API-only server (no static files)",
+		Long:  "Start an API-only HTTP server for remote client access. No WebUI, no static files — just the REST API with CORS headers enabled.",
+		Run: func(cmd *cobra.Command, args []string) {
+			apiKey := viper.GetString("api_key")
+			if apiKey == "" {
+				apiKey = os.Getenv("ANTHROPIC_API_KEY")
+			}
+
+			model := viper.GetString("model")
+			baseURL := viper.GetString("url")
+
+			var apiClient *api.Client
+			if apiKey != "" {
+				apiClient = api.NewClientWithModel(apiKey, baseURL, model)
+				if viper.GetBool("openai") {
+					apiClient.SetOpenAI(true)
+				}
+			}
+
+			workDir, _ := os.Getwd()
+			_ = workDir
+
+			mm, mmErr := memory.NewMemoryManager()
+			if mmErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: memory manager init failed: %v\n", mmErr)
+			} else {
+				tools.SetMemoryManagerForTools(mm)
+				tools.SetIncidentMemory(mm.GetIncidentMemory())
+			}
+
+			adapters.InitInnovationPackages(mm, apiClient)
+			if mm != nil && apiClient != nil {
+				mm.SetLLMClient(apiClient)
+			}
+			lifecycle.Register(adapters.NewInnovationShutdown())
+
+			if shutdown, err := observability.InitOTLP(); err == nil {
+				defer shutdown(context.Background())
+			}
+
+			var st *store.Store
+			if mm != nil {
+				st = mm.GetStore()
+			}
+			if st == nil {
+				var storeErr error
+				st, storeErr = store.NewStore()
+				if storeErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: store init failed: %v\n", storeErr)
+				}
+			}
+
+			if st != nil {
+				embedder := store.NewDefaultEmbedder()
+				store.SetEmbedder(embedder)
+			}
+
+			learningLoop := buildLearningLoop(apiClient, mm, st)
+
+			if st != nil {
+				tools.GetTeamRegistry().SetStore(st)
+				tools.GetTeamRegistry().LoadFromStore(context.Background())
+			}
+
+			serveProfileRegistry := agents.NewProfileRegistry()
+			serveAgentPermMgr := permissions.NewAgentPermissionManager()
+			for _, profile := range serveProfileRegistry.List() {
+				permSet := permissions.NewAgentPermissionSet(
+					profile.AgentType,
+					profile.Tools,
+					profile.DisallowedTools,
+					permissions.AgentPermissionMode(profile.PermissionMode),
+				)
+				serveAgentPermMgr.Register(permSet)
+			}
+
+			engineFactory := func() *runtime.QueryEngine {
+				engine := runtime.NewQueryEngine(apiClient, runtime.QueryConfig{})
+				engine.SetAgentPermissionManager(serveAgentPermMgr)
+				return engine
+			}
+			gw := gateway.NewGateway(engineFactory, mm, learningLoop)
+
+			tools.SetGlobalProfileRegistry(&profileRegistryAdapter{reg: serveProfileRegistry})
+			tools.SetGlobalAgentSwitchFunc(func(cfg *tools.AgentSwitchConfig) error {
+				slog.Info("serve: agent switch requested", "agent", cfg.AgentType)
+				rtlCfg := &runtime.AgentConfig{
+					AgentType:       cfg.AgentType,
+					SystemPrompt:    cfg.SystemPrompt,
+					Model:           cfg.Model,
+					AllowedTools:    cfg.AllowedTools,
+					DisallowedTools: cfg.DisallowedTools,
+					PermissionMode:  cfg.PermissionMode,
+					MaxTurns:        cfg.MaxTurns,
+				}
+				gw.SetCurrentAgentConfig(rtlCfg)
+				return nil
+			})
+
+			sessMgr, sessErr := session.NewManager()
+			if sessErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: session manager init failed: %v\n", sessErr)
+			}
+
+			mcpReg := mcp.NewMCPServerRegistry()
+
+			addr := fmt.Sprintf("%s:%d", serveHost, servePort)
+			apiSrv, err := apiserver.NewAPIServer(gw, st, mm, sessMgr, mcpReg, serveNoAuth, addr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			if serveToken != "" {
+				apiSrv.SetAPIKey(serveToken)
+			}
+
+			cg := costguard.NewCostGuard(costguard.DefaultBudgetConfig())
+			if st != nil {
+				cg.SetDB(st.DB())
+			}
+			apiSrv.WithCostGuard(cg)
+
+			if st != nil {
+				skillTracker := learning.NewSkillTracker(st)
+				apiSrv.WithSkillTracker(skillTracker)
+			}
+
+			if learningLoop != nil {
+				if improver := learningLoop.GetSkillImprover(); improver != nil {
+					apiSrv.WithSkillImprover(improver)
+				}
+				if writer := learningLoop.GetSkillWriter(); writer != nil {
+					apiSrv.WithSkillWriter(writer)
+				}
+			}
+
+			skillsHomeDir, _ := os.UserHomeDir()
+			skillsDir := filepath.Join(skillsHomeDir, ".smartclaw", "skills")
+			skillRegistry := skills.NewRegistry(skillsDir, st)
+			if err := skillRegistry.BuildIndex(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: skill registry build failed: %v\n", err)
+			}
+			apiSrv.WithSkillRegistry(skillRegistry)
+
+			if mm != nil && st != nil {
+				ume := memory.NewUserModelingEngine(st, mm.GetPromptMemory(), "default")
+				apiSrv.WithUserModelEngine(ume)
+			}
+
+			lifecycle.Register(apiSrv)
+			if err := apiSrv.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+		lifecycle.WaitForSignal()
+		os.Exit(0)
+	},
+	}
+	serveCmd.Flags().IntVar(&servePort, "port", 8080, "API server port")
+	serveCmd.Flags().StringVar(&serveHost, "host", "localhost", "API server bind host")
+	serveCmd.Flags().BoolVar(&serveNoAuth, "no-auth", false, "Disable authentication for local development")
+	serveCmd.Flags().StringVar(&serveToken, "token", "", "Bearer token for API authentication")
+	rootCmd.AddCommand(serveCmd)
 
 	acpCmd := &cobra.Command{
 		Use:   "acp",
@@ -394,6 +588,11 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 			adapters.InitInnovationPackages(mm, client)
 			if mm != nil && client != nil {
 				mm.SetLLMClient(client)
+				llmAdapter := learning.NewAPIClientAdapter(client, "")
+				tools.SetLLMClientForConversationRecall(llmAdapter)
+			}
+			if mm != nil {
+				tools.SetStoreForConversationRecall(mm.GetStore())
 			}
 			lifecycle.Register(adapters.NewInnovationShutdown())
 
@@ -401,14 +600,56 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 				defer shutdown(context.Background())
 			}
 
+			var gwSt *store.Store
+			if mm != nil {
+				gwSt = mm.GetStore()
+			}
+
+			gwLearningLoop := buildLearningLoop(client, mm, gwSt)
+
+			if gwSt != nil {
+				tools.GetTeamRegistry().SetStore(gwSt)
+				tools.GetTeamRegistry().LoadFromStore(context.Background())
+			}
+
+			gwProfileRegistry := agents.NewProfileRegistry()
+			gwAgentPermMgr := permissions.NewAgentPermissionManager()
+			for _, profile := range gwProfileRegistry.List() {
+				permSet := permissions.NewAgentPermissionSet(
+					profile.AgentType,
+					profile.Tools,
+					profile.DisallowedTools,
+					permissions.AgentPermissionMode(profile.PermissionMode),
+				)
+				gwAgentPermMgr.Register(permSet)
+			}
+
 			gw := gateway.NewGateway(
 				func() *runtime.QueryEngine {
-					return runtime.NewQueryEngine(client, runtime.QueryConfig{SystemPrompt: cfg.SystemPrompt})
+					engine := runtime.NewQueryEngine(client, runtime.QueryConfig{SystemPrompt: cfg.SystemPrompt})
+					engine.SetAgentPermissionManager(gwAgentPermMgr)
+					return engine
 				},
-				nil,
-				nil,
+				mm,
+				gwLearningLoop,
 			)
 			lifecycle.Register(gw)
+
+			tools.SetGlobalProfileRegistry(&profileRegistryAdapter{reg: gwProfileRegistry})
+			tools.SetGlobalAgentSwitchFunc(func(cfg *tools.AgentSwitchConfig) error {
+				slog.Info("gateway: agent switch requested", "agent", cfg.AgentType)
+				rtlCfg := &runtime.AgentConfig{
+					AgentType:       cfg.AgentType,
+					SystemPrompt:    cfg.SystemPrompt,
+					Model:           cfg.Model,
+					AllowedTools:    cfg.AllowedTools,
+					DisallowedTools: cfg.DisallowedTools,
+					PermissionMode:  cfg.PermissionMode,
+					MaxTurns:        cfg.MaxTurns,
+				}
+				gw.SetCurrentAgentConfig(rtlCfg)
+				return nil
+			})
 
 			for _, adapterName := range gatewayAdapters {
 				switch adapterName {
@@ -417,7 +658,7 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 						fmt.Fprintln(os.Stderr, "Error: --telegram-token required for telegram adapter")
 						os.Exit(1)
 					}
-					ta := platform.NewTelegramAdapter(telegramToken, gw)
+					ta := platform.NewTelegramAdapter(telegramToken, gw, buildVoiceConfig())
 					gw.GetDelivery().RegisterAdapter(ta)
 					go func() {
 						if err := ta.Run(); err != nil {
@@ -454,6 +695,7 @@ multiple platforms (Telegram, Slack, Web, Terminal) to the agent.
 
 			fmt.Fprintf(os.Stderr, "Gateway running with adapters: %v\n", gatewayAdapters)
 			lifecycle.WaitForSignal()
+			os.Exit(0)
 		},
 	}
 	gatewayCmd.Flags().StringSliceVar(&gatewayAdapters, "adapters", []string{}, "Platform adapters (telegram, slack, web, terminal)")
@@ -576,4 +818,83 @@ func getClientConfig() (*ClientConfig, error) {
 func createHookManager() *hooks.HookManager {
 	workDir, _ := os.Getwd()
 	return hooks.NewHookManager(workDir, "default-session")
+}
+
+func buildVoiceConfig() *voice.VoiceConfig {
+	apiKey := os.Getenv("VOICE_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+	if apiKey == "" {
+		return nil
+	}
+	return &voice.VoiceConfig{
+		Mode:             voice.VoiceModePushToTalk,
+		Language:         getEnvOrDefault("VOICE_LANGUAGE", "en"),
+		Model:            getEnvOrDefault("VOICE_MODEL", "whisper-1"),
+		ApiKey:           apiKey,
+		ApiEndpoint:      os.Getenv("VOICE_API_ENDPOINT"),
+		SampleRate:       16000,
+		RecordingTimeout: 30,
+		SilenceThreshold: 3,
+	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func sanitizeBaseURLCLI(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u := strings.TrimRight(rawURL, "#?/&")
+	u = strings.TrimSuffix(u, "/chat/completions")
+	u = strings.TrimSuffix(u, "/v1/messages")
+	return u
+}
+
+func isBaseURLOpenAICompatible(baseURL string) bool {
+	if baseURL == "" {
+		return false
+	}
+	if strings.Contains(baseURL, "/chat/completions") {
+		return true
+	}
+	if strings.Contains(baseURL, "/v1") && !strings.Contains(baseURL, "anthropic.com") {
+		return true
+	}
+	return false
+}
+
+func buildLearningLoop(apiClient *api.Client, mm *memory.MemoryManager, st *store.Store) *learning.LearningLoop {
+	if apiClient == nil {
+		return nil
+	}
+
+	llmAdapter := learning.NewAPIClientAdapter(apiClient, "")
+	home, _ := os.UserHomeDir()
+	skillsDir := filepath.Join(home, ".smartclaw", "skills")
+
+	var promptMem learning.PromptMemoryWriter
+	if mm != nil {
+		promptMem = mm.GetPromptMemory()
+	}
+
+	loop := learning.NewLearningLoop(llmAdapter, promptMem, skillsDir)
+
+	if st != nil {
+		tracker := learning.NewSkillTracker(st)
+		loop.SetSkillTracker(tracker)
+
+		auditor := learning.NewSkillAuditor(st, skillsDir)
+		loop.SetSkillAuditor(auditor)
+
+		tools.SetGlobalSkillTracker(tracker)
+	}
+
+	return loop
 }

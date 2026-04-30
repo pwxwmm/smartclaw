@@ -15,76 +15,33 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
 
 	"github.com/instructkr/smartclaw/internal/adapters"
+	"github.com/instructkr/smartclaw/internal/agents"
 	"github.com/instructkr/smartclaw/internal/api"
+	"github.com/instructkr/smartclaw/internal/commands"
+	"github.com/instructkr/smartclaw/internal/contextmgr"
 	"github.com/instructkr/smartclaw/internal/costguard"
+	"github.com/instructkr/smartclaw/internal/gateway"
 	"github.com/instructkr/smartclaw/internal/lifecycle"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/observability"
+	"github.com/instructkr/smartclaw/internal/permissions"
+	"github.com/instructkr/smartclaw/internal/plugins"
+	"github.com/instructkr/smartclaw/internal/playbook"
+	"github.com/instructkr/smartclaw/internal/runtime"
+	"github.com/instructkr/smartclaw/internal/serverauth"
 	"github.com/instructkr/smartclaw/internal/skills"
+	"github.com/instructkr/smartclaw/internal/store"
 	"github.com/instructkr/smartclaw/internal/tools"
+	"github.com/instructkr/smartclaw/internal/watchdog"
 	"github.com/instructkr/smartclaw/internal/wiki"
 )
-
-type rateLimiter struct {
-	visitors map[string]*visitorInfo
-	mu       sync.Mutex
-}
-
-type visitorInfo struct {
-	count    int
-	lastSeen time.Time
-}
-
-func newRateLimiter() *rateLimiter {
-	rl := &rateLimiter{
-		visitors: make(map[string]*visitorInfo),
-	}
-	go rl.cleanup()
-	return rl
-}
-
-func (rl *rateLimiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ip := strings.Split(r.RemoteAddr, ":")[0]
-		rl.mu.Lock()
-		v, ok := rl.visitors[ip]
-		if !ok {
-			v = &visitorInfo{}
-			rl.visitors[ip] = v
-		}
-		v.count++
-		v.lastSeen = time.Now()
-		if v.count > 100 {
-			rl.mu.Unlock()
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-		rl.mu.Unlock()
-		next(w, r)
-	}
-}
-
-func (rl *rateLimiter) cleanup() {
-	for {
-		time.Sleep(time.Minute)
-		rl.mu.Lock()
-		for ip, v := range rl.visitors {
-			if time.Since(v.lastSeen) > time.Minute {
-				delete(rl.visitors, ip)
-			} else {
-				v.count = 0
-			}
-		}
-		rl.mu.Unlock()
-	}
-}
 
 //go:embed static/*
 var staticFS embed.FS
@@ -103,9 +60,14 @@ type WebServer struct {
 	noAuth       bool
 }
 
-func NewWebServer(port int, workDir string, apiClient *api.Client, noAuth bool) *WebServer {
+func NewWebServer(port int, workDir string, apiClient *api.Client, noAuth bool) (*WebServer, error) {
 	hub := NewHub()
 	handler := NewHandler(hub, workDir, apiClient)
+
+	authManager, err := NewAuthManager()
+	if err != nil {
+		return nil, err
+	}
 
 	return &WebServer{
 		port:        port,
@@ -113,9 +75,9 @@ func NewWebServer(port int, workDir string, apiClient *api.Client, noAuth bool) 
 		handler:     handler,
 		workDir:     workDir,
 		apiClient:   apiClient,
-		authManager: NewAuthManager(),
+		authManager: authManager,
 		noAuth:      noAuth,
-	}
+	}, nil
 }
 
 func (s *WebServer) initSubsystems() {
@@ -136,6 +98,17 @@ func (s *WebServer) initSubsystems() {
 		tools.SetMemoryManagerForTools(mm)
 		tools.SetIncidentMemory(mm.GetIncidentMemory())
 		s.handler.memMgr = mm
+
+		homeDir, _ := os.UserHomeDir()
+		smartclawDir := filepath.Join(homeDir, ".smartclaw")
+		agentsMDHierarchy := contextmgr.NewAgentsMDHierarchy(s.workDir, smartclawDir)
+		if loadErr := agentsMDHierarchy.Load(context.Background()); loadErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: AGENTS.md hierarchy load failed: %v\n", loadErr)
+		}
+		mm.SetAgentsMDHierarchy(agentsMDHierarchy)
+
+		contextAdapter := commands.NewAgentsMDContextAdapter(agentsMDHierarchy)
+		commands.SetGlobalContextManager(contextAdapter)
 	}
 
 	tools.SetAllowedDirs([]string{s.workDir})
@@ -143,6 +116,11 @@ func (s *WebServer) initSubsystems() {
 	adapters.InitInnovationPackages(mm, s.apiClient)
 	if mm != nil && s.apiClient != nil {
 		mm.SetLLMClient(s.apiClient)
+		llmAdapter := learning.NewAPIClientAdapter(s.apiClient, "")
+		tools.SetLLMClientForConversationRecall(llmAdapter)
+	}
+	if mm != nil {
+		tools.SetStoreForConversationRecall(mm.GetStore())
 	}
 	lifecycle.Register(adapters.NewInnovationShutdown())
 
@@ -157,9 +135,109 @@ func (s *WebServer) initSubsystems() {
 	s.handler.mcpRegistry = mcpRegistry
 	autoStartMCPServers(mcpRegistry)
 
+	profileRegistry := agents.NewProfileRegistry()
+	agentPermMgr := permissions.NewAgentPermissionManager()
+
+	for _, profile := range profileRegistry.List() {
+		permSet := permissions.NewAgentPermissionSet(
+			profile.AgentType,
+			profile.Tools,
+			profile.DisallowedTools,
+			permissions.AgentPermissionMode(profile.PermissionMode),
+		)
+		agentPermMgr.Register(permSet)
+	}
+
+	tools.SetGlobalProfileRegistry(&webProfileRegistryAdapter{reg: profileRegistry})
+
+	var gw *gateway.Gateway
+	if s.handler.memMgr != nil && s.apiClient != nil {
+		var gwSt *store.Store
+		if s.handler.memMgr != nil {
+			gwSt = s.handler.memMgr.GetStore()
+		}
+		if gwSt == nil {
+			gwSt = s.handler.dataStore
+		}
+
+		llmAdapter := learning.NewAPIClientAdapter(s.apiClient, "")
+		home, _ := os.UserHomeDir()
+		skillsDir := filepath.Join(home, ".smartclaw", "skills")
+		var promptMem learning.PromptMemoryWriter
+		if s.handler.memMgr != nil {
+			promptMem = s.handler.memMgr.GetPromptMemory()
+		}
+		gwLearningLoop := learning.NewLearningLoop(llmAdapter, promptMem, skillsDir)
+		if gwSt != nil {
+			gwTracker := learning.NewSkillTracker(gwSt)
+			gwLearningLoop.SetSkillTracker(gwTracker)
+		}
+
+		gw = gateway.NewGateway(
+			func() *runtime.QueryEngine {
+				engine := runtime.NewQueryEngine(s.apiClient, runtime.QueryConfig{})
+				engine.SetAgentPermissionManager(agentPermMgr)
+				return engine
+			},
+			s.handler.memMgr,
+			gwLearningLoop,
+		)
+		s.handler.gw = gw
+
+		if s.handler.cronTrigger != nil {
+			s.handler.cronTrigger.SetGateway(gw)
+		}
+	}
+
+	tools.SetGlobalAgentSwitchFunc(func(cfg *tools.AgentSwitchConfig) error {
+		slog.Info("web: agent switch requested", "agent", cfg.AgentType)
+
+		rtlCfg := &runtime.AgentConfig{
+			AgentType:       cfg.AgentType,
+			SystemPrompt:    cfg.SystemPrompt,
+			Model:           cfg.Model,
+			AllowedTools:    cfg.AllowedTools,
+			DisallowedTools: cfg.DisallowedTools,
+			PermissionMode:  cfg.PermissionMode,
+			MaxTurns:        cfg.MaxTurns,
+		}
+
+		if gw != nil {
+			gw.SetCurrentAgentConfig(rtlCfg)
+		}
+
+		if cfg.SystemPrompt != "" && s.handler.prompt != nil {
+			s.handler.prompt.SetPersona(cfg.SystemPrompt)
+		}
+
+		if cfg.Model != "" && s.handler.apiClient != nil {
+			s.handler.apiClient.SetModel(cfg.Model)
+		}
+
+		return nil
+	})
+
+	if s.handler.cronTrigger != nil {
+		commands.SetGlobalCronTrigger(&webCronTriggerAdapter{ct: s.handler.cronTrigger})
+		commands.SetGlobalScheduleParser(&webScheduleParserAdapter{})
+	}
+
+	pluginRegistry := plugins.NewPluginRegistry("")
+	if err := pluginRegistry.Initialize(context.Background()); err != nil {
+		slog.Warn("Plugin registry init failed", "error", err)
+	}
+	pluginRegistry.RegisterToolsInRegistry(tools.GetRegistry())
+	commands.SetGlobalPluginRegistry(pluginRegistry)
+
 	if s.handler.wikiClient != nil && s.handler.wikiClient.IsEnabled() && s.handler.memMgr != nil {
 		wikiProvider := wiki.NewWikiMemoryProvider(s.handler.wikiClient)
 		s.handler.memMgr.RegisterProvider("wiki", wikiProvider)
+	}
+
+	if s.handler.dataStore != nil {
+		s.handler.skillTracker = learning.NewSkillTracker(s.handler.dataStore)
+		tools.GetTeamRegistry().SetStore(s.handler.dataStore)
+		tools.GetTeamRegistry().LoadFromStore(context.Background())
 	}
 }
 
@@ -174,6 +252,7 @@ func autoStartMCPServers(registry *mcp.MCPServerRegistry) {
 
 func (s *WebServer) Start() error {
 	s.initSubsystems()
+	s.initWorkflowService()
 
 	s.handler.StartSessionCleanup(0)
 
@@ -185,11 +264,21 @@ func (s *WebServer) Start() error {
 	}
 
 	mux.HandleFunc("/", s.serveIndex)
+	mux.HandleFunc("/static/sw.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Service-Worker-Allowed", "/")
+		data, err := staticFS.ReadFile("static/sw.js")
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Write(data)
+	})
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
-	rl := newRateLimiter()
+	rl := serverauth.NewRateLimiter()
 	mux.HandleFunc("/api/files", rl.Middleware(s.authMiddleware(s.handleFileTree)))
 	mux.HandleFunc("/api/file", rl.Middleware(s.authMiddleware(s.handleFileContent)))
 	mux.HandleFunc("/api/git-status", rl.Middleware(s.authMiddleware(s.handleGitStatusAPI)))
@@ -198,21 +287,58 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/api/config", rl.Middleware(s.authMiddleware(s.handleConfig)))
 	mux.HandleFunc("/api/stats", rl.Middleware(s.authMiddleware(s.handleStats)))
 	mux.HandleFunc("/api/telemetry", rl.Middleware(s.authMiddleware(s.handleTelemetry)))
+	mux.HandleFunc("/api/privacy/audit", rl.Middleware(s.authMiddleware(s.handlePrivacyAudit)))
+	mux.HandleFunc("/api/telemetry/frontend", rl.Middleware(s.handleFrontendTelemetry))
 	mux.HandleFunc("/api/skills", rl.Middleware(s.authMiddleware(s.handleSkills)))
+	mux.HandleFunc("/api/skills/health", rl.Middleware(s.authMiddleware(s.handleSkillHealthAPI)))
+	mux.HandleFunc("/api/skills/trending", rl.Middleware(s.authMiddleware(s.handleSkillTrendingAPI)))
 	mux.HandleFunc("/api/skills/", rl.Middleware(s.authMiddleware(s.handleSkillDetail)))
 	mux.HandleFunc("/api/memory", rl.Middleware(s.authMiddleware(s.handleMemoryAPI)))
 	mux.HandleFunc("/api/memory/search", rl.Middleware(s.authMiddleware(s.handleMemorySearch)))
 	mux.HandleFunc("/api/memory/update", rl.Middleware(s.authMiddleware(s.handleMemoryUpdateAPI)))
 	mux.HandleFunc("/api/memory/observations", rl.Middleware(s.authMiddleware(s.handleMemoryObservationsAPI)))
 	mux.HandleFunc("/api/sessions/search", rl.Middleware(s.authMiddleware(s.handleSessionSearchAPI)))
+	mux.HandleFunc("/api/chat/search", rl.Middleware(s.authMiddleware(s.handleChatSearchAPI)))
 	mux.HandleFunc("/api/wiki", rl.Middleware(s.authMiddleware(s.handleWikiAPI)))
 	mux.HandleFunc("/api/wiki/page", rl.Middleware(s.authMiddleware(s.handleWikiPageAPI)))
 	mux.HandleFunc("/api/agents", rl.Middleware(s.authMiddleware(s.handleAgentsAPI)))
 	mux.HandleFunc("/api/mcp", rl.Middleware(s.authMiddleware(s.handleMCPServersAPI)))
+	mux.HandleFunc("/api/mcp/catalog", rl.Middleware(s.authMiddleware(s.handleMCPCatalogAPI)))
+	mux.HandleFunc("/api/mcp/status", rl.Middleware(s.authMiddleware(s.handleMCPStatusAPI)))
+	mux.HandleFunc("/api/mcp/tools", rl.Middleware(s.authMiddleware(s.handleMCPToolsAPI)))
+	mux.HandleFunc("/api/mcp/resources", rl.Middleware(s.authMiddleware(s.handleMCPResourcesAPI)))
+	mux.HandleFunc("/api/templates", rl.Middleware(s.authMiddleware(s.handleTemplatesAPI)))
+	mux.HandleFunc("/api/cron/tasks", rl.Middleware(s.authMiddleware(s.handleCronTasksAPI)))
+	mux.HandleFunc("/api/cron/tasks/", rl.Middleware(s.authMiddleware(s.handleCronTaskRoutes)))
+	mux.HandleFunc("/api/chat/share", rl.Middleware(s.authMiddleware(s.handleShareCreate)))
+	mux.HandleFunc("/api/chat/export", rl.Middleware(s.authMiddleware(s.handleChatExport)))
+	mux.HandleFunc("/api/chat/export-pdf", rl.Middleware(s.authMiddleware(s.handleExportPDF)))
+	mux.HandleFunc("/api/workflows", rl.Middleware(s.authMiddleware(s.handleWorkflowsAPI)))
+	mux.HandleFunc("/api/workflows/", rl.Middleware(s.authMiddleware(s.handleWorkflowRoutesAPI)))
+	mux.HandleFunc("/api/workflow-tools", rl.Middleware(s.authMiddleware(s.handleWorkflowToolsAPI)))
+	mux.HandleFunc("/api/cost/dashboard", rl.Middleware(s.authMiddleware(s.handleCostDashboard)))
+	mux.HandleFunc("/api/cost/history", rl.Middleware(s.authMiddleware(s.handleCostHistory)))
+	mux.HandleFunc("/api/cost/forecast", rl.Middleware(s.authMiddleware(s.handleCostForecast)))
+	mux.HandleFunc("/api/cost/projects", rl.Middleware(s.authMiddleware(s.handleCostProjects)))
+	mux.HandleFunc("/api/cost/report", rl.Middleware(s.authMiddleware(s.handleCostReport)))
+	mux.HandleFunc("/api/onboarding/start", rl.Middleware(s.authMiddleware(s.handleOnboardingStart)))
+	mux.HandleFunc("/api/onboarding/step", rl.Middleware(s.authMiddleware(s.handleOnboardingStep)))
+	mux.HandleFunc("/api/onboarding/status", rl.Middleware(s.authMiddleware(s.handleOnboardingStatus)))
+	mux.HandleFunc("/api/profile", rl.Middleware(s.authMiddleware(s.handleProfile)))
+	mux.HandleFunc("/api/profile/observations", rl.Middleware(s.authMiddleware(s.handleProfileObservations)))
+	mux.HandleFunc("/api/profile/style", rl.Middleware(s.authMiddleware(s.handleProfileStyle)))
+	mux.HandleFunc("/api/profile/observations/", rl.Middleware(s.authMiddleware(s.handleProfileObservationRoutes)))
+	mux.HandleFunc("/api/skills/marketplace/categories", rl.Middleware(s.authMiddleware(s.handleMarketplaceCategories)))
+	mux.HandleFunc("/api/skills/marketplace/featured", rl.Middleware(s.authMiddleware(s.handleMarketplaceFeatured)))
+	mux.HandleFunc("/api/skills/marketplace/search", rl.Middleware(s.authMiddleware(s.handleMarketplaceSearch)))
+	mux.HandleFunc("/api/skills/marketplace/install", rl.Middleware(s.authMiddleware(s.handleMarketplaceInstall)))
+	mux.HandleFunc("/api/skills/marketplace/publish", rl.Middleware(s.authMiddleware(s.handleMarketplacePublish)))
+	mux.HandleFunc("/api/watchdog/status", rl.Middleware(s.authMiddleware(s.handleWatchdogStatus)))
+	mux.HandleFunc("/share/", s.handleShareView)
 	mux.Handle("/metrics", observability.PrometheusHandler())
 
 	s.server = &http.Server{
-		Handler:      mux,
+		Handler:      corsMiddleware(mux),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -296,67 +422,29 @@ func (s *WebServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	client := NewClient(s.hub, userID)
 	s.hub.Register(client)
 
+	go addToRecentProjects(s.workDir)
+
+	projectName := filepath.Base(s.workDir)
+	s.handler.sendToClient(client, WSResponse{
+		Type:    "project_changed",
+		Path:    s.workDir,
+		Message: projectName,
+	})
+
 	go s.writePump(client, conn)
 	go s.readPump(client, conn)
 }
 
 func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Upgrade") == "websocket" {
-			next(w, r)
-			return
-		}
-
-		if s.noAuth {
-			next(w, r)
-			return
-		}
-
-		if !s.authManager.IsAuthRequired() {
-			next(w, r)
-			return
-		}
-
-		token := s.extractToken(r)
-		if !s.validateAccessToken(token) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		next(w, r)
-	}
+	return serverauth.AuthMiddleware(next, s.authManager, s.noAuth)
 }
 
 func (s *WebServer) extractToken(r *http.Request) string {
-	if cookie, err := r.Cookie("smartclaw-token"); err == nil && cookie.Value != "" {
-		return cookie.Value
-	}
-
-	token := r.Header.Get("Authorization")
-	if strings.HasPrefix(token, "Bearer ") {
-		return strings.TrimPrefix(token, "Bearer ")
-	}
-	if token != "" {
-		return token
-	}
-
-	return r.URL.Query().Get("token")
+	return serverauth.ExtractToken(r)
 }
 
 func (s *WebServer) validateAccessToken(token string) bool {
-	if token == "" {
-		return false
-	}
-
-	if session, err := s.authManager.ValidateToken(token); err == nil && session != nil {
-		return true
-	}
-
-	if s.authManager.ValidateLegacyToken(token) {
-		return true
-	}
-
-	return false
+	return serverauth.ValidateAccessToken(token, s.authManager)
 }
 
 func (s *WebServer) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
@@ -458,6 +546,19 @@ func (s *WebServer) writePump(client *Client, conn *websocket.Conn) {
 				return
 			}
 
+		case message, ok := <-client.sendImmediate:
+			if !ok {
+				conn.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := conn.Write(ctx, websocket.MessageText, message)
+			cancel()
+			if err != nil {
+				return
+			}
+
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			err := conn.Ping(ctx)
@@ -475,10 +576,12 @@ func (s *WebServer) handleFileTree(w http.ResponseWriter, r *http.Request) {
 		path = "."
 	}
 
-	fullPath := filepath.Join(s.workDir, path)
+	workDir := s.handler.getWorkDir()
+
+	fullPath := filepath.Join(workDir, path)
 	fullPath = filepath.Clean(fullPath)
 
-	if !strings.HasPrefix(fullPath, filepath.Clean(s.workDir)) {
+	if !strings.HasPrefix(fullPath, filepath.Clean(workDir)) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
@@ -499,17 +602,23 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(s.workDir, path)
+	workDir := s.handler.getWorkDir()
+
+	fullPath := filepath.Join(workDir, path)
 	fullPath = filepath.Clean(fullPath)
 
-	if !strings.HasPrefix(fullPath, filepath.Clean(s.workDir)) {
+	if !strings.HasPrefix(fullPath, filepath.Clean(workDir)) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
 
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 		return
 	}
 	if info.Size() > maxFileServeSize {
@@ -539,7 +648,7 @@ func (s *WebServer) handleFileContent(w http.ResponseWriter, r *http.Request) {
 func (s *WebServer) handleGitStatusAPI(w http.ResponseWriter, r *http.Request) {
 	statusMap, err := s.handler.getGitStatus()
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, statusMap)
@@ -568,10 +677,12 @@ func (s *WebServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		relPath = header.Filename
 	}
 
-	fullPath := filepath.Join(s.workDir, relPath)
+	workDir := s.handler.getWorkDir()
+
+	fullPath := filepath.Join(workDir, relPath)
 	fullPath = filepath.Clean(fullPath)
 
-	if !strings.HasPrefix(fullPath, filepath.Clean(s.workDir)) {
+	if !strings.HasPrefix(fullPath, filepath.Clean(workDir)) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
@@ -715,6 +826,33 @@ func (s *WebServer) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *WebServer) handlePrivacyAudit(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	entries := observability.GetOutboundAuditLog(limit)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries":   entries,
+		"count":     len(entries),
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}
+
+func (s *WebServer) handleFrontendTelemetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	io.Copy(io.Discard, r.Body)
+	r.Body.Close()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (s *WebServer) handleSkills(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		sm := skills.GetSkillManager()
@@ -783,6 +921,27 @@ func (s *WebServer) handleSkills(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/api/skills/")
+
+	if strings.HasSuffix(name, "/improve") {
+		skillName := strings.TrimSuffix(name, "/improve")
+		if skillName == "" {
+			http.Error(w, "Skill name required in path", http.StatusBadRequest)
+			return
+		}
+		s.handleSkillImproveByName(w, r, skillName)
+		return
+	}
+
+	if strings.HasSuffix(name, "/score") {
+		skillName := strings.TrimSuffix(name, "/score")
+		if skillName == "" {
+			http.Error(w, "Skill name required in path", http.StatusBadRequest)
+			return
+		}
+		s.handleSkillScoreAPI(w, r, skillName)
+		return
+	}
+
 	sm := skills.GetSkillManager()
 	if sm == nil {
 		http.Error(w, "Skill manager not available", http.StatusServiceUnavailable)
@@ -849,7 +1008,7 @@ func (s *WebServer) handleMemoryAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.handler.memMgr == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"error": "Memory manager not available"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "Memory manager not available"})
 		return
 	}
 	mm := s.handler.memMgr
@@ -916,7 +1075,7 @@ func (s *WebServer) handleMemoryUpdateAPI(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if s.handler.memMgr == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"error": "Memory manager not available"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "Memory manager not available"})
 		return
 	}
 	pm := s.handler.memMgr.GetPromptMemory()
@@ -974,38 +1133,111 @@ func (s *WebServer) handleMemoryObservationsAPI(w http.ResponseWriter, r *http.R
 				"sessionId":  sessionID,
 			})
 		}
-		if observations == nil {
-			observations = []map[string]any{}
-		}
+
 		writeJSON(w, http.StatusOK, observations)
-
 	case http.MethodDelete:
-		var req struct {
-			ID int `json:"id"`
+		if s.handler.dataStore != nil {
+			s.handler.dataStore.DB().Exec("DELETE FROM user_observations")
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		if req.ID <= 0 {
-			http.Error(w, "Observation id is required", http.StatusBadRequest)
-			return
-		}
-		if s.handler.dataStore == nil {
-			http.Error(w, "Store not available", http.StatusServiceUnavailable)
-			return
-		}
-		result, err := s.handler.dataStore.DB().Exec(`DELETE FROM user_observations WHERE id = ?`, req.ID)
-		if err != nil {
-			http.Error(w, "Failed to delete observation", http.StatusInternalServerError)
-			return
-		}
-		affected, _ := result.RowsAffected()
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "affected": affected})
-
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+type webCronTriggerAdapter struct {
+	ct *gateway.CronTrigger
+}
+
+func (a *webCronTriggerAdapter) ListTasks() ([]commands.CronTaskInfo, error) {
+	tasks, err := a.ct.ListTasks()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]commands.CronTaskInfo, 0, len(tasks))
+	for _, t := range tasks {
+		var lastRun, createdAt time.Time
+		if t.LastRunAt != "" {
+			lastRun, _ = time.Parse(time.RFC3339, t.LastRunAt)
+		}
+		if t.CreatedAt != "" {
+			createdAt, _ = time.Parse(time.RFC3339, t.CreatedAt)
+		}
+		result = append(result, commands.CronTaskInfo{
+			ID:          t.ID,
+			Schedule:    t.Schedule,
+			Instruction: t.Instruction,
+			Enabled:     t.Enabled,
+			LastRunAt:   lastRun,
+			CreatedAt:   createdAt,
+		})
+	}
+	return result, nil
+}
+
+func (a *webCronTriggerAdapter) CreateTask(schedule, instruction string) (string, error) {
+	taskID := fmt.Sprintf("cron_%d", time.Now().UnixNano())
+	return taskID, a.ct.ScheduleCron(taskID, "default", instruction, schedule, "web")
+}
+
+func (a *webCronTriggerAdapter) DeleteTask(id string) error {
+	return a.ct.DeleteTask(id)
+}
+
+func (a *webCronTriggerAdapter) ToggleTask(id string) error {
+	task, err := a.ct.GetTask(id)
+	if err != nil {
+		return err
+	}
+	if task.Enabled {
+		return a.ct.DisableTask(id)
+	}
+	return a.ct.EnableTask(id)
+}
+
+func (a *webCronTriggerAdapter) RunTask(id string) error {
+	task, err := a.ct.GetTask(id)
+	if err != nil {
+		return err
+	}
+	err = a.ct.ScheduleCron(task.ID, task.UserID, task.Instruction, task.Schedule, task.Platform)
+	return err
+}
+
+type webScheduleParserAdapter struct{}
+
+func (s *webScheduleParserAdapter) ParseNaturalLanguage(input string) (string, error) {
+	return gateway.ParseNaturalLanguage(input)
+}
+
+type webProfileRegistryAdapter struct {
+	reg *agents.ProfileRegistry
+}
+
+func (a *webProfileRegistryAdapter) Get(name string) (string, string, string, []string, []string, string, int, error) {
+	p, err := a.reg.Get(name)
+	if err != nil {
+		return "", "", "", nil, nil, "", 0, err
+	}
+	return p.AgentType, p.SystemPrompt, p.Model, p.Tools, p.DisallowedTools, string(p.PermissionMode), p.MaxTurns, nil
+}
+
+func (a *webProfileRegistryAdapter) List() []tools.ProfileEntry {
+	profiles := a.reg.List()
+	entries := make([]tools.ProfileEntry, 0, len(profiles))
+	for _, p := range profiles {
+		entries = append(entries, tools.ProfileEntry{
+			AgentType:       p.AgentType,
+			WhenToUse:       p.WhenToUse,
+			SystemPrompt:    p.SystemPrompt,
+			Tools:           p.Tools,
+			DisallowedTools: p.DisallowedTools,
+			Model:           p.Model,
+			PermissionMode:  string(p.PermissionMode),
+			MaxTurns:        p.MaxTurns,
+		})
+	}
+	return entries
 }
 
 func (s *WebServer) handleSessionSearchAPI(w http.ResponseWriter, r *http.Request) {
@@ -1025,8 +1257,21 @@ func (s *WebServer) handleSessionSearchAPI(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	summaryRequested := r.URL.Query().Get("summary") == "true"
+
 	if s.handler.memMgr == nil {
 		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	if summaryRequested {
+		llmClient := getSessionSearchLLMClient(s)
+		result, err := s.handler.memMgr.SearchWithSummary(r.Context(), query, limit, llmClient)
+		if err != nil {
+			http.Error(w, "Search failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 
@@ -1058,6 +1303,25 @@ func (s *WebServer) handleSessionSearchAPI(w http.ResponseWriter, r *http.Reques
 		result = []fragmentJSON{}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func getSessionSearchLLMClient(s *WebServer) *learningLLMAdapter {
+	if s.apiClient == nil {
+		return nil
+	}
+	return &learningLLMAdapter{client: s.apiClient}
+}
+
+type learningLLMAdapter struct {
+	client *api.Client
+}
+
+func (a *learningLLMAdapter) CreateMessage(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	if a.client == nil {
+		return "", fmt.Errorf("api client not configured")
+	}
+	adapter := learning.NewAPIClientAdapter(a.client, "")
+	return adapter.CreateMessage(ctx, systemPrompt, userPrompt)
 }
 
 func (s *WebServer) handleWikiAPI(w http.ResponseWriter, r *http.Request) {
@@ -1158,17 +1422,57 @@ func (s *WebServer) reloadAPIClient(config map[string]any) {
 		openai, _ = v.(bool)
 	}
 
-	newClient := api.NewClientWithModel(apiKey, baseURL, model)
-	newClient.IsOpenAI = openai
-	s.apiClient = newClient
-	s.handler.apiClient = newClient
+	baseURL = sanitizeBaseURL(baseURL)
+	if !openai && strings.Contains(config["base_url"].(string), "/chat/completions") {
+		openai = true
+	}
+
+	if openai {
+		newClient := api.NewOpenAICompatibleClient(apiKey, baseURL, model)
+		s.apiClient = newClient
+		s.handler.apiClient = newClient
+	} else {
+		newClient := api.NewClientWithModel(apiKey, baseURL, model)
+		newClient.IsOpenAI = false
+		s.apiClient = newClient
+		s.handler.apiClient = newClient
+	}
 	log.Printf("Provider config reloaded: model=%s base_url=%s openai=%v", model, baseURL, openai)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+func (s *WebServer) handleCronTaskRoutes(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	switch {
+	case strings.HasSuffix(path, "/toggle"):
+		s.handleCronTaskToggleAPI(w, r)
+	case strings.HasSuffix(path, "/run"):
+		s.handleCronTaskRunAPI(w, r)
+	default:
+		s.handleCronTaskDetailAPI(w, r)
+	}
 }
 
 func (s *WebServer) handleMCPServersAPI(w http.ResponseWriter, r *http.Request) {
@@ -1241,4 +1545,317 @@ func (s *WebServer) handleMCPServersAPI(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *WebServer) handleSkillHealthAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.handler.dataStore == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"skills":       []any{},
+			"generated_at": time.Now().Format(time.RFC3339),
+		})
+		return
+	}
+
+	report := s.handler.getSkillHealthReport()
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *WebServer) handleSkillTrendingAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.handler.skillTracker == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	trending, err := s.handler.skillTracker.GetTrending(limit)
+	if err != nil {
+		http.Error(w, "Failed to get trending skills: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type trendingEntry struct {
+		SkillID    string `json:"skill_id"`
+		UsageCount int    `json:"usage_count"`
+		LastUsed   string `json:"last_used,omitempty"`
+	}
+
+	entries := make([]trendingEntry, 0, len(trending))
+	for _, t := range trending {
+		entry := trendingEntry{
+			SkillID:    t.SkillID,
+			UsageCount: t.UsageCount,
+		}
+		if t.LastUsed != nil {
+			entry.LastUsed = t.LastUsed.Format(time.RFC3339)
+		}
+		entries = append(entries, entry)
+	}
+
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *WebServer) handleSkillScoreAPI(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.handler.skillTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"skill_id":          name,
+			"total_invocations": 0,
+			"successes":         0,
+			"failures":          0,
+			"user_overrides":    0,
+			"score":             0.5,
+		})
+		return
+	}
+
+	score, err := s.handler.skillTracker.GetEffectivenessScore(name)
+	if err != nil {
+		http.Error(w, "Failed to get skill score: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"skill_id":          score.SkillID,
+		"total_invocations": score.TotalInvocations,
+		"successes":         score.Successes,
+		"failures":          score.Failures,
+		"user_overrides":    score.UserOverrides,
+		"score":             score.Score,
+	})
+}
+
+func (s *WebServer) handleSkillImproveByName(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		FailureMessages []string `json:"failure_messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	failures := req.FailureMessages
+	if len(failures) == 0 {
+		failures = []string{"Manual improvement triggered via API"}
+	}
+
+	if s.handler.dataStore == nil || s.handler.apiClient == nil {
+		http.Error(w, "Store or API client not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	llmAdapter := learning.NewAPIClientAdapter(s.handler.apiClient, "")
+	improver := learning.NewSkillImprover(llmAdapter)
+	writer := learning.NewSkillWriter("")
+
+	originalSkill, err := loadSkillForImprovement(name)
+	if err != nil {
+		http.Error(w, "Failed to load skill: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	improved, err := improver.Improve(r.Context(), name, failures, originalSkill)
+	if err != nil {
+		http.Error(w, "Skill improvement failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := improver.ApplyImprovement(writer, improved); err != nil {
+		http.Error(w, "Failed to apply improvement: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":        true,
+		"name":           improved.Name,
+		"version":        improved.Version,
+		"change_summary": improved.ChangeSummary,
+	})
+}
+
+func (s *WebServer) initWorkflowService() {
+	ws, err := NewWorkflowServiceHelper()
+	if err != nil {
+		slog.Warn("Workflow service init failed", "error", err)
+		return
+	}
+	s.handler.workflowSvc = ws
+}
+
+func (s *WebServer) handleWorkflowsAPI(w http.ResponseWriter, r *http.Request) {
+	ws := s.handler.workflowSvc
+	switch r.Method {
+	case http.MethodGet:
+		if ws == nil {
+			writeJSON(w, http.StatusOK, []any{})
+			return
+		}
+		workflows, err := ws.ListWorkflows()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, workflows)
+	case http.MethodPost:
+		var pb playbook.Playbook
+		if err := json.NewDecoder(r.Body).Decode(&pb); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		if pb.Name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "workflow name is required"})
+			return
+		}
+		if ws == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workflow service not available"})
+			return
+		}
+		if err := ws.SaveWorkflow(&pb); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"success": true, "name": pb.Name})
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (s *WebServer) handleWorkflowRoutesAPI(w http.ResponseWriter, r *http.Request) {
+	ws := s.handler.workflowSvc
+	name := strings.TrimPrefix(r.URL.Path, "/api/workflows/")
+	name = strings.TrimSuffix(name, "/")
+	if name == "" {
+		s.handleWorkflowsAPI(w, r)
+		return
+	}
+
+	if strings.HasSuffix(name, "/execute") {
+		workflowName := strings.TrimSuffix(name, "/execute")
+		s.handleWorkflowExecuteAPI(w, r, workflowName)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if ws == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workflow service not available"})
+			return
+		}
+		pb, err := ws.GetWorkflow(name)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, pb)
+	case http.MethodDelete:
+		if ws == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workflow service not available"})
+			return
+		}
+		if err := ws.DeleteWorkflow(name); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "name": name})
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (s *WebServer) handleWorkflowExecuteAPI(w http.ResponseWriter, r *http.Request, name string) {
+	ws := s.handler.workflowSvc
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if ws == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workflow service not available"})
+		return
+	}
+	var req struct {
+		Params map[string]string `json:"params"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Params = map[string]string{}
+	}
+	execCtx, err := ws.ExecuteWorkflow(r.Context(), name, req.Params)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	type stepResultJSON struct {
+		StepID   string `json:"step_id"`
+		Success  bool   `json:"success"`
+		Output   string `json:"output"`
+		Duration string `json:"duration"`
+		Error    string `json:"error,omitempty"`
+	}
+	results := make([]stepResultJSON, 0)
+	for _, sr := range execCtx.StepResults {
+		results = append(results, stepResultJSON{
+			StepID:   sr.StepID,
+			Success:  sr.Success,
+			Output:   sr.Output,
+			Duration: sr.Duration.String(),
+			Error:    sr.Error,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  execCtx.Status,
+		"results": results,
+	})
+}
+
+func (s *WebServer) handleWorkflowToolsAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	ws := s.handler.workflowSvc
+	if ws == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, ws.GetAvailableTools())
+}
+
+func (s *WebServer) handleWatchdogStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	wd := watchdog.DefaultWatchdog()
+	if wd == nil {
+		writeJSON(w, http.StatusOK, watchdog.WatchdogStatus{
+			Enabled:       false,
+			ActiveWatches: []watchdog.ProcessWatch{},
+			RecentErrors:  []watchdog.DetectedError{},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, wd.GetStatus())
 }

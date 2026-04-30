@@ -7,16 +7,20 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/costguard"
+	"github.com/instructkr/smartclaw/internal/gateway"
+	"github.com/instructkr/smartclaw/internal/learning"
 	"github.com/instructkr/smartclaw/internal/mcp"
 	"github.com/instructkr/smartclaw/internal/memory"
 	"github.com/instructkr/smartclaw/internal/permissions"
 	"github.com/instructkr/smartclaw/internal/pool"
 	"github.com/instructkr/smartclaw/internal/provider"
+	"github.com/instructkr/smartclaw/internal/routing"
 	"github.com/instructkr/smartclaw/internal/runtime"
 	"github.com/instructkr/smartclaw/internal/session"
 	"github.com/instructkr/smartclaw/internal/store"
@@ -41,11 +45,16 @@ type ApprovalRecord struct {
 	workDir       string
 	apiClient     *api.Client
 	router        *provider.Router
+	modelRouter   *routing.ModelRouter
 	sessMgr       *session.Manager
 	dataStore     *store.Store
 	memMgr        *memory.MemoryManager
 	wikiClient    *wiki.WikiClient
 	mcpRegistry   *mcp.MCPServerRegistry
+	cronTrigger   *gateway.CronTrigger
+	gw            *gateway.Gateway
+	skillTracker  *learning.SkillTracker
+	workflowSvc   *WorkflowServiceHelper
 	showThinking  bool
 	clientSess    map[string]*session.Session
 	clientSessMu  sync.RWMutex
@@ -63,6 +72,8 @@ type ApprovalRecord struct {
 	autoApproved       map[string]map[string]bool
 	cancelFuncs        map[string]context.CancelFunc
 	wg                 sync.WaitGroup
+	shutdownCtx        context.Context
+	shutdownCancel     context.CancelFunc
 }
 
 func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
@@ -114,11 +125,14 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 		}
 	}
 
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
 	h := &Handler{
 		hub:                hub,
 		workDir:            workDir,
 		apiClient:          apiClient,
 		router:             router,
+		modelRouter:        routing.NewModelRouter(routing.DefaultRoutingConfig()),
 		sessMgr:            mgr,
 		dataStore:          dataStore,
 		showThinking:       showThinking,
@@ -133,11 +147,15 @@ func NewHandler(hub *Hub, workDir string, apiClient *api.Client) *Handler {
 		approvalHistory:    make([]ApprovalRecord, 0),
 		autoApproved:       make(map[string]map[string]bool),
 		cancelFuncs:        make(map[string]context.CancelFunc),
+		shutdownCtx:        shutdownCtx,
+		shutdownCancel:     shutdownCancel,
 	}
 
 	_ = h.unifiedPerm.LoadApprovalConfigFromDefaultPath()
 
 	h.wikiClient = newWikiClientFromConfig()
+
+	h.cronTrigger = gateway.NewCronTrigger(dataStore, nil)
 
 	return h
 }
@@ -166,6 +184,8 @@ func loadAPIConfig() (apiKey, baseURL, model string) {
 		model = cfg.Model
 	}
 
+	baseURL = sanitizeBaseURL(baseURL)
+
 	if apiKey == "" {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
 	}
@@ -173,6 +193,16 @@ func loadAPIConfig() (apiKey, baseURL, model string) {
 		model = "sre-model"
 	}
 	return
+}
+
+func sanitizeBaseURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u := strings.TrimRight(rawURL, "#?/&")
+	u = strings.TrimSuffix(u, "/chat/completions")
+	u = strings.TrimSuffix(u, "/v1/messages")
+	return u
 }
 
 func isOpenAI() bool {
@@ -183,10 +213,17 @@ func isOpenAI() bool {
 		return false
 	}
 	var cfg struct {
-		OpenAI bool `json:"openai"`
+		OpenAI  bool   `json:"openai"`
+		BaseURL string `json:"base_url"`
 	}
 	if json.Unmarshal(data, &cfg) == nil {
-		return cfg.OpenAI
+		if cfg.OpenAI {
+			return true
+		}
+		cleaned := sanitizeBaseURL(cfg.BaseURL)
+		if strings.Contains(cfg.BaseURL, "/chat/completions") || strings.Contains(cleaned, "/v1") && !strings.Contains(cleaned, "anthropic.com") {
+			return true
+		}
 	}
 	return false
 }
@@ -243,6 +280,12 @@ type WSMessage struct {
 	Title   string          `json:"title,omitempty"`
 	Model   string          `json:"model,omitempty"`
 	Data    json.RawMessage `json:"data,omitempty"`
+	Images  json.RawMessage `json:"images,omitempty"`
+}
+
+type DiffAnnotation struct {
+	HunkIndex int    `json:"hunk_index"`
+	Reason    string `json:"reason"`
 }
 
 type WSResponse struct {
@@ -267,6 +310,8 @@ type WSResponse struct {
 	Messages      []MsgItem                `json:"messages,omitempty"`
 	Model         string                   `json:"model,omitempty"`
 	Data          any                      `json:"data,omitempty"`
+	Annotations   []DiffAnnotation         `json:"annotations,omitempty"`
+	Path          string                   `json:"path,omitempty"`
 }
 
 type MsgItem struct {
@@ -367,6 +412,10 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleMemoryObservationDeleteWS(client, msg)
 	case "skill_edit":
 		h.handleSkillEditWS(client, msg)
+	case "skill_health":
+		h.handleSkillHealthWS(client)
+	case "skill_improve":
+		h.handleSkillImproveWS(client, msg)
 	case "session_fragments":
 		h.handleSessionFragmentsWS(client, msg)
 	case "wiki_search":
@@ -385,12 +434,52 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleMCPStartWS(client, msg)
 	case "mcp_stop":
 		h.handleMCPStopWS(client, msg)
+	case "mcp_catalog":
+		h.handleMCPCatalogWS(client)
+	case "mcp_tools":
+		h.handleMCPToolsWS(client, msg)
+	case "mcp_resources":
+		h.handleMCPResourcesWS(client, msg)
 	case "agent_list":
 		h.handleAgentListWS(client)
 	case "agent_stop":
 		h.handleAgentStopWS(client, msg)
 	case "agent_output":
 		h.handleAgentOutputWS(client, msg)
+	case "agent_switch":
+		h.handleAgentSwitchWS(client, msg)
+	case "template_list":
+		h.handleTemplateListWS(client)
+	case "template_create":
+		h.handleTemplateCreateWS(client, msg)
+	case "template_update":
+		h.handleTemplateUpdateWS(client, msg)
+	case "template_delete":
+		h.handleTemplateDeleteWS(client, msg)
+	case "cron_list":
+		h.handleCronListWS(client)
+	case "cron_create":
+		h.handleCronCreateWS(client, msg)
+	case "cron_delete":
+		h.handleCronDeleteWS(client, msg)
+	case "cron_toggle":
+		h.handleCronToggleWS(client, msg)
+	case "cron_run":
+		h.handleCronRunWS(client, msg)
+	case "chat_search":
+		h.handleChatSearchWS(client, msg)
+	case "arena_chat":
+		h.handleArenaChat(client, msg)
+	case "arena_vote":
+		h.handleArenaVote(client, msg)
+	case "watchdog_status":
+		h.handleWatchdogStatusWS(client)
+	case "change_project":
+		h.handleChangeProject(client, msg)
+	case "get_recent_projects":
+		h.handleGetRecentProjects(client)
+	case "browse_dirs":
+		h.handleBrowseDirs(client, msg)
 	default:
 		h.sendError(client, fmt.Sprintf("Unknown message type: %s", msg.Type))
 	}
@@ -405,14 +494,22 @@ var validWSTypes = map[string]bool{
 	"approval_list": true, "approval_history": true, "approval_bulk": true,
 	"skill_list": true, "skill_detail": true, "skill_toggle": true,
 	"skill_search": true, "skill_create": true, "skill_edit": true,
+	"skill_health": true, "skill_improve": true,
 	"memory_layers": true, "memory_search": true, "memory_recall": true,
 	"memory_store": true, "memory_update": true, "memory_stats": true,
 	"memory_observations": true, "memory_observation_delete": true,
 	"session_fragments": true,
 	"wiki_search": true, "wiki_pages": true, "wiki_page_content": true,
 	"mcp_list": true, "mcp_add": true, "mcp_remove": true,
-	"mcp_start": true, "mcp_stop": true,
-	"agent_list": true, "agent_stop": true, "agent_output": true,
+	"mcp_start": true, "mcp_stop": true, "mcp_catalog": true,
+	"mcp_tools": true, "mcp_resources": true,
+	"agent_list": true, "agent_stop": true, "agent_output": true, "agent_switch": true,
+	"template_list": true, "template_create": true, "template_update": true, "template_delete": true,
+	"cron_list": true, "cron_create": true, "cron_delete": true, "cron_toggle": true, "cron_run": true,
+	"chat_search": true,
+	"arena_chat": true, "arena_vote": true,
+	"watchdog_status": true,
+	"change_project": true, "get_recent_projects": true, "browse_dirs": true,
 }
 
 var typesRequiringData = map[string]bool{
@@ -423,13 +520,19 @@ var typesRequiringData = map[string]bool{
 	"tool_approval": true, "approval_bulk": true,
 	"skill_detail": true, "skill_toggle": true,
 	"skill_search": true, "skill_create": true, "skill_edit": true,
+	"skill_improve": true,
 	"memory_search": true, "memory_recall": true,
 	"memory_store": true, "memory_update": true,
 	"memory_observation_delete": true, "session_fragments": true,
 	"wiki_search": true, "wiki_page_content": true,
 	"mcp_add": true, "mcp_remove": true,
 	"mcp_start": true, "mcp_stop": true,
-	"agent_stop": true, "agent_output": true,
+	"mcp_tools": true, "mcp_resources": true,
+	"agent_stop": true, "agent_output": true, "agent_switch": true,
+	"template_create": true, "template_update": true, "template_delete": true,
+	"cron_create": true, "cron_delete": true, "cron_toggle": true, "cron_run": true,
+	"arena_chat": true, "arena_vote": true,
+	"change_project": true,
 }
 
 func (h *Handler) validateWSMessage(msg WSMessage) error {
@@ -488,6 +591,15 @@ func (h *Handler) sendToClient(client *Client, resp WSResponse) {
 	data := make([]byte, len(pe.Bytes()))
 	copy(data, pe.Bytes())
 	pool.PutJSONEncoder(pe)
+
+	if resp.Type == "token" || resp.Type == "thinking" {
+		select {
+		case client.sendImmediate <- data:
+		case <-time.After(5 * time.Second):
+			slog.Warn("websocket immediate send timeout", "client_id", client.ID)
+		}
+		return
+	}
 
 	select {
 	case client.send <- data:
@@ -555,5 +667,17 @@ func (h *Handler) StartSessionCleanup(ttl time.Duration) {
 }
 
 func (h *Handler) Close() {
+	if h.shutdownCancel != nil {
+		h.shutdownCancel()
+	}
+	if h.gw != nil {
+		h.gw.Close()
+	}
 	h.wg.Wait()
+}
+
+func (h *Handler) getWorkDir() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.workDir
 }
