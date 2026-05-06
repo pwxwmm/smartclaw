@@ -3,11 +3,80 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"net/http"
+	"os"
 	"time"
 
+	"github.com/instructkr/smartclaw/internal/alertengine"
 	"github.com/instructkr/smartclaw/internal/api"
 	"github.com/instructkr/smartclaw/internal/warroom"
 )
+
+// globalWarRoomTrigger is set during server initialization.
+var globalWarRoomTrigger *alertengine.WarRoomTrigger
+
+// warRoomCoordinatorAdapter wraps warroom.WarRoomCoordinator to implement
+// alertengine.WarRoomTriggerCoordinator without creating circular imports.
+type warRoomCoordinatorAdapter struct {
+	coordinator *warroom.WarRoomCoordinator
+	handler     *Handler
+}
+
+func (a *warRoomCoordinatorAdapter) StartWarRoomFromAlert(ctx context.Context, source string, title string, description string, severity string, service string, labels map[string]string, annotations map[string]string) (*alertengine.WarRoomTriggerResult, error) {
+	result, err := a.coordinator.StartWarRoomFromAlert(ctx, source, title, description, severity, service, labels, annotations)
+	if err != nil {
+		return nil, err
+	}
+
+	if result.Triggered && a.handler != nil {
+		a.handler.BroadcastWarRoomAutoTriggered(result.SessionID, result.Title, source, severity, service)
+	}
+
+	return &alertengine.WarRoomTriggerResult{
+		SessionID: result.SessionID,
+		Title:     result.Title,
+		Triggered: result.Triggered,
+		Reason:    result.Reason,
+	}, nil
+}
+
+func (a *warRoomCoordinatorAdapter) ActiveSessionCount() int {
+	return a.coordinator.ActiveSessionCount()
+}
+
+// InitAlertAutoTrigger sets up the SOPA alert poller and War Room auto-trigger.
+// This should be called after the War Room coordinator is initialized.
+func (h *Handler) InitAlertAutoTrigger() {
+	engine := alertengine.DefaultAlertEngine()
+	if engine == nil {
+		engine = alertengine.InitAlertEngine(nil)
+	}
+
+	coordinator := warroom.DefaultWarRoomCoordinator()
+	if coordinator == nil {
+		return
+	}
+
+	adapter := &warRoomCoordinatorAdapter{
+		coordinator: coordinator,
+		handler:     h,
+	}
+
+	triggerConfig := alertengine.DefaultWarRoomTriggerConfig()
+	trigger := alertengine.NewWarRoomTrigger(triggerConfig, adapter)
+
+	engine.OnAlert(trigger.OnAlert)
+
+	globalWarRoomTrigger = trigger
+
+	baseURL := os.Getenv("SOPA_API_URL")
+	token := os.Getenv("SOPA_API_TOKEN")
+	poller := alertengine.NewSopaAlertPoller(engine, baseURL, token, 30*time.Second)
+	poller.Start(h.shutdownCtx)
+
+	slog.Info("web: alert auto-trigger initialized", "base_url", baseURL)
+}
 
 func (h *Handler) handleWarRoomStartWS(client *Client, msg WSMessage) {
 	var data map[string]any
@@ -508,4 +577,108 @@ func initWarRoomWithClient(client *api.Client) {
 
 func (h *Handler) initWarRoomIfNeeded() {
 	initWarRoomWithClient(h.apiClient)
+}
+
+// BroadcastWarRoomAutoTriggered sends a WebSocket broadcast when a War Room
+// is auto-triggered from an alert event.
+func (h *Handler) BroadcastWarRoomAutoTriggered(sessionID, title, alertSource, severity, service string) {
+	h.hub.Broadcast(mustMarshalWSResponse(WSResponse{
+		Type: "warroom_auto_triggered",
+		Data: map[string]any{
+			"session_id":   sessionID,
+			"title":        title,
+			"alert_source": alertSource,
+			"severity":     severity,
+			"service":      service,
+		},
+	}))
+}
+
+// handleWarRoomAutoTriggerConfig handles GET and POST for /api/warroom/auto-trigger-config.
+func (s *WebServer) handleWarRoomAutoTriggerConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleWarRoomAutoTriggerConfigGet(w, r)
+	case http.MethodPost:
+		s.handleWarRoomAutoTriggerConfigSet(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+// handleWarRoomAutoTriggerConfigGet handles GET /api/warroom/auto-trigger-config.
+func (s *WebServer) handleWarRoomAutoTriggerConfigGet(w http.ResponseWriter, r *http.Request) {
+	cfg := alertEngineTriggerConfigSnapshot()
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// handleWarRoomAutoTriggerConfigSet handles POST /api/warroom/auto-trigger-config.
+func (s *WebServer) handleWarRoomAutoTriggerConfigSet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		Enabled       *bool   `json:"enabled"`
+		MinSeverity   *string `json:"min_severity"`
+		Cooldown      *string `json:"cooldown"`
+		MaxConcurrent *int    `json:"max_concurrent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	alertEngineTriggerConfigUpdate(req)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// alertEngineTriggerConfigSnapshot returns the current trigger config for the API.
+func alertEngineTriggerConfigSnapshot() map[string]any {
+	trigger := globalWarRoomTrigger
+	if trigger == nil {
+		return map[string]any{
+			"enabled":        false,
+			"min_severity":   "high",
+			"cooldown":       "15m0s",
+			"max_concurrent": 5,
+		}
+	}
+	cfg := trigger.GetConfig()
+	return map[string]any{
+		"enabled":        cfg.Enabled,
+		"min_severity":   cfg.MinSeverity,
+		"cooldown":       cfg.Cooldown.String(),
+		"max_concurrent": cfg.MaxConcurrent,
+	}
+}
+
+// alertEngineTriggerConfigUpdate applies config updates to the global trigger.
+func alertEngineTriggerConfigUpdate(req struct {
+	Enabled       *bool   `json:"enabled"`
+	MinSeverity   *string `json:"min_severity"`
+	Cooldown      *string `json:"cooldown"`
+	MaxConcurrent *int    `json:"max_concurrent"`
+}) {
+	trigger := globalWarRoomTrigger
+	if trigger == nil {
+		return
+	}
+	cfg := trigger.GetConfig()
+	if req.Enabled != nil {
+		cfg.Enabled = *req.Enabled
+	}
+	if req.MinSeverity != nil {
+		cfg.MinSeverity = *req.MinSeverity
+	}
+	if req.Cooldown != nil {
+		if d, err := time.ParseDuration(*req.Cooldown); err == nil {
+			cfg.Cooldown = d
+		}
+	}
+	if req.MaxConcurrent != nil {
+		cfg.MaxConcurrent = *req.MaxConcurrent
+	}
+	trigger.UpdateConfig(cfg)
 }

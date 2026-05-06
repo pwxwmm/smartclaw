@@ -273,6 +273,9 @@
       case 'warroom_confidence_change':
         if (SC.warroom) SC.warroom.handleConfidenceChange(msg.data || {});
         break;
+      case 'warroom_auto_triggered':
+        if (SC.warroom) SC.warroom.handleAutoTriggered(msg.data || {});
+        break;
       case 'done':
         SC.finishMessage(msg);
         break;

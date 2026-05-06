@@ -256,6 +256,7 @@ func (s *WebServer) Start() error {
 
 	s.handler.StartSessionCleanup(0)
 	s.handler.initWarRoomIfNeeded()
+	s.handler.InitAlertAutoTrigger()
 
 	mux := http.NewServeMux()
 
@@ -335,6 +336,7 @@ func (s *WebServer) Start() error {
 	mux.HandleFunc("/api/skills/marketplace/install", rl.Middleware(s.authMiddleware(s.handleMarketplaceInstall)))
 	mux.HandleFunc("/api/skills/marketplace/publish", rl.Middleware(s.authMiddleware(s.handleMarketplacePublish)))
 	mux.HandleFunc("/api/watchdog/status", rl.Middleware(s.authMiddleware(s.handleWatchdogStatus)))
+	mux.HandleFunc("/api/warroom/auto-trigger-config", rl.Middleware(s.authMiddleware(s.handleWarRoomAutoTriggerConfig)))
 	mux.HandleFunc("/share/", s.handleShareView)
 	mux.Handle("/metrics", observability.PrometheusHandler())
 

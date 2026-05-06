@@ -183,6 +183,7 @@
         sessionsHtml += '<div class="wr-session-card liquid-glass" data-session-id="' + SC.escapeHtml(s.id) + '">' +
           '<div class="wr-session-card-head">' +
             '<span class="wr-session-title">' + SC.escapeHtml(s.title) + '</span>' +
+            (s.context && s.context.auto_triggered ? '<span class="wr-auto-badge">🤖 Auto</span>' : '') +
             '<span class="wr-status-badge ' + sc + '">' + statusLabel(s.status) + '</span>' +
           '</div>' +
           '<div class="wr-session-card-desc">' + SC.escapeHtml(s.description || '') + '</div>' +
@@ -669,6 +670,19 @@
     }
   }
 
+  function handleWarRoomAutoTriggered(data) {
+    if (!data) return;
+
+    SC.toast('告警自动触发 War Room: ' + (data.title || ''), 'info');
+
+    SC.wsSend('warroom_list', {});
+
+    var container = SC.$('#view-warroom');
+    if (container) {
+      renderWarRoomView();
+    }
+  }
+
   SC.warroom = {
     render: renderWarRoomView,
     showNewForm: renderNewForm,
@@ -682,6 +696,7 @@
     handleUpdate: handleWarRoomUpdate,
     handleBlackboardUpdate: handleWarRoomBlackboardUpdate,
     handleHandoff: handleWarRoomHandoff,
-    handleConfidenceChange: handleWarRoomConfidenceChange
+    handleConfidenceChange: handleWarRoomConfidenceChange,
+    handleAutoTriggered: handleWarRoomAutoTriggered
   };
 })();
