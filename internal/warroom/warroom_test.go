@@ -1573,3 +1573,138 @@ func TestCrossReferenceStruct(t *testing.T) {
 		t.Error("expected cross-reference to agree")
 	}
 }
+
+func TestWarRoomIntegrationDataFlow(t *testing.T) {
+	coordinator := InitWarRoom(nil)
+	defer Shutdown()
+
+	session, err := coordinator.StartWarRoom(context.Background(), WarRoomRequest{
+		Title:       "node3 故障排查",
+		Description: "node3 OOM 导致级联故障",
+		AgentTypes:  []DomainAgentType{AgentInfra, AgentApp},
+	})
+	if err != nil {
+		t.Fatalf("StartWarRoom failed: %v", err)
+	}
+
+	bb, ok := coordinator.GetBlackboard(session.ID)
+	if !ok || bb == nil {
+		t.Fatal("blackboard should exist for session")
+	}
+
+	bb.WriteEntry(BlackboardEntry{
+		Key: "node3_memory", Value: "95% used", Author: AgentInfra, Category: "metric", Timestamp: time.Now(),
+	})
+	bb.WriteEntry(BlackboardEntry{
+		Key: "app_errors", Value: "503 spike", Author: AgentApp, Category: "observation", Timestamp: time.Now(),
+	})
+
+	coordinator.SubmitFinding(session.ID, AgentInfra, Finding{
+		ID: "f1", AgentType: AgentInfra, Category: "symptom",
+		Title: "High memory on node3", Description: "node3 memory at 95%, OOMKilled pods",
+		Confidence: 0.7, Evidence: []string{"kubectl top node"}, CreatedAt: time.Now(),
+	})
+
+	coordinator.SubmitFinding(session.ID, AgentApp, Finding{
+		ID: "f2", AgentType: AgentApp, Category: "symptom",
+		Title: "503 errors from node3", Description: "Application 503 errors, connection pool exhausted on node3",
+		Confidence: 0.6, Evidence: []string{"node3 memory", "connection pool"}, CreatedAt: time.Now(),
+	})
+
+	s := coordinator.GetSession(session.ID)
+	if len(s.Findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(s.Findings))
+	}
+
+	hasCrossRef := false
+	for _, f := range s.Findings {
+		if len(f.CrossReferences) > 0 {
+			hasCrossRef = true
+			break
+		}
+	}
+	if !hasCrossRef {
+		t.Error("expected cross-references between findings about node3")
+	}
+
+	for _, f := range s.Findings {
+		if f.Confidence < 0.1 || f.Confidence > 0.95 {
+			t.Errorf("finding %s confidence %.2f out of bounds", f.ID, f.Confidence)
+		}
+	}
+
+	snapshot := bb.GetSnapshot()
+	if !strings.Contains(snapshot, "node3_memory") || !strings.Contains(snapshot, "app_errors") {
+		t.Error("blackboard snapshot should contain written entries")
+	}
+
+	coordinator.EvolveConfidence(session.ID, "f1", 0.1, "test boost")
+	s = coordinator.GetSession(session.ID)
+	for _, f := range s.Findings {
+		if f.ID == "f1" && f.Confidence < 0.7 {
+			t.Errorf("f1 confidence should have increased, got %.2f", f.Confidence)
+		}
+	}
+
+	t.Logf("Data flow test: %d findings, %d cross-refs, %d timeline entries",
+		len(s.Findings), countCrossRefs(s.Findings), len(s.Timeline))
+}
+
+func countCrossRefs(findings []Finding) int {
+	total := 0
+	for _, f := range findings {
+		total += len(f.CrossReferences)
+	}
+	return total
+}
+
+func TestBlackboardWriteTool(t *testing.T) {
+	runner := newMockAgentRunner()
+	coordinator := InitWarRoom(runner)
+	defer Shutdown()
+
+	// Create session to get a blackboard
+	session, err := coordinator.StartWarRoom(context.Background(), WarRoomRequest{
+		Title:       "Test Blackboard Write",
+		Description: "test blackboard write tool",
+		AgentTypes:  []DomainAgentType{AgentInfra},
+	})
+	if err != nil {
+		t.Fatalf("StartWarRoom failed: %v", err)
+	}
+
+	tool := &WarRoomBlackboardWriteTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"session_id": session.ID,
+		"key":        "gpu_status",
+		"value":      "GPU 0: 95% memory used, temperature 89C",
+		"category":   "metric",
+	})
+	if err != nil {
+		t.Fatalf("BlackboardWriteTool failed: %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatal("expected map result")
+	}
+	if resultMap["status"] != "written" {
+		t.Errorf("expected status 'written', got %v", resultMap["status"])
+	}
+
+	// Verify entry was written
+	bb, _ := coordinator.GetBlackboard(session.ID)
+	entries := bb.ReadEntries("")
+	found := false
+	for _, e := range entries {
+		if e.Key == "gpu_status" {
+			found = true
+			if e.Category != "metric" {
+				t.Errorf("expected category 'metric', got %s", e.Category)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected to find gpu_status entry in blackboard")
+	}
+}
