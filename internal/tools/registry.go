@@ -417,6 +417,8 @@ func RegisterDefaultTools() {
 	defaultRegistry.Register(&SopaListAuditsTool{})
 	defaultRegistry.Register(&SopaApproveAuditTool{})
 	defaultRegistry.Register(&SopaRejectAuditTool{})
+	defaultRegistry.Register(&SopaListAlertEventsTool{})
+	defaultRegistry.Register(&SopaGetAlertEventTool{})
 	defaultRegistry.Register(&AuditQueryTool{})
 	defaultRegistry.Register(&AuditStatsTool{})
 	defaultRegistry.Register(&InvestigateIncidentTool{})

@@ -780,3 +780,78 @@ func (t *SopaRejectAuditTool) Execute(ctx context.Context, input map[string]any)
 	}
 	return result, nil
 }
+
+// --- Alert Event Tools ---
+
+// SopaListAlertEventsTool lists alert event rules from SOPA.
+type SopaListAlertEventsTool struct{ BaseTool }
+
+func (t *SopaListAlertEventsTool) Name() string { return "sopa_list_alert_events" }
+
+func (t *SopaListAlertEventsTool) Description() string {
+	return "List alert event rules from SOPA. Use for SRE alert monitoring and event investigation."
+}
+
+func (t *SopaListAlertEventsTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"keyword":     map[string]any{"type": "string", "description": "Search keyword"},
+			"source":      map[string]any{"type": "string", "description": "Filter by alert source"},
+			"actionType":  map[string]any{"type": "string", "description": "Filter by action type (e.g. notify)"},
+			"page":        map[string]any{"type": "integer", "description": "Page number"},
+			"pageSize":    map[string]any{"type": "integer", "description": "Results per page"},
+		},
+	}
+}
+
+func (t *SopaListAlertEventsTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	params := map[string]string{
+		"keyword":    sopaGetString(input, "keyword"),
+		"source":     sopaGetString(input, "source"),
+		"actionType": sopaGetString(input, "actionType"),
+		"page":       strconv.Itoa(sopaGetInt(input, "page")),
+		"pageSize":   strconv.Itoa(sopaGetInt(input, "pageSize")),
+	}
+
+	path := "/api/alert-event/list" + sopaBuildQueryParams(params)
+
+	var result map[string]any
+	if err := sopaAPICall("GET", path, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// SopaGetAlertEventTool gets alert event rule details from SOPA.
+type SopaGetAlertEventTool struct{ BaseTool }
+
+func (t *SopaGetAlertEventTool) Name() string { return "sopa_get_alert_event" }
+
+func (t *SopaGetAlertEventTool) Description() string {
+	return "Get detailed information about a specific SOPA alert event rule. Use for SRE alert analysis and troubleshooting."
+}
+
+func (t *SopaGetAlertEventTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string", "description": "Alert event rule ID"},
+		},
+		"required": []string{"id"},
+	}
+}
+
+func (t *SopaGetAlertEventTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	id := sopaGetString(input, "id")
+	if id == "" {
+		return nil, ErrRequiredField("id")
+	}
+
+	path := fmt.Sprintf("/api/alert-event/%s", url.PathEscape(id))
+	var result map[string]any
+	if err := sopaAPICall("GET", path, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
