@@ -319,6 +319,29 @@ func (h *Handler) pollWarRoomUpdates(sessionID string) {
 				},
 			}))
 		}
+
+		// Blackboard updates
+		bb, bbOk := coordinator.GetBlackboard(sessionID)
+		if bbOk {
+			bbEntries := bb.ReadEntries("")
+			if len(bbEntries) > 0 {
+				latestBBEntries := bbEntries
+				if len(latestBBEntries) > 3 {
+					latestBBEntries = latestBBEntries[len(latestBBEntries)-3:]
+				}
+				bbEntriesData := make([]any, 0, len(latestBBEntries))
+				for _, e := range latestBBEntries {
+					bbEntriesData = append(bbEntriesData, map[string]any{
+						"key": e.Key, "value": e.Value, "author": string(e.Author),
+						"timestamp": e.Timestamp, "category": e.Category,
+					})
+				}
+				h.hub.Broadcast(mustMarshalWSResponse(WSResponse{
+					Type: "warroom_blackboard_update",
+					Data: map[string]any{"session_id": sessionID, "entries": bbEntriesData},
+				}))
+			}
+		}
 	}
 }
 
@@ -353,6 +376,56 @@ func sessionToMap(s *warroom.WarRoomSession) map[string]any {
 			"details":    e.Details,
 		})
 	}
+
+	// Blackboard data
+	coordinator := warroom.DefaultWarRoomCoordinator()
+	bb, bbOk := coordinator.GetBlackboard(s.ID)
+	var blackboardData map[string]any
+	if bbOk {
+		entries := make([]any, 0, len(bb.ReadEntries("")))
+		for _, e := range bb.ReadEntries("") {
+			entries = append(entries, map[string]any{
+				"key":       e.Key,
+				"value":     e.Value,
+				"author":    string(e.Author),
+				"timestamp": e.Timestamp,
+				"category":  e.Category,
+			})
+		}
+		hypotheses := make([]any, 0, len(bb.GetHypotheses()))
+		for _, h := range bb.GetHypotheses() {
+			hypotheses = append(hypotheses, map[string]any{
+				"id":                     h.ID,
+				"description":            h.Description,
+				"proposed_by":            string(h.ProposedBy),
+				"confidence":             h.Confidence,
+				"supporting_evidence":    h.SupportingEvidence,
+				"contradicting_evidence": h.ContradictingEvidence,
+				"status":                 h.Status,
+			})
+		}
+		sharedFacts := make([]any, 0, len(bb.GetSharedFacts()))
+		for _, f := range bb.GetSharedFacts() {
+			confirmedBy := make([]string, 0, len(f.ConfirmedBy))
+			for _, a := range f.ConfirmedBy {
+				confirmedBy = append(confirmedBy, string(a))
+			}
+			sharedFacts = append(sharedFacts, map[string]any{
+				"content":      f.Content,
+				"source":       string(f.Source),
+				"confirmed_by": confirmedBy,
+				"confidence":   f.Confidence,
+			})
+		}
+		blackboardData = map[string]any{
+			"entries":      entries,
+			"hypotheses":   hypotheses,
+			"shared_facts": sharedFacts,
+		}
+	} else {
+		blackboardData = map[string]any{"entries": []any{}, "hypotheses": []any{}, "shared_facts": []any{}}
+	}
+
 	return map[string]any{
 		"id":          s.ID,
 		"incident_id": s.IncidentID,
@@ -362,6 +435,7 @@ func sessionToMap(s *warroom.WarRoomSession) map[string]any {
 		"agents":      agents,
 		"findings":    findings,
 		"timeline":    timeline,
+		"blackboard":  blackboardData,
 		"created_at":  s.CreatedAt,
 		"closed_at":   s.ClosedAt,
 		"context":     s.Context,
@@ -372,15 +446,25 @@ func findingToMap(f *warroom.Finding) map[string]any {
 	if f == nil {
 		return nil
 	}
+	crossRefs := make([]any, 0, len(f.CrossReferences))
+	for _, cr := range f.CrossReferences {
+		crossRefs = append(crossRefs, map[string]any{
+			"finding_id":   cr.FindingID,
+			"referenced_by": string(cr.ReferencedBy),
+			"agrees":       cr.Agrees,
+			"notes":        cr.Notes,
+		})
+	}
 	return map[string]any{
-		"id":          f.ID,
-		"agent_type":  string(f.AgentType),
-		"category":    f.Category,
-		"title":       f.Title,
-		"description": f.Description,
-		"confidence":  f.Confidence,
-		"evidence":    f.Evidence,
-		"created_at":  f.CreatedAt,
+		"id":               f.ID,
+		"agent_type":       string(f.AgentType),
+		"category":         f.Category,
+		"title":            f.Title,
+		"description":      f.Description,
+		"confidence":       f.Confidence,
+		"evidence":         f.Evidence,
+		"created_at":       f.CreatedAt,
+		"cross_references": crossRefs,
 	}
 }
 
