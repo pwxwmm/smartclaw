@@ -2730,8 +2730,8 @@ body.panel-active .panel-area { opacity: 1; pointer-events: auto; }
 .wr-agent-check-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .wr-agent-check-label { color:var(--tx-1); }
 
-.wr-session-body { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; padding:16px 20px; overflow-y:auto; flex:1; min-height:0; }
-.wr-agents-panel, .wr-findings-panel, .wr-timeline-panel { display:flex; flex-direction:column; min-height:0; }
+.wr-session-body { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:16px; padding:16px 20px; overflow-y:auto; flex:1; min-height:0; }
+.wr-agents-panel, .wr-findings-panel, .wr-blackboard-panel, .wr-timeline-panel { display:flex; flex-direction:column; min-height:0; }
 .wr-section-title { font-size:13px; font-weight:600; color:var(--tx-2); text-transform:uppercase; letter-spacing:.5px; margin:0 0 12px; }
 
 .wr-agents-grid { display:flex; flex-direction:column; gap:8px; }
@@ -2790,3 +2790,38 @@ body.panel-active .panel-area { opacity: 1; pointer-events: auto; }
 .wr-phase-tag { display:inline-flex; align-items:center; padding:2px 10px; border-radius:10px; font-size:11px; font-weight:600; }
 .wr-phase-active { background:rgba(139,92,246,.15); color:#a78bfa; }
 .wr-phase-done { background:rgba(34,197,94,.15); color:#22c55e; }
+
+/* War Room Blackboard */
+.wr-blackboard-panel { display:flex; flex-direction:column; min-height:0; }
+.wr-bb-section { margin-bottom:12px; }
+.wr-bb-section-label { font-size:11px; font-weight:600; color:var(--tx-2); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
+.wr-bb-entry { display:flex; align-items:center; gap:6px; padding:4px 0; font-size:11px; color:var(--tx-2); border-bottom:1px solid var(--glass-border-light); }
+.wr-bb-entry:last-child { border-bottom:none; }
+.wr-bb-entry-author { flex-shrink:0; font-size:12px; }
+.wr-bb-entry-value { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--tx-1); }
+.wr-bb-entry-category { font-size:10px; padding:1px 6px; border-radius:4px; background:var(--glass-bg-strong); color:var(--tx-2); flex-shrink:0; }
+.wr-bb-hypothesis { padding:8px 10px; border-radius:8px; margin-bottom:6px; overflow:hidden; }
+.wr-bb-hyp-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+.wr-bb-hyp-status { font-size:10px; padding:1px 8px; border-radius:10px; font-weight:600; }
+.wr-bb-hyp-proposed { background:rgba(139,92,246,.15); color:#a78bfa; }
+.wr-bb-hyp-confirmed { background:rgba(34,197,94,.15); color:#22c55e; }
+.wr-bb-hyp-refuted { background:rgba(239,68,68,.15); color:#ef4444; }
+.wr-bb-hyp-conf { font-size:11px; font-weight:600; color:var(--accent); }
+.wr-bb-hyp-desc { font-size:12px; color:var(--tx-1); line-height:1.4; position:relative; z-index:3; }
+.wr-bb-hyp-meta { display:flex; align-items:center; gap:8px; margin-top:4px; font-size:10px; color:var(--tx-2); }
+.wr-bb-hyp-evidence { margin-left:auto; }
+.wr-bb-shared-fact { padding:8px 10px; border-radius:8px; margin-bottom:6px; overflow:hidden; }
+.wr-bb-fact-content { font-size:12px; color:var(--tx-1); line-height:1.4; position:relative; z-index:3; }
+.wr-bb-fact-meta { display:flex; align-items:center; gap:8px; margin-top:4px; font-size:10px; color:var(--tx-2); position:relative; z-index:3; }
+.wr-bb-fact-confirmed { background:rgba(34,197,94,.12); color:#22c55e; padding:1px 6px; border-radius:4px; font-weight:600; }
+.wr-bb-fact-conf { margin-left:auto; color:var(--accent); font-weight:600; }
+
+/* War Room Cross References */
+.wr-finding-crossrefs { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; position:relative; z-index:3; }
+.wr-crossref { display:inline-flex; align-items:center; gap:3px; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; background:var(--glass-bg-strong); }
+.wr-crossref-agree { color:#22c55e; border:1px solid rgba(34,197,94,.2); }
+.wr-crossref-disagree { color:#ef4444; border:1px solid rgba(239,68,68,.2); }
+
+/* War Room Handoff Indicator */
+.wr-agent-handoff { display:inline-flex; align-items:center; gap:2px; font-size:12px; color:var(--accent); margin-left:4px; animation:wr-fade-in .3s ease both; position:relative; z-index:3; }
+.wr-handoff-arrow { font-size:11px; font-weight:700; color:var(--accent); }

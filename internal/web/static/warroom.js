@@ -17,7 +17,9 @@
     activeSessionId: null,
     agentStatuses: {},
     findings: [],
-    timeline: []
+    timeline: [],
+    blackboard: { entries: [], hypotheses: [], sharedFacts: [] },
+    handoffs: []
   };
 
   function agentMeta(type) {
@@ -30,7 +32,32 @@
   }
 
   function phaseLabel(evt) {
-    var map = { dispatch_plan: '📋 调度计划', phase1_complete: '✅ Phase 1 并行排查完成', phase2_started: '🧠 Phase 2 推理启动', phase2_complete: '✅ Phase 2 推理完成', agent_running: '排查中', agent_complete: '已完成', agent_failed: '排查失败', agent_spawning: '启动中', war_room_started: '🚀 War Room 启动', session_created: '会话创建', session_closed: '会话关闭', finding_submitted: '发现提交', task_assigned: '任务分配' };
+    var map = {
+      dispatch_plan: '📋 调度计划',
+      phase1_complete: '✅ Phase 1 并行排查完成',
+      phase2_started: '🧠 Phase 2 推理启动',
+      phase2_complete: '✅ Phase 2 推理完成',
+      phase3_started: '🔍 Phase 3 扩展排查启动',
+      phase3_complete: '✅ Phase 3 扩展排查完成',
+      phase4_started: '🎯 Phase 4 终极分析启动',
+      phase4_complete: '✅ Phase 4 终极分析完成',
+      agent_running: '排查中',
+      agent_complete: '已完成',
+      agent_failed: '排查失败',
+      agent_spawning: '启动中',
+      phase3_agent_started: 'Phase 3 专家启动',
+      war_room_started: '🚀 War Room 启动',
+      session_created: '会话创建',
+      session_closed: '会话关闭',
+      finding_submitted: '发现提交',
+      task_assigned: '任务分配',
+      handoff_request: '🤝 请求协助',
+      handoff_response: '🤝 协助回复',
+      confidence_evolved: '📊 置信度变化',
+      blackboard_entry_added: '📝 共享观察',
+      hypothesis_added: '💡 假设提出',
+      shared_fact_added: '✓ 共享事实'
+    };
     return map[evt] || evt;
   }
 
@@ -52,13 +79,21 @@
 
   function renderPhaseIndicator(session) {
     var timeline = session.timeline || [];
+    var hasPhase1Complete = false;
     var hasPhase2Start = false;
     var hasPhase2Complete = false;
-    var hasPhase1Complete = false;
+    var hasPhase3Start = false;
+    var hasPhase3Complete = false;
+    var hasPhase4Start = false;
+    var hasPhase4Complete = false;
     for (var i = 0; i < timeline.length; i++) {
       if (timeline[i].event === 'phase1_complete') hasPhase1Complete = true;
       if (timeline[i].event === 'phase2_started') hasPhase2Start = true;
       if (timeline[i].event === 'phase2_complete') hasPhase2Complete = true;
+      if (timeline[i].event === 'phase3_started') hasPhase3Start = true;
+      if (timeline[i].event === 'phase3_complete') hasPhase3Complete = true;
+      if (timeline[i].event === 'phase4_started') hasPhase4Start = true;
+      if (timeline[i].event === 'phase4_complete') hasPhase4Complete = true;
     }
 
     var p1DotCls = 'wr-phase-step-dot' + (hasPhase1Complete ? ' wr-phase-dot-done' : ' wr-phase-dot-active');
@@ -66,6 +101,7 @@
     var p1Label = hasPhase1Complete ? 'Phase 1 ✓' : 'Phase 1';
 
     var line1Cls = 'wr-phase-step-line' + (hasPhase1Complete ? ' wr-phase-line-done' : '');
+
     var p2DotCls = 'wr-phase-step-dot';
     var p2LabelCls = 'wr-phase-step-label';
     var p2Label = 'Phase 2';
@@ -79,16 +115,41 @@
     }
 
     var line2Cls = 'wr-phase-step-line' + (hasPhase2Complete ? ' wr-phase-line-done' : '');
-    var finDotCls = 'wr-phase-step-dot' + (hasPhase2Complete ? ' wr-phase-dot-active' : '');
-    var finLabelCls = 'wr-phase-step-label' + (hasPhase2Complete ? ' wr-phase-label-active' : '');
-    var finLabel = '完成';
+
+    var p3DotCls = 'wr-phase-step-dot';
+    var p3LabelCls = 'wr-phase-step-label';
+    var p3Label = 'Phase 3';
+    if (hasPhase3Complete) {
+      p3DotCls += ' wr-phase-dot-done';
+      p3LabelCls += ' wr-phase-label-done';
+      p3Label = 'Phase 3 ✓';
+    } else if (hasPhase3Start) {
+      p3DotCls += ' wr-phase-dot-active';
+      p3LabelCls += ' wr-phase-label-active';
+    }
+
+    var line3Cls = 'wr-phase-step-line' + (hasPhase3Complete ? ' wr-phase-line-done' : '');
+
+    var p4DotCls = 'wr-phase-step-dot';
+    var p4LabelCls = 'wr-phase-step-label';
+    var p4Label = 'Phase 4';
+    if (hasPhase4Complete) {
+      p4DotCls += ' wr-phase-dot-done';
+      p4LabelCls += ' wr-phase-label-done';
+      p4Label = 'Phase 4 ✓';
+    } else if (hasPhase4Start) {
+      p4DotCls += ' wr-phase-dot-active';
+      p4LabelCls += ' wr-phase-label-active';
+    }
 
     return '<div class="wr-phase-stepper">' +
       '<div class="wr-phase-step"><div class="' + p1DotCls + '"></div><span class="' + p1LabelCls + '">' + p1Label + '</span></div>' +
       '<div class="' + line1Cls + '"></div>' +
       '<div class="wr-phase-step"><div class="' + p2DotCls + '"></div><span class="' + p2LabelCls + '">' + p2Label + '</span></div>' +
       '<div class="' + line2Cls + '"></div>' +
-      '<div class="wr-phase-step"><div class="' + finDotCls + '"></div><span class="' + finLabelCls + '">' + finLabel + '</span></div>' +
+      '<div class="wr-phase-step"><div class="' + p3DotCls + '"></div><span class="' + p3LabelCls + '">' + p3Label + '</span></div>' +
+      '<div class="' + line3Cls + '"></div>' +
+      '<div class="wr-phase-step"><div class="' + p4DotCls + '"></div><span class="' + p4LabelCls + '">' + p4Label + '</span></div>' +
     '</div>';
   }
 
@@ -234,12 +295,25 @@
       return;
     }
 
+    var bb = session.blackboard || state.blackboard;
+
     var agentsHtml = '';
     var agentTypes = session.agents || [];
     agentTypes.forEach(function(a) {
       var m = agentMeta(a.agent_type);
       var sc = statusClass(state.agentStatuses[a.agent_type] || a.status);
       var findingsCount = a.findings ? a.findings.length : 0;
+      var handoffHtml = '';
+      for (var hi = 0; hi < state.handoffs.length; hi++) {
+        var ho = state.handoffs[hi];
+        if (ho.from_agent === a.agent_type) {
+          var toM = agentMeta(ho.to_agent);
+          handoffHtml = '<span class="wr-agent-handoff" title="请求 ' + toM.label + ' 协助"><span class="wr-handoff-arrow">→</span>' + toM.icon + '</span>';
+        } else if (ho.to_agent === a.agent_type) {
+          var fromM = agentMeta(ho.from_agent);
+          handoffHtml = '<span class="wr-agent-handoff" title="协助 ' + fromM.label + '"><span class="wr-handoff-arrow">←</span>' + fromM.icon + '</span>';
+        }
+      }
       agentsHtml += '<div class="wr-agent-card liquid-glass-light ' + sc + '" data-agent-type="' + SC.escapeHtml(a.agent_type) + '">' +
         '<div class="wr-agent-icon" style="background:' + m.color + '20;color:' + m.color + '">' + m.icon + '</div>' +
         '<div class="wr-agent-info">' +
@@ -247,6 +321,7 @@
           '<div class="wr-agent-status ' + sc + '">' + statusLabel(state.agentStatuses[a.agent_type] || a.status) + '</div>' +
         '</div>' +
         '<div class="wr-agent-findings-count">' + findingsCount + '</div>' +
+        handoffHtml +
       '</div>';
     });
 
@@ -258,6 +333,17 @@
       var isRootCause = f.category === 'root_cause';
       var findingCls = 'wr-finding liquid-glass-light' + (isRootCause ? ' wr-finding-root-cause' : '');
       var barColor = confidencePct >= 80 ? '#22c55e' : (confidencePct >= 50 ? '#f59e0b' : '#ef4444');
+      var crossRefHtml = '';
+      if (f.cross_references && f.cross_references.length > 0) {
+        crossRefHtml = '<div class="wr-finding-crossrefs">';
+        f.cross_references.forEach(function(cr) {
+          var crMeta = agentMeta(cr.referenced_by);
+          var crIcon = cr.agrees ? '✅' : '❌';
+          var crCls = cr.agrees ? 'wr-crossref-agree' : 'wr-crossref-disagree';
+          crossRefHtml += '<span class="wr-crossref ' + crCls + '">' + crIcon + ' ' + crMeta.icon + ' ' + SC.escapeHtml(crMeta.label) + '</span>';
+        });
+        crossRefHtml += '</div>';
+      }
       findingsHtml += '<div class="' + findingCls + '">' +
         '<div class="wr-finding-head">' +
           '<span class="wr-finding-agent" style="color:' + m.color + '">' + m.icon + ' ' + SC.escapeHtml(m.label) + '</span>' +
@@ -267,6 +353,7 @@
         '</div>' +
         '<div class="wr-finding-title">' + SC.escapeHtml(f.title || '') + '</div>' +
         '<div class="wr-finding-desc">' + SC.escapeHtml(f.description || '') + '</div>' +
+        crossRefHtml +
       '</div>';
     });
 
@@ -283,6 +370,8 @@
         '</div>' +
       '</div>';
     });
+
+    var blackboardHtml = renderBlackboardContent(bb);
 
     container.innerHTML =
       '<div class="wr-header">' +
@@ -306,6 +395,10 @@
           '<h3 class="wr-section-title">发现 (' + allFindings.length + ')</h3>' +
           '<div class="wr-findings-list">' + (findingsHtml || '<div class="wr-empty-sm">暂无发现</div>') + '</div>' +
         '</div>' +
+        '<div class="wr-blackboard-panel">' +
+          '<h3 class="wr-section-title">共享黑板</h3>' +
+          blackboardHtml +
+        '</div>' +
         '<div class="wr-timeline-panel">' +
           '<h3 class="wr-section-title">时间线</h3>' +
           '<div class="wr-timeline-list">' + (timelineHtml || '<div class="wr-empty-sm">暂无记录</div>') + '</div>' +
@@ -317,6 +410,8 @@
       state.agentStatuses = {};
       state.findings = [];
       state.timeline = [];
+      state.blackboard = { entries: [], hypotheses: [], sharedFacts: [] };
+      state.handoffs = [];
       SC.wsSend('warroom_list', {});
       renderSessionList(container);
     });
@@ -366,6 +461,75 @@
     });
   }
 
+  function renderBlackboardContent(bb) {
+    var entries = bb.entries || [];
+    var hypotheses = bb.hypotheses || [];
+    var sharedFacts = bb.sharedFacts || [];
+
+    if (entries.length === 0 && hypotheses.length === 0 && sharedFacts.length === 0) {
+      return '<div class="wr-empty-sm">暂无共享数据</div>';
+    }
+
+    var html = '';
+
+    if (sharedFacts.length > 0) {
+      html += '<div class="wr-bb-section"><div class="wr-bb-section-label">✓ 共享事实</div>';
+      sharedFacts.forEach(function(f) {
+        var srcM = agentMeta(f.source);
+        var confPct = Math.round((f.confidence || 0) * 100);
+        var confirmedCount = f.confirmed_by ? f.confirmed_by.length : 0;
+        html += '<div class="wr-bb-shared-fact liquid-glass-light">' +
+          '<div class="wr-bb-fact-content">' + SC.escapeHtml(f.content) + '</div>' +
+          '<div class="wr-bb-fact-meta">' +
+            '<span style="color:' + srcM.color + '">' + srcM.icon + ' ' + SC.escapeHtml(srcM.label) + '</span>' +
+            '<span class="wr-bb-fact-confirmed">' + confirmedCount + ' 确认</span>' +
+            '<span class="wr-bb-fact-conf">' + confPct + '%</span>' +
+          '</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (hypotheses.length > 0) {
+      html += '<div class="wr-bb-section"><div class="wr-bb-section-label">💡 假设</div>';
+      hypotheses.forEach(function(h) {
+        var propM = agentMeta(h.proposed_by);
+        var hConfPct = Math.round((h.confidence || 0) * 100);
+        var statusCls = h.status === 'confirmed' ? 'wr-bb-hyp-confirmed' : (h.status === 'refuted' ? 'wr-bb-hyp-refuted' : 'wr-bb-hyp-proposed');
+        var statusLabel = h.status === 'confirmed' ? '已确认' : (h.status === 'refuted' ? '已否决' : '待验证');
+        var supCount = h.supporting_evidence ? h.supporting_evidence.length : 0;
+        var conCount = h.contradicting_evidence ? h.contradicting_evidence.length : 0;
+        html += '<div class="wr-bb-hypothesis liquid-glass-light">' +
+          '<div class="wr-bb-hyp-head">' +
+            '<span class="wr-bb-hyp-status ' + statusCls + '">' + statusLabel + '</span>' +
+            '<span class="wr-bb-hyp-conf">' + hConfPct + '%</span>' +
+          '</div>' +
+          '<div class="wr-bb-hyp-desc">' + SC.escapeHtml(h.description) + '</div>' +
+          '<div class="wr-bb-hyp-meta">' +
+            '<span style="color:' + propM.color + '">' + propM.icon + ' ' + SC.escapeHtml(propM.label) + '</span>' +
+            '<span class="wr-bb-hyp-evidence">✅' + supCount + ' ❌' + conCount + '</span>' +
+          '</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (entries.length > 0) {
+      html += '<div class="wr-bb-section"><div class="wr-bb-section-label">📝 共享观察</div>';
+      entries.slice().reverse().forEach(function(e) {
+        var eM = agentMeta(e.author);
+        html += '<div class="wr-bb-entry">' +
+          '<span class="wr-bb-entry-author" style="color:' + eM.color + '">' + eM.icon + '</span>' +
+          '<span class="wr-bb-entry-value">' + SC.escapeHtml(e.value) + '</span>' +
+          '<span class="wr-bb-entry-category">' + SC.escapeHtml(e.category || '') + '</span>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    return html;
+  }
+
   function renderAssignTaskForm(session) {
     var options = '';
     (session.agents || []).forEach(function(a) {
@@ -399,6 +563,15 @@
     state.agentStatuses = {};
     state.findings = [];
     state.timeline = [];
+    state.blackboard = { entries: [], hypotheses: [], sharedFacts: [] };
+    state.handoffs = [];
+    if (data.blackboard) {
+      state.blackboard = {
+        entries: data.blackboard.entries || [],
+        hypotheses: data.blackboard.hypotheses || [],
+        sharedFacts: data.blackboard.shared_facts || []
+      };
+    }
     renderWarRoomView();
   }
 
@@ -408,6 +581,13 @@
         state.sessions[i] = data;
         break;
       }
+    }
+    if (data.blackboard) {
+      state.blackboard = {
+        entries: data.blackboard.entries || [],
+        hypotheses: data.blackboard.hypotheses || [],
+        sharedFacts: data.blackboard.shared_facts || []
+      };
     }
     renderWarRoomView();
   }
@@ -454,6 +634,41 @@
     SC.wsSend('warroom_list', {});
   }
 
+  function handleWarRoomBlackboardUpdate(data) {
+    if (state.activeSessionId === data.session_id) {
+      if (data.entries) {
+        state.blackboard.entries = data.entries;
+      }
+      if (data.hypotheses) {
+        state.blackboard.hypotheses = data.hypotheses;
+      }
+      if (data.shared_facts) {
+        state.blackboard.sharedFacts = data.shared_facts;
+      }
+      renderActiveSession(SC.$('#view-warroom'));
+    }
+  }
+
+  function handleWarRoomHandoff(data) {
+    if (state.activeSessionId === data.session_id) {
+      state.handoffs.push(data);
+      renderActiveSession(SC.$('#view-warroom'));
+    }
+  }
+
+  function handleWarRoomConfidenceChange(data) {
+    if (state.activeSessionId === data.session_id) {
+      var findings = state.findings.length > 0 ? state.findings : [];
+      for (var i = 0; i < findings.length; i++) {
+        if (findings[i].id === data.finding_id) {
+          findings[i].confidence = data.new_confidence;
+          break;
+        }
+      }
+      renderActiveSession(SC.$('#view-warroom'));
+    }
+  }
+
   SC.warroom = {
     render: renderWarRoomView,
     showNewForm: renderNewForm,
@@ -464,6 +679,9 @@
     handleAgentStatus: handleWarRoomAgentStatus,
     handleFindings: handleWarRoomFindings,
     handleTimeline: handleWarRoomTimeline,
-    handleUpdate: handleWarRoomUpdate
+    handleUpdate: handleWarRoomUpdate,
+    handleBlackboardUpdate: handleWarRoomBlackboardUpdate,
+    handleHandoff: handleWarRoomHandoff,
+    handleConfidenceChange: handleWarRoomConfidenceChange
   };
 })();

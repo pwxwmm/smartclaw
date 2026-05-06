@@ -264,6 +264,15 @@
       case 'warroom_update':
         if (SC.warroom) SC.warroom.handleUpdate(msg.data || {});
         break;
+      case 'warroom_blackboard_update':
+        if (SC.warroom) SC.warroom.handleBlackboardUpdate(msg.data || {});
+        break;
+      case 'warroom_handoff':
+        if (SC.warroom) SC.warroom.handleHandoff(msg.data || {});
+        break;
+      case 'warroom_confidence_change':
+        if (SC.warroom) SC.warroom.handleConfidenceChange(msg.data || {});
+        break;
       case 'done':
         SC.finishMessage(msg);
         break;
