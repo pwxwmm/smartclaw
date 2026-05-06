@@ -38,6 +38,8 @@ func RegisterAllTools() {
 	tools.Register(&WarRoomStartTool{})
 	tools.Register(&WarRoomStatusTool{})
 	tools.Register(&WarRoomStopTool{})
+	tools.Register(&WarRoomHandoffTool{})
+	tools.Register(&WarRoomEvaluateTool{})
 }
 
 type WarRoomStartTool struct{}
@@ -188,4 +190,156 @@ func (t *WarRoomStopTool) Execute(ctx context.Context, input map[string]any) (an
 		return nil, err
 	}
 	return result, nil
+}
+
+type WarRoomHandoffTool struct{}
+
+func (t *WarRoomHandoffTool) Name() string { return "warroom_handoff" }
+func (t *WarRoomHandoffTool) Description() string {
+	return "Request another agent in the War Room to investigate a specific question. Use when you need information from a different domain expert."
+}
+func (t *WarRoomHandoffTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"session_id": map[string]any{
+				"type":        "string",
+				"description": "War room session ID",
+			},
+			"target_agent": map[string]any{
+				"type":        "string",
+				"description": "The agent to ask (network, database, infra, app, security, training, inference)",
+			},
+			"question": map[string]any{
+				"type":        "string",
+				"description": "The specific question to ask the other agent",
+			},
+			"context": map[string]any{
+				"type":        "string",
+				"description": "Additional context for the question",
+			},
+			"priority": map[string]any{
+				"type":        "string",
+				"description": "Priority level: low, medium, or high",
+			},
+		},
+		"required": []string{"session_id", "target_agent", "question"},
+	}
+}
+
+func (t *WarRoomHandoffTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	sessionID, _ := input["session_id"].(string)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	targetAgent, _ := input["target_agent"].(string)
+	if targetAgent == "" {
+		return nil, fmt.Errorf("target_agent is required")
+	}
+	question, _ := input["question"].(string)
+	if question == "" {
+		return nil, fmt.Errorf("question is required")
+	}
+	contextStr, _ := input["context"].(string)
+	priority, _ := input["priority"].(string)
+	if priority == "" {
+		priority = "medium"
+	}
+
+	coordinator := getCoordinator()
+	req := HandoffRequest{
+		FromAgent: AgentReasoning,
+		ToAgent:   DomainAgentType(targetAgent),
+		Question:  question,
+		Context:   contextStr,
+		Priority:  priority,
+	}
+	resp, err := coordinator.RequestHandoff(ctx, sessionID, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+type WarRoomEvaluateTool struct{}
+
+func (t *WarRoomEvaluateTool) Name() string { return "warroom_evaluate" }
+func (t *WarRoomEvaluateTool) Description() string {
+	return "Evaluate a finding from another agent. Agree or disagree with findings and adjust their confidence."
+}
+func (t *WarRoomEvaluateTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"session_id": map[string]any{
+				"type":        "string",
+				"description": "War room session ID",
+			},
+			"finding_id": map[string]any{
+				"type":        "string",
+				"description": "The ID of the finding to evaluate",
+			},
+			"agrees": map[string]any{
+				"type":        "boolean",
+				"description": "Whether you agree with this finding",
+			},
+			"confidence_adjustment": map[string]any{
+				"type":        "number",
+				"description": "Confidence adjustment (-0.3 to +0.3)",
+			},
+			"notes": map[string]any{
+				"type":        "string",
+				"description": "Explanation for your evaluation",
+			},
+		},
+		"required": []string{"session_id", "finding_id", "agrees"},
+	}
+}
+
+func (t *WarRoomEvaluateTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	sessionID, _ := input["session_id"].(string)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	findingID, _ := input["finding_id"].(string)
+	if findingID == "" {
+		return nil, fmt.Errorf("finding_id is required")
+	}
+	agrees, _ := input["agrees"].(bool)
+	adjustment, _ := input["confidence_adjustment"].(float64)
+	notes, _ := input["notes"].(string)
+
+	if adjustment == 0 {
+		if agrees {
+			adjustment = 0.05
+		} else {
+			adjustment = -0.05
+		}
+	}
+
+	coordinator := getCoordinator()
+	coordinator.EvolveConfidence(sessionID, findingID, adjustment, notes)
+
+	session := coordinator.GetSession(sessionID)
+	if session != nil {
+		for i := range session.Findings {
+			if session.Findings[i].ID == findingID {
+				xref := CrossReference{
+					FindingID:    findingID,
+					ReferencedBy: AgentReasoning,
+					Agrees:       agrees,
+					Notes:        notes,
+				}
+				session.Findings[i].CrossReferences = append(session.Findings[i].CrossReferences, xref)
+				break
+			}
+		}
+	}
+
+	return map[string]any{
+		"finding_id":  findingID,
+		"agrees":      agrees,
+		"adjustment":  adjustment,
+		"status":      "evaluated",
+	}, nil
 }
