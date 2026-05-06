@@ -25,6 +25,8 @@
       SC.renderCronPanel();
     } else if (viewName === 'privacy') {
       if (typeof SC.initPrivacy === 'function') SC.initPrivacy();
+    } else if (viewName === 'warroom') {
+      if (SC.warroom && SC.warroom.render) SC.warroom.render();
     } else if (viewName === 'settings') {
       syncSettingsToView();
     }
@@ -290,6 +292,21 @@
     initDirPicker();
     if (typeof SC.renderAgentSwitcher === 'function') SC.renderAgentSwitcher();
 
+    document.addEventListener('click', function(e) {
+      var newBtn = e.target.closest('#wr-new-btn');
+      if (newBtn && SC.warroom && SC.warroom.showNewForm) {
+        SC.warroom.showNewForm();
+      }
+      var sessionCard = e.target.closest('.wr-session-card');
+      if (sessionCard && SC.warroom) {
+        var sid = sessionCard.dataset.sessionId;
+        if (sid) {
+          SC.warroom.handleStarted({ id: sid });
+          SC.wsSend('warroom_status', { session_id: sid });
+        }
+      }
+    });
+
     if (SC.isDesktop) {
       var winMin = SC.$('#win-minimize');
       var winMax = SC.$('#win-maximize');
@@ -474,7 +491,7 @@
         }
 
         // Full-page views
-        var fullPageViews = ['sessions', 'settings', 'agents', 'skills', 'memory', 'mcp', 'wiki'];
+	var fullPageViews = ['sessions', 'settings', 'agents', 'skills', 'memory', 'mcp', 'wiki', 'warroom'];
         if (fullPageViews.indexOf(viewName) >= 0) {
           SC.$$('.view').forEach(function(v) { v.classList.remove('active'); });
           var targetView = SC.$('#view-' + viewName);

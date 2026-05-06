@@ -225,6 +225,9 @@
       }
     } else if (section === 'cron') {
       SC.renderCronPanel();
+    } else if (section === 'warroom') {
+      SC.wsSend('warroom_list', {});
+      if (SC.warroom && SC.warroom.render) SC.warroom.render();
     } else if (section === 'settings') {
       if (typeof SC.syncSettingsToView === 'function') SC.syncSettingsToView();
     }

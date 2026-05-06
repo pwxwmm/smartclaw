@@ -240,6 +240,30 @@
       case 'agent_output':
         SC.renderAgentOutput(msg.data);
         break;
+      case 'warroom_list':
+        if (SC.warroom) SC.warroom.handleList(msg.data || {});
+        break;
+      case 'warroom_started':
+        if (SC.warroom) SC.warroom.handleStarted(msg.data || {});
+        break;
+      case 'warroom_status':
+        if (SC.warroom) SC.warroom.handleStatus(msg.data || {});
+        break;
+      case 'warroom_stopped':
+        if (SC.warroom) SC.warroom.handleStopped(msg.data || {});
+        break;
+      case 'warroom_agent_status':
+        if (SC.warroom) SC.warroom.handleAgentStatus(msg.data || {});
+        break;
+      case 'warroom_findings':
+        if (SC.warroom) SC.warroom.handleFindings(msg.data || {});
+        break;
+      case 'warroom_timeline':
+        if (SC.warroom) SC.warroom.handleTimeline(msg.data || {});
+        break;
+      case 'warroom_update':
+        if (SC.warroom) SC.warroom.handleUpdate(msg.data || {});
+        break;
       case 'done':
         SC.finishMessage(msg);
         break;
