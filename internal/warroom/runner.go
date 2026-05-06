@@ -146,6 +146,8 @@ func (r *LLMAgentRunner) RunAgent(ctx context.Context, agentType DomainAgentType
 				result, toolErr = r.executeHandoffTool(ctx, opt.SessionID, agentType, block.Input)
 			} else if block.Name == "warroom_evaluate" && opt.SessionID != "" && r.coordinator != nil {
 				result, toolErr = r.executeEvaluateTool(ctx, opt.SessionID, agentType, block.Input)
+			} else if block.Name == "warroom_blackboard_write" && opt.SessionID != "" && r.coordinator != nil {
+				result, toolErr = r.executeBlackboardWriteTool(opt.SessionID, agentType, block.Input)
 			} else {
 				result, toolErr = r.executeAgentTool(ctx, block.Name, block.Input)
 			}
@@ -265,6 +267,37 @@ func (r *LLMAgentRunner) executeEvaluateTool(ctx context.Context, sessionID stri
 	return fmt.Sprintf("Finding %s evaluated: agrees=%v, adjustment=%.2f", findingID, agrees, adjustment), nil
 }
 
+func (r *LLMAgentRunner) executeBlackboardWriteTool(sessionID string, agentType DomainAgentType, input map[string]any) (any, error) {
+	key, _ := input["key"].(string)
+	value, _ := input["value"].(string)
+	category, _ := input["category"].(string)
+
+	if key == "" {
+		return nil, fmt.Errorf("key is required")
+	}
+	if value == "" {
+		return nil, fmt.Errorf("value is required")
+	}
+	if category == "" {
+		category = "observation"
+	}
+
+	bb, ok := r.coordinator.GetBlackboard(sessionID)
+	if !ok || bb == nil {
+		return nil, fmt.Errorf("blackboard not found for session %s", sessionID)
+	}
+
+	bb.WriteEntry(BlackboardEntry{
+		Key:       key,
+		Value:     value,
+		Author:    agentType,
+		Category:  category,
+		Timestamp: time.Now(),
+	})
+
+	return fmt.Sprintf("Written to blackboard: [%s] %s (category: %s)", key, value, category), nil
+}
+
 func (r *LLMAgentRunner) RunAgentAsync(ctx context.Context, sessionID string, agentType DomainAgentType, task string, agentTools []string) {
 	agentCtx, cancel := context.WithCancel(ctx)
 	key := sessionID + ":" + string(agentType)
@@ -348,6 +381,10 @@ func buildAgentSystemPrompt(agent DomainAgent, task string) string {
 	sb.WriteString(fmt.Sprintf("\nFocus areas: %s\n", strings.Join(agent.FocusAreas, ", ")))
 	sb.WriteString("\nUse your available tools to investigate. Be concise and focused.\n")
 	sb.WriteString("Report your findings clearly with evidence.\n")
+	sb.WriteString("\nCollaboration tools available:\n")
+	sb.WriteString("- warroom_handoff: Ask another domain expert a specific question\n")
+	sb.WriteString("- warroom_evaluate: Agree/disagree with findings from other agents\n")
+	sb.WriteString("- warroom_blackboard_write: Share observations with other agents on the shared blackboard\n")
 	return sb.String()
 }
 
@@ -391,7 +428,7 @@ func buildAgentAPITools(toolNames []string) []api.ToolDefinition {
 	warroomTools := []api.ToolDefinition{
 		{
 			Name:        "warroom_handoff",
-			Description: "Request another agent in the War Room to investigate a specific question. Use this when you need information from a different domain expert.",
+			Description: "Request another agent in the War Room to investigate a specific question. Use this when you need information from a different domain expert. Session ID is injected automatically.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -417,7 +454,7 @@ func buildAgentAPITools(toolNames []string) []api.ToolDefinition {
 		},
 		{
 			Name:        "warroom_evaluate",
-			Description: "Evaluate a finding from another agent. Use this to agree or disagree with findings and adjust their confidence.",
+			Description: "Evaluate a finding from another agent. Use this to agree or disagree with findings and adjust their confidence. Session ID is injected automatically.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -439,6 +476,28 @@ func buildAgentAPITools(toolNames []string) []api.ToolDefinition {
 					},
 				},
 				"required": []string{"finding_id", "agrees"},
+			},
+		},
+		{
+			Name:        "warroom_blackboard_write",
+			Description: "Write an observation or finding to the shared blackboard so other agents can see it. Use this to share important observations with the team.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key": map[string]any{
+						"type":        "string",
+						"description": "A short key for this observation (e.g. 'gpu_memory_status', 'error_pattern')",
+					},
+					"value": map[string]any{
+						"type":        "string",
+						"description": "The observation content",
+					},
+					"category": map[string]any{
+						"type":        "string",
+						"description": "Category: observation, metric, log_excerpt, hypothesis",
+					},
+				},
+				"required": []string{"key", "value"},
 			},
 		},
 	}
