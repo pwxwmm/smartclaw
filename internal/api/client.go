@@ -141,6 +141,46 @@ func (c *Client) CreateMessageWithSystem(ctx context.Context, messages []Message
 	return sdkMessageToResponse(msg), nil
 }
 
+func (c *Client) CreateMessageWithTools(ctx context.Context, messages []Message, system any, tools []ToolDefinition) (*MessageResponse, error) {
+	if len(tools) == 0 {
+		return c.CreateMessageWithSystem(ctx, messages, system)
+	}
+
+	provider := c.providerName()
+	destHost := c.destinationHost()
+	systemPromptLen := c.systemPromptLength(system)
+	toolCount := len(tools)
+	dataCategories := c.dataCategories(messages, system, toolCount)
+
+	start := time.Now()
+
+	if c.IsOpenAI {
+		c.ensureOpenAISDKClient()
+
+		var systemStr string
+		if sb, ok := system.([]SystemBlock); ok && len(sb) > 0 {
+			systemStr = sb[0].Text
+		} else if s, ok := system.(string); ok {
+			systemStr = s
+		}
+
+		params := buildSDKOpenAIParamsWithTools(messages, systemStr, c.Model, constants.APIRequestMaxTokens, tools)
+
+		comp, err := c.openaiSDKClient.Chat.Completions.New(ctx, params)
+		elapsed := time.Since(start)
+		resp := sdkCompletionToResponseIfNoError(comp, err)
+		c.recordOutboundAudit(provider, destHost, c.Model, len(messages), systemPromptLen, toolCount, resp, err, elapsed, dataCategories)
+		if err != nil {
+			return nil, apperrors.Wrap(err, "OPENAI_API_ERROR", "OpenAI API error",
+				apperrors.WithCategory(apperrors.CategoryNetwork))
+		}
+
+		return sdkCompletionToResponse(comp), nil
+	}
+
+	return c.CreateMessageWithSystem(ctx, messages, system)
+}
+
 func (c *Client) ensureSDKClient() {
 	if c.APIKey != "" && c.sdkClient.Options == nil {
 		c.sdkClient = newAnthropicSDKClient(c.APIKey, c.BaseURL, c.ProviderHeaders)

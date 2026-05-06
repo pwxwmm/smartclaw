@@ -113,7 +113,7 @@ func (r *LLMAgentRunner) RunAgent(ctx context.Context, agentType DomainAgentType
 			Tools:  agentAPITools,
 		}
 
-		resp, err := r.client.CreateMessageWithSystem(ctx, messages, req.System)
+		resp, err := r.client.CreateMessageWithTools(ctx, messages, req.System, agentAPITools)
 		if err != nil {
 			slog.Error("warroom: agent LLM call failed", "agent", agentType, "iteration", iteration, "error", err)
 			return allText.String(), err
