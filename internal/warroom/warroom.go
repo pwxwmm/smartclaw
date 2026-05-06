@@ -12,7 +12,7 @@ import (
 )
 
 type AgentRunner interface {
-	RunAgent(ctx context.Context, agentType DomainAgentType, task string, tools []string) (string, error)
+	RunAgent(ctx context.Context, agentType DomainAgentType, task string, tools []string, opts ...RunAgentOptions) (string, error)
 }
 
 type WarRoomCoordinator struct {
@@ -25,6 +25,8 @@ type WarRoomCoordinator struct {
 	executor    *StagedExecutor
 	dispatcher  *Dispatcher
 	maxSessions int
+	blackboards map[string]*Blackboard
+	handoff     *HandoffManager
 }
 
 func NewWarRoomCoordinator() *WarRoomCoordinator {
@@ -35,6 +37,8 @@ func NewWarRoomCoordinator() *WarRoomCoordinator {
 		cancels:     make(map[string]context.CancelFunc),
 		runner:      nil,
 		maxSessions: 50,
+		blackboards: make(map[string]*Blackboard),
+		handoff:     NewHandoffManager(),
 	}
 }
 
@@ -150,6 +154,8 @@ func (c *WarRoomCoordinator) StartWarRoom(ctx context.Context, req WarRoomReques
 	c.channels[sessionID] = agentChs
 	c.findings[sessionID] = findingsCh
 	c.cancels[sessionID] = cancel
+	c.blackboards[sessionID] = NewBlackboard(sessionID)
+	c.handoff.CreateSession(sessionID)
 	c.mu.Unlock()
 
 	metricWarRoomSessionsActive.Inc()
@@ -247,6 +253,8 @@ func (c *WarRoomCoordinator) SubmitFinding(sessionID string, agentType DomainAge
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
+	c.crossValidateFinding(s, &finding, agentType)
+
 	s.Findings = append(s.Findings, finding)
 	for i := range s.Agents {
 		if s.Agents[i].AgentType == agentType {
@@ -262,6 +270,15 @@ func (c *WarRoomCoordinator) SubmitFinding(sessionID string, agentType DomainAge
 		Details:   finding.Title,
 	})
 	c.mu.Unlock()
+
+	if bb, ok := c.GetBlackboard(sessionID); ok {
+		bb.WriteEntry(BlackboardEntry{
+			Key:      fmt.Sprintf("%s_%s", agentType, finding.Category),
+			Value:    fmt.Sprintf("%s: %s", finding.Title, finding.Description),
+			Author:   agentType,
+			Category: finding.Category,
+		})
+	}
 
 	metricWarRoomFindings.Inc()
 
@@ -289,6 +306,154 @@ func (c *WarRoomCoordinator) GetSession(sessionID string) *WarRoomSession {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.sessions[sessionID]
+}
+
+func (c *WarRoomCoordinator) GetBlackboard(sessionID string) (*Blackboard, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	bb, ok := c.blackboards[sessionID]
+	return bb, ok
+}
+
+func (c *WarRoomCoordinator) RequestHandoff(ctx context.Context, sessionID string, req HandoffRequest) (*HandoffResponse, error) {
+	return c.handoff.RequestHandoff(ctx, sessionID, req)
+}
+
+func (c *WarRoomCoordinator) SendHandoffResponse(sessionID string, resp HandoffResponse) error {
+	return c.handoff.SendResponse(sessionID, resp)
+}
+
+func (c *WarRoomCoordinator) TryRecvHandoff(sessionID string) (HandoffRequest, bool) {
+	return c.handoff.TryRecvRequest(sessionID)
+}
+
+func (c *WarRoomCoordinator) crossValidateFinding(s *WarRoomSession, finding *Finding, authorType DomainAgentType) {
+	for i := range s.Findings {
+		existing := &s.Findings[i]
+		if existing.AgentType == authorType {
+			continue
+		}
+		if existing.Category != finding.Category && !evidenceOverlap(existing.Evidence, finding.Evidence) {
+			continue
+		}
+
+		agrees := evidenceOverlap(existing.Evidence, finding.Evidence) ||
+			keywordOverlap(existing.Description, finding.Description)
+
+		xref := CrossReference{
+			FindingID:    existing.ID,
+			ReferencedBy: authorType,
+			Agrees:       agrees,
+			Notes:        fmt.Sprintf("Cross-validated with %s finding: %s", existing.AgentType, existing.Title),
+		}
+		finding.CrossReferences = append(finding.CrossReferences, xref)
+
+		reverseXref := CrossReference{
+			FindingID:    finding.ID,
+			ReferencedBy: existing.AgentType,
+			Agrees:       agrees,
+			Notes:        fmt.Sprintf("Cross-validated with %s finding: %s", authorType, finding.Title),
+		}
+		existing.CrossReferences = append(existing.CrossReferences, reverseXref)
+
+		if agrees {
+			delta := 0.05
+			if finding.Confidence+delta > 0.95 {
+				delta = 0.95 - finding.Confidence
+			}
+			finding.Confidence += delta
+
+			existingDelta := 0.05
+			if existing.Confidence+existingDelta > 0.95 {
+				existingDelta = 0.95 - existing.Confidence
+			}
+			existing.Confidence += existingDelta
+		} else {
+			delta := 0.05
+			if finding.Confidence-delta < 0.1 {
+				delta = finding.Confidence - 0.1
+			}
+			finding.Confidence -= delta
+
+			existingDelta := 0.05
+			if existing.Confidence-existingDelta < 0.1 {
+				existingDelta = existing.Confidence - 0.1
+			}
+			existing.Confidence -= existingDelta
+		}
+	}
+}
+
+func (c *WarRoomCoordinator) EvolveConfidence(sessionID string, findingID string, delta float64, reason string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	s, exists := c.sessions[sessionID]
+	if !exists {
+		return
+	}
+
+	for i := range s.Findings {
+		if s.Findings[i].ID == findingID {
+			s.Findings[i].Confidence += delta
+			if s.Findings[i].Confidence > 0.95 {
+				s.Findings[i].Confidence = 0.95
+			}
+			if s.Findings[i].Confidence < 0.1 {
+				s.Findings[i].Confidence = 0.1
+			}
+			s.Timeline = append(s.Timeline, TimelineEntry{
+				Timestamp: time.Now(),
+				Event:     "confidence_evolved",
+				Details:   fmt.Sprintf("Finding %s confidence adjusted by %.2f: %s", findingID, delta, reason),
+			})
+			return
+		}
+	}
+}
+
+func evidenceOverlap(a, b []string) bool {
+	for _, ea := range a {
+		for _, eb := range b {
+			if ea == eb {
+				return true
+			}
+			if len(ea) > 10 && len(eb) > 10 {
+				aLower := strings.ToLower(ea)
+				bLower := strings.ToLower(eb)
+				if strings.Contains(aLower, bLower) || strings.Contains(bLower, aLower) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func keywordOverlap(a, b string) bool {
+	aLower := strings.ToLower(a)
+	bLower := strings.ToLower(b)
+
+	keywords := []string{"error", "fail", "timeout", "crash", "oom", "latency", "down", "slow", "refused", "unavailable"}
+	aMatches := 0
+	bMatches := 0
+	for _, kw := range keywords {
+		if strings.Contains(aLower, kw) {
+			aMatches++
+		}
+		if strings.Contains(bLower, kw) {
+			bMatches++
+		}
+	}
+
+	common := 0
+	for _, kw := range keywords {
+		if strings.Contains(aLower, kw) && strings.Contains(bLower, kw) {
+			common++
+		}
+	}
+
+	return common >= 2 || (aMatches > 0 && bMatches > 0 && common > 0)
 }
 
 func (c *WarRoomCoordinator) ListSessions() []*WarRoomSession {
@@ -332,6 +497,8 @@ func (c *WarRoomCoordinator) CloseSession(sessionID string) (*InvestigationResul
 		_ = at
 	}
 	delete(c.channels, sessionID)
+	delete(c.blackboards, sessionID)
+	c.handoff.CloseSession(sessionID)
 	c.mu.Unlock()
 
 	metricWarRoomSessionsActive.Dec()
@@ -362,6 +529,8 @@ func (c *WarRoomCoordinator) cleanupSessionLocked(sessionID string) {
 		_ = at
 	}
 	delete(c.channels, sessionID)
+	delete(c.blackboards, sessionID)
+	c.handoff.CloseSession(sessionID)
 	delete(c.sessions, sessionID)
 
 	metricWarRoomSessionsActive.Dec()
@@ -497,7 +666,10 @@ func (c *WarRoomCoordinator) runAgent(ctx context.Context, sessionID string, age
 						sessionDescription(c, sessionID),
 					)
 
-					result, err := runner.RunAgent(ctx, agentType, taskPrompt, agent.Tools)
+					result, err := runner.RunAgent(ctx, agentType, taskPrompt, agent.Tools, RunAgentOptions{
+					SessionID:            sessionID,
+					BlackboardSnapshotFn: func() string { return c.getBlackboardSnapshot(sessionID) },
+				})
 
 					c.mu.Lock()
 					if s, exists := c.sessions[sessionID]; exists {
@@ -637,6 +809,16 @@ func sessionDescription(c *WarRoomCoordinator, sessionID string) string {
 	return s.Description
 }
 
+func (c *WarRoomCoordinator) getBlackboardSnapshot(sessionID string) string {
+	c.mu.RLock()
+	bb, ok := c.blackboards[sessionID]
+	c.mu.RUnlock()
+	if !ok || bb == nil {
+		return ""
+	}
+	return bb.GetSnapshot()
+}
+
 func joinAgentTypes(types []DomainAgentType) string {
 	names := make([]string, len(types))
 	for i, t := range types {
@@ -705,6 +887,7 @@ func InitWarRoomWithLLM(client interface {
 		executor := NewStagedExecutor(dispatcher, c)
 		c.dispatcher = dispatcher
 		c.executor = executor
+		runner.SetCoordinator(c)
 	}
 
 	RegisterAllTools()
