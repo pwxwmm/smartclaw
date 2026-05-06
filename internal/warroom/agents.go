@@ -80,10 +80,55 @@ var BuiltInAgents = map[DomainAgentType]DomainAgent{
 		Tools:      []string{"bash", "read_file", "grep", "web_fetch"},
 		FocusAreas: []string{"auth_failures", "unauthorized_access", "certificates", "compliance", "anomalies"},
 	},
+	AgentReasoning: {
+		Type:        AgentReasoning,
+		Name:        "Reasoning Investigator",
+		Description: "Performs causal reasoning, hypothesis validation, and cross-domain correlation analysis to identify root causes",
+		InvestigationSteps: []string{
+			"Collect and correlate findings from other domain agents",
+			"Build causal chains linking symptoms to potential root causes",
+			"Form and test hypotheses against available evidence",
+			"Identify contradictions or gaps in current understanding",
+			"Rank root cause hypotheses by likelihood and propose verification steps",
+		},
+		Tools:      []string{"bash", "read_file", "grep", "web_fetch"},
+		FocusAreas: []string{"causal_analysis", "hypothesis_testing", "correlation", "root_cause_ranking", "evidence_synthesis", "contradiction_detection"},
+	},
+	AgentTraining: {
+		Type:        AgentTraining,
+		Name:        "Distributed Training Investigator",
+		Description: "Diagnoses multi-node multi-GPU training failures including NCCL, CUDA, checkpoint, and parallelism issues",
+		InvestigationSteps: []string{
+			"Check GPU health, CUDA version, and driver compatibility across nodes",
+			"Review NCCL and distributed communication logs for timeouts and errors",
+			"Analyze network topology and RDMA/RoCE configuration for training traffic",
+			"Inspect checkpoint integrity, save/load paths, and recovery state",
+			"Verify data/tensor/pipeline parallelism config and rank assignment",
+			"Check for OOM, gradient overflow, loss divergence, and learning rate issues",
+		},
+		Tools:      []string{"bash", "read_file", "grep", "glob"},
+		FocusAreas: []string{"NCCL_timeout", "CUDA_error", "GPU_health", "RDMA_RoCE", "checkpoint_corruption", "OOM", "gradient_overflow", "loss_divergence", "tensor_parallelism", "data_parallelism", "pipeline_parallelism", "rank_mismatch", "distributed_checkpoint"},
+	},
+	AgentInference: {
+		Type:        AgentInference,
+		Name:        "AI Inference Investigator",
+		Description: "Diagnoses AI model serving issues in vLLM, SGLang, and similar inference frameworks including scheduling, KV cache, and serving errors",
+		InvestigationSteps: []string{
+			"Check inference server health, startup logs, and model loading status",
+			"Review KV cache utilization, memory allocation, and eviction patterns",
+			"Analyze request scheduling, queuing delays, and batching behavior",
+			"Inspect GPU memory fragmentation and CUDA context errors",
+			"Verify model config, tokenizer loading, and dtype/quantization settings",
+			"Check for timeout, OOM, token limit, and context length errors",
+			"Review API endpoint health, connection pooling, and load balancer config",
+		},
+		Tools:      []string{"bash", "read_file", "grep", "glob", "web_fetch"},
+		FocusAreas: []string{"KV_cache_pressure", "model_loading_failure", "OOM", "scheduling_timeout", "batch_queue_overflow", "CUDA_context_error", "token_limit_exceeded", "context_length_overflow", "dtype_mismatch", "quantization_error", "tokenizer_failure", "vLLM", "SGLang", "continuous_batching", "prefix_caching", "speculative_decoding"},
+	},
 }
 
 func AllAgentTypes() []DomainAgentType {
-	return []DomainAgentType{AgentNetwork, AgentDatabase, AgentInfra, AgentApp, AgentSecurity}
+	return []DomainAgentType{AgentNetwork, AgentDatabase, AgentInfra, AgentApp, AgentSecurity, AgentReasoning, AgentTraining, AgentInference}
 }
 
 func GetAgent(agentType DomainAgentType) (DomainAgent, bool) {

@@ -26,11 +26,14 @@ const (
 type DomainAgentType string
 
 const (
-	AgentNetwork  DomainAgentType = "network"
-	AgentDatabase DomainAgentType = "database"
-	AgentInfra    DomainAgentType = "infra"
-	AgentApp      DomainAgentType = "app"
-	AgentSecurity DomainAgentType = "security"
+	AgentNetwork   DomainAgentType = "network"
+	AgentDatabase  DomainAgentType = "database"
+	AgentInfra     DomainAgentType = "infra"
+	AgentApp       DomainAgentType = "app"
+	AgentSecurity  DomainAgentType = "security"
+	AgentReasoning DomainAgentType = "reasoning"
+	AgentTraining  DomainAgentType = "training"
+	AgentInference DomainAgentType = "inference"
 )
 
 type MessageType string
