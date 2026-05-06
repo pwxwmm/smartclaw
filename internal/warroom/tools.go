@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/instructkr/smartclaw/internal/tools"
 )
@@ -40,6 +41,7 @@ func RegisterAllTools() {
 	tools.Register(&WarRoomStopTool{})
 	tools.Register(&WarRoomHandoffTool{})
 	tools.Register(&WarRoomEvaluateTool{})
+	tools.Register(&WarRoomBlackboardWriteTool{})
 }
 
 type WarRoomStartTool struct{}
@@ -341,5 +343,76 @@ func (t *WarRoomEvaluateTool) Execute(ctx context.Context, input map[string]any)
 		"agrees":      agrees,
 		"adjustment":  adjustment,
 		"status":      "evaluated",
+	}, nil
+}
+
+type WarRoomBlackboardWriteTool struct{}
+
+func (t *WarRoomBlackboardWriteTool) Name() string { return "warroom_blackboard_write" }
+func (t *WarRoomBlackboardWriteTool) Description() string {
+	return "Write an observation or finding to the shared blackboard so all agents in the War Room can see it."
+}
+func (t *WarRoomBlackboardWriteTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"session_id": map[string]any{
+				"type":        "string",
+				"description": "War room session ID",
+			},
+			"key": map[string]any{
+				"type":        "string",
+				"description": "A short key for this observation (e.g. 'gpu_memory_status', 'error_pattern')",
+			},
+			"value": map[string]any{
+				"type":        "string",
+				"description": "The observation content",
+			},
+			"category": map[string]any{
+				"type":        "string",
+				"description": "Category: observation, metric, log_excerpt, hypothesis",
+			},
+		},
+		"required": []string{"session_id", "key", "value"},
+	}
+}
+
+func (t *WarRoomBlackboardWriteTool) Execute(ctx context.Context, input map[string]any) (any, error) {
+	sessionID, _ := input["session_id"].(string)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	key, _ := input["key"].(string)
+	if key == "" {
+		return nil, fmt.Errorf("key is required")
+	}
+	value, _ := input["value"].(string)
+	if value == "" {
+		return nil, fmt.Errorf("value is required")
+	}
+	category, _ := input["category"].(string)
+	if category == "" {
+		category = "observation"
+	}
+
+	coordinator := getCoordinator()
+	bb, ok := coordinator.GetBlackboard(sessionID)
+	if !ok || bb == nil {
+		return nil, fmt.Errorf("blackboard not found for session %s", sessionID)
+	}
+
+	bb.WriteEntry(BlackboardEntry{
+		Key:       key,
+		Value:     value,
+		Author:    AgentReasoning,
+		Category:  category,
+		Timestamp: time.Now(),
+	})
+
+	return map[string]any{
+		"session_id": sessionID,
+		"key":        key,
+		"category":   category,
+		"status":     "written",
 	}, nil
 }
