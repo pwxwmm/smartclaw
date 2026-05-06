@@ -39,10 +39,12 @@ const (
 type MessageType string
 
 const (
-	MsgTask      MessageType = "task"      // coordinator → agent: here's your task
-	MsgFinding   MessageType = "finding"   // agent → coordinator: I found something
-	MsgAnswer    MessageType = "answer"    // coordinator → agent: here's more info
-	MsgBroadcast MessageType = "broadcast" // coordinator → all agents: shared update
+	MsgTask           MessageType = "task"           // coordinator -> agent: here's your task
+	MsgFinding        MessageType = "finding"        // agent -> coordinator: I found something
+	MsgAnswer         MessageType = "answer"         // coordinator -> agent: here's more info
+	MsgBroadcast      MessageType = "broadcast"      // coordinator -> all agents: shared update
+	MsgHandoff        MessageType = "handoff"        // agent -> agent: please investigate X
+	MsgHandoffResponse MessageType = "handoff_response" // agent -> agent: here's what I found about X
 )
 
 type WarRoomSession struct {
@@ -68,14 +70,22 @@ type AgentAssignment struct {
 }
 
 type Finding struct {
-	ID          string          `json:"id"`
-	AgentType   DomainAgentType `json:"agent_type"`
-	Category    string          `json:"category"` // root_cause, symptom, dependency, metric, log, config, hypothesis
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Confidence  float64         `json:"confidence"` // 0.0-1.0
-	Evidence    []string        `json:"evidence"`
-	CreatedAt   time.Time       `json:"created_at"`
+	ID              string          `json:"id"`
+	AgentType       DomainAgentType `json:"agent_type"`
+	Category        string          `json:"category"` // root_cause, symptom, dependency, metric, log, config, hypothesis
+	Title           string          `json:"title"`
+	Description     string          `json:"description"`
+	Confidence      float64         `json:"confidence"` // 0.0-1.0
+	Evidence        []string        `json:"evidence"`
+	CrossReferences []CrossReference `json:"cross_references,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+type CrossReference struct {
+	FindingID   string          `json:"finding_id"`
+	ReferencedBy DomainAgentType `json:"referenced_by"`
+	Agrees      bool            `json:"agrees"`
+	Notes       string          `json:"notes"`
 }
 
 type TimelineEntry struct {
@@ -108,6 +118,13 @@ type WarRoomRequest struct {
 	IncidentID  string            `json:"incident_id,omitempty"`
 	Title       string            `json:"title"`
 	Description string            `json:"description"`
-	AgentTypes  []DomainAgentType `json:"agent_types"` // which agents to include (default: all 5)
+	AgentTypes  []DomainAgentType `json:"agent_types"`
 	Context     map[string]any    `json:"context"`
+}
+
+// RunAgentOptions provides optional parameters for agent execution,
+// including session context for blackboard injection and handoff support.
+type RunAgentOptions struct {
+	SessionID            string
+	BlackboardSnapshotFn func() string
 }
