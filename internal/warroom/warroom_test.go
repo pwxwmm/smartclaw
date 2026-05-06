@@ -70,8 +70,8 @@ func TestStartWarRoom(t *testing.T) {
 	if session.Status != WarRoomActive {
 		t.Errorf("expected status active, got %q", session.Status)
 	}
-	if len(session.Agents) != 5 {
-		t.Errorf("expected 5 agents by default, got %d", len(session.Agents))
+	if len(session.Agents) != 8 {
+		t.Errorf("expected 8 agents by default, got %d", len(session.Agents))
 	}
 	if len(session.Timeline) == 0 {
 		t.Error("expected timeline entries")
@@ -477,8 +477,8 @@ func TestDomainAgentDefinitions(t *testing.T) {
 
 func TestAllAgentTypes(t *testing.T) {
 	types := AllAgentTypes()
-	if len(types) != 5 {
-		t.Errorf("expected 5 agent types, got %d", len(types))
+	if len(types) != 8 {
+		t.Errorf("expected 8 agent types, got %d", len(types))
 	}
 }
 

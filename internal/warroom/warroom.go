@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/instructkr/smartclaw/internal/api"
 )
 
 type AgentRunner interface {
@@ -21,6 +22,8 @@ type WarRoomCoordinator struct {
 	findings    map[string]chan AgentMessage
 	cancels     map[string]context.CancelFunc
 	runner      AgentRunner
+	executor    *StagedExecutor
+	dispatcher  *Dispatcher
 	maxSessions int
 }
 
@@ -151,11 +154,15 @@ func (c *WarRoomCoordinator) StartWarRoom(ctx context.Context, req WarRoomReques
 
 	metricWarRoomSessionsActive.Inc()
 
-	for _, at := range agentTypes {
-		go c.runAgent(ctx, sessionID, at)
-	}
-
 	go c.processFindings(ctx, sessionID)
+
+	if c.executor != nil {
+		go c.executor.ExecuteStaged(ctx, sessionID, req.Description)
+	} else {
+		for _, at := range agentTypes {
+			go c.runAgent(ctx, sessionID, at)
+		}
+	}
 
 	return session, nil
 }
@@ -674,6 +681,33 @@ func InitWarRoom(agentRunner AgentRunner) *WarRoomCoordinator {
 	if agentRunner != nil {
 		c.SetAgentRunner(agentRunner)
 	}
+	SetWarRoomCoordinator(c)
+	return c
+}
+
+func InitWarRoomWithLLM(client interface {
+	CreateMessageWithSystem(ctx context.Context, messages []api.MessageParam, system any) (*api.MessageResponse, error)
+	GetModel() string
+}) *WarRoomCoordinator {
+	apiClient := (*api.Client)(nil)
+	if client != nil {
+		if ac, ok := client.(*api.Client); ok {
+			apiClient = ac
+		}
+	}
+
+	c := NewWarRoomCoordinator()
+
+	if apiClient != nil {
+		runner := NewLLMAgentRunner(apiClient)
+		c.SetAgentRunner(runner)
+		dispatcher := NewDispatcher(runner)
+		executor := NewStagedExecutor(dispatcher, c)
+		c.dispatcher = dispatcher
+		c.executor = executor
+	}
+
+	RegisterAllTools()
 	SetWarRoomCoordinator(c)
 	return c
 }
