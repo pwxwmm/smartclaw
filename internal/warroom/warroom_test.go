@@ -26,7 +26,7 @@ func newMockAgentRunner() *mockAgentRunner {
 	}
 }
 
-func (m *mockAgentRunner) RunAgent(ctx context.Context, agentType DomainAgentType, task string, tools []string) (string, error) {
+func (m *mockAgentRunner) RunAgent(ctx context.Context, agentType DomainAgentType, task string, tools []string, opts ...RunAgentOptions) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, callRecord{AgentType: agentType, Task: task})
@@ -1006,5 +1006,570 @@ func TestCloseSessionSummary(t *testing.T) {
 	}
 	if !strings.Contains(result.Summary, "90.0%") {
 		t.Error("expected summary to contain confidence percentage")
+	}
+}
+
+func TestBlackboardWriteAndRead(t *testing.T) {
+	bb := NewBlackboard("test-session")
+
+	bb.WriteEntry(BlackboardEntry{
+		Key:      "dns_status",
+		Value:    "DNS resolution failing for api.example.com",
+		Author:   AgentNetwork,
+		Category: "observation",
+	})
+	bb.WriteEntry(BlackboardEntry{
+		Key:      "cpu_usage",
+		Value:    "92% utilization",
+		Author:   AgentInfra,
+		Category: "metric",
+	})
+
+	all := bb.ReadEntries("")
+	if len(all) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(all))
+	}
+
+	obs := bb.ReadEntries("observation")
+	if len(obs) != 1 {
+		t.Errorf("expected 1 observation entry, got %d", len(obs))
+	}
+	if obs[0].Key != "dns_status" {
+		t.Errorf("expected key 'dns_status', got %q", obs[0].Key)
+	}
+}
+
+func TestBlackboardHypotheses(t *testing.T) {
+	bb := NewBlackboard("test-session")
+
+	bb.AddHypothesis(Hypothesis{
+		ID:          "h1",
+		Description: "DNS misconfiguration causing service failures",
+		ProposedBy:  AgentNetwork,
+		Confidence:  0.7,
+		Status:      "proposed",
+	})
+
+	hypotheses := bb.GetHypotheses()
+	if len(hypotheses) != 1 {
+		t.Fatalf("expected 1 hypothesis, got %d", len(hypotheses))
+	}
+	if hypotheses[0].Description != "DNS misconfiguration causing service failures" {
+		t.Errorf("unexpected hypothesis description: %q", hypotheses[0].Description)
+	}
+
+	updated := bb.UpdateHypothesis("h1", func(h *Hypothesis) {
+		h.Status = "confirmed"
+		h.Confidence = 0.9
+	})
+	if !updated {
+		t.Error("expected hypothesis to be updated")
+	}
+
+	hypotheses = bb.GetHypotheses()
+	if hypotheses[0].Status != "confirmed" {
+		t.Errorf("expected status 'confirmed', got %q", hypotheses[0].Status)
+	}
+}
+
+func TestBlackboardSharedFacts(t *testing.T) {
+	bb := NewBlackboard("test-session")
+
+	bb.AddSharedFact(SharedFact{
+		Content:     "Service A is down",
+		Source:      AgentApp,
+		ConfirmedBy: []DomainAgentType{AgentApp},
+		Confidence:  0.8,
+	})
+
+	facts := bb.GetSharedFacts()
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 fact, got %d", len(facts))
+	}
+
+	confirmed := bb.ConfirmFact("Service A is down", AgentInfra)
+	if !confirmed {
+		t.Error("expected fact to be confirmed")
+	}
+
+	facts = bb.GetSharedFacts()
+	if len(facts[0].ConfirmedBy) != 2 {
+		t.Errorf("expected 2 confirmers, got %d", len(facts[0].ConfirmedBy))
+	}
+}
+
+func TestBlackboardSnapshot(t *testing.T) {
+	bb := NewBlackboard("test-session")
+
+	snapshot := bb.GetSnapshot()
+	if !strings.Contains(snapshot, "No shared context yet") {
+		t.Error("expected empty blackboard message")
+	}
+
+	bb.WriteEntry(BlackboardEntry{
+		Key: "test_key", Value: "test_value", Author: AgentNetwork, Category: "observation",
+	})
+	snapshot = bb.GetSnapshot()
+	if !strings.Contains(snapshot, "test_key") || !strings.Contains(snapshot, "test_value") {
+		t.Error("expected snapshot to contain entry data")
+	}
+	if !strings.Contains(snapshot, "Shared Blackboard Context") {
+		t.Error("expected snapshot header")
+	}
+}
+
+func TestBlackboardCreatedOnStartWarRoom(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, err := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "Blackboard Test",
+		Description: "test blackboard creation",
+	})
+	if err != nil {
+		t.Fatalf("StartWarRoom failed: %v", err)
+	}
+
+	bb, ok := c.GetBlackboard(session.ID)
+	if !ok || bb == nil {
+		t.Error("expected blackboard to be created for session")
+	}
+}
+
+func TestBlackboardCleanedUpOnClose(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "Cleanup Test",
+		Description: "test blackboard cleanup",
+		AgentTypes:  []DomainAgentType{AgentNetwork},
+	})
+
+	sessionID := session.ID
+	c.CloseSession(sessionID)
+
+	_, ok := c.GetBlackboard(sessionID)
+	if ok {
+		t.Error("expected blackboard to be cleaned up after close")
+	}
+}
+
+func TestSubmitFindingWritesToBlackboard(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "BB Write Test",
+		Description: "test finding writes to blackboard",
+		AgentTypes:  []DomainAgentType{AgentNetwork},
+	})
+
+	finding := Finding{
+		ID:          "f-bb",
+		AgentType:   AgentNetwork,
+		Category:    "symptom",
+		Title:       "DNS Failure",
+		Description: "DNS resolution failing",
+		Confidence:  0.8,
+		Evidence:    []string{"nslookup failed"},
+		CreatedAt:   time.Now(),
+	}
+
+	c.SubmitFinding(session.ID, AgentNetwork, finding)
+
+	bb, _ := c.GetBlackboard(session.ID)
+	entries := bb.ReadEntries("")
+	if len(entries) == 0 {
+		t.Error("expected blackboard to have entries after finding submission")
+	}
+}
+
+func TestCrossValidationAgreement(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "CrossVal Test",
+		Description: "test cross-validation",
+		AgentTypes:  []DomainAgentType{AgentNetwork, AgentInfra},
+	})
+
+	finding1 := Finding{
+		ID:          "f1",
+		AgentType:   AgentNetwork,
+		Category:    "symptom",
+		Title:       "DNS timeout error",
+		Description: "DNS resolution timeout causing service failures",
+		Confidence:  0.6,
+		Evidence:    []string{"timeout on DNS lookup"},
+		CreatedAt:   time.Now(),
+	}
+	c.SubmitFinding(session.ID, AgentNetwork, finding1)
+
+	finding2 := Finding{
+		ID:          "f2",
+		AgentType:   AgentInfra,
+		Category:    "symptom",
+		Title:       "Service timeout",
+		Description: "Service experiencing timeout and latency issues",
+		Confidence:  0.6,
+		Evidence:    []string{"timeout on requests"},
+		CreatedAt:   time.Now(),
+	}
+	c.SubmitFinding(session.ID, AgentInfra, finding2)
+
+	s := c.GetSession(session.ID)
+	if len(s.Findings) < 2 {
+		t.Fatalf("expected at least 2 findings, got %d", len(s.Findings))
+	}
+
+	infraFinding := s.Findings[1]
+	if len(infraFinding.CrossReferences) == 0 {
+		t.Error("expected cross-references on second finding")
+	}
+
+	if infraFinding.Confidence <= 0.6 {
+		t.Errorf("expected confidence boost from cross-validation, got %.2f", infraFinding.Confidence)
+	}
+}
+
+func TestCrossValidationDisagreement(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "Disagree Test",
+		Description: "test cross-validation disagreement",
+		AgentTypes:  []DomainAgentType{AgentNetwork, AgentApp},
+	})
+
+	finding1 := Finding{
+		ID:          "f1",
+		AgentType:   AgentNetwork,
+		Category:    "root_cause",
+		Title:       "Network partition",
+		Description: "Network partition detected between data centers",
+		Confidence:  0.8,
+		Evidence:    []string{"packet loss detected"},
+		CreatedAt:   time.Now(),
+	}
+	c.SubmitFinding(session.ID, AgentNetwork, finding1)
+
+	finding2 := Finding{
+		ID:          "f2",
+		AgentType:   AgentApp,
+		Category:    "metric",
+		Title:       "App metrics normal",
+		Description: "Application metrics show no anomaly - throughput stable",
+		Confidence:  0.7,
+		Evidence:    []string{"no error in logs"},
+		CreatedAt:   time.Now(),
+	}
+	c.SubmitFinding(session.ID, AgentApp, finding2)
+
+	s := c.GetSession(session.ID)
+	if len(s.Findings) < 2 {
+		t.Fatalf("expected at least 2 findings, got %d", len(s.Findings))
+	}
+}
+
+func TestEvolveConfidence(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "Evolve Test",
+		Description: "test confidence evolution",
+		AgentTypes:  []DomainAgentType{AgentNetwork},
+	})
+
+	finding := Finding{
+		ID:          "f-evolve",
+		AgentType:   AgentNetwork,
+		Category:    "root_cause",
+		Title:       "DNS Failure",
+		Description: "DNS resolution failing",
+		Confidence:  0.5,
+		Evidence:    []string{"nslookup failed"},
+		CreatedAt:   time.Now(),
+	}
+	c.SubmitFinding(session.ID, AgentNetwork, finding)
+
+	c.EvolveConfidence(session.ID, "f-evolve", 0.2, "reasoning agent agrees")
+
+	s := c.GetSession(session.ID)
+	for _, f := range s.Findings {
+		if f.ID == "f-evolve" {
+			if f.Confidence != 0.7 {
+				t.Errorf("expected confidence 0.7, got %.2f", f.Confidence)
+			}
+			break
+		}
+	}
+
+	hasEvolved := false
+	for _, e := range s.Timeline {
+		if e.Event == "confidence_evolved" {
+			hasEvolved = true
+		}
+	}
+	if !hasEvolved {
+		t.Error("expected confidence_evolved timeline entry")
+	}
+}
+
+func TestEvolveConfidenceBounds(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "Bounds Test",
+		Description: "test confidence bounds",
+		AgentTypes:  []DomainAgentType{AgentNetwork},
+	})
+
+	finding := Finding{
+		ID:          "f-bounds",
+		AgentType:   AgentNetwork,
+		Category:    "symptom",
+		Title:       "Test",
+		Description: "test",
+		Confidence:  0.9,
+		Evidence:    []string{"test"},
+		CreatedAt:   time.Now(),
+	}
+	c.SubmitFinding(session.ID, AgentNetwork, finding)
+
+	c.EvolveConfidence(session.ID, "f-bounds", 0.2, "large boost")
+
+	s := c.GetSession(session.ID)
+	for _, f := range s.Findings {
+		if f.ID == "f-bounds" {
+			if f.Confidence > 0.95 {
+				t.Errorf("expected confidence capped at 0.95, got %.2f", f.Confidence)
+			}
+			break
+		}
+	}
+}
+
+func TestHandoffManager(t *testing.T) {
+	hm := NewHandoffManager()
+	sessionID := "test-session"
+
+	hm.CreateSession(sessionID)
+
+	req := HandoffRequest{
+		FromAgent: AgentNetwork,
+		ToAgent:   AgentDatabase,
+		Question:  "Can you check replication status?",
+		Context:   "We see DNS failures",
+		Priority:  "high",
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		gotReq, ok := hm.TryRecvRequest(sessionID)
+		if !ok {
+			return
+		}
+		hm.SendResponse(sessionID, HandoffResponse{
+			RequestID:  gotReq.ID,
+			FromAgent:  gotReq.ToAgent,
+			ToAgent:    gotReq.FromAgent,
+			Answer:     "Replication is 45s behind primary",
+			Confidence: 0.8,
+		})
+	}()
+
+	ctx := context.Background()
+	resp, err := hm.RequestHandoff(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("RequestHandoff failed: %v", err)
+	}
+	if resp.Answer != "Replication is 45s behind primary" {
+		t.Errorf("unexpected answer: %q", resp.Answer)
+	}
+
+	hm.CloseSession(sessionID)
+}
+
+func TestHandoffManagerTimeout(t *testing.T) {
+	hm := NewHandoffManager()
+	sessionID := "timeout-session"
+
+	hm.CreateSession(sessionID)
+	defer hm.CloseSession(sessionID)
+
+	req := HandoffRequest{
+		FromAgent: AgentNetwork,
+		ToAgent:   AgentDatabase,
+		Question:  "Check replication",
+		Priority:  "low",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := hm.RequestHandoff(ctx, sessionID, req)
+	if err == nil {
+		t.Error("expected timeout error")
+	}
+}
+
+func TestHandoffCreatedOnStartWarRoom(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	ctx := context.Background()
+
+	session, _ := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       "Handoff Session Test",
+		Description: "test handoff session setup",
+	})
+
+	req, ok := c.TryRecvHandoff(session.ID)
+	_ = req
+	_ = ok
+}
+
+func TestSelectAgentsPhase3Pool(t *testing.T) {
+	plan := SelectAgents("GPU training failure with NCCL timeout")
+	found := false
+	for _, a := range plan.Phase1Agents {
+		if a == AgentTraining {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected training agent in Phase 1 for GPU training description")
+	}
+}
+
+func TestParseRecommendedAgents(t *testing.T) {
+	text := "Based on the analysis, I recommend:\n" +
+		"```json\n" +
+		"{\"recommend_additional_agents\": [\"training\", \"inference\"], \"reason\": \"GPU-related symptoms suggest deeper investigation needed\"}\n" +
+		"```\n" +
+		"Please activate these agents."
+
+	agents := parseRecommendedAgents(text)
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 recommended agents, got %d", len(agents))
+	}
+	if agents[0] != AgentTraining {
+		t.Errorf("expected training, got %s", agents[0])
+	}
+	if agents[1] != AgentInference {
+		t.Errorf("expected inference, got %s", agents[1])
+	}
+}
+
+func TestParseRecommendedAgentsEmpty(t *testing.T) {
+	agents := parseRecommendedAgents("")
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents for empty text, got %d", len(agents))
+	}
+}
+
+func TestParseRecommendedAgentsInvalidJSON(t *testing.T) {
+	agents := parseRecommendedAgents("No JSON block here")
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents for text without JSON, got %d", len(agents))
+	}
+}
+
+func TestEvidenceOverlap(t *testing.T) {
+	a := []string{"timeout on DNS lookup", "packet loss detected"}
+	b := []string{"timeout on DNS lookup", "high latency"}
+	if !evidenceOverlap(a, b) {
+		t.Error("expected evidence overlap for matching evidence")
+	}
+
+	c := []string{"completely different evidence"}
+	if evidenceOverlap(a, c) {
+		t.Error("expected no evidence overlap for different evidence")
+	}
+}
+
+func TestKeywordOverlap(t *testing.T) {
+	if !keywordOverlap("timeout error causing crash", "error timeout in service") {
+		t.Error("expected keyword overlap for shared error/timeout keywords")
+	}
+
+	if keywordOverlap("hello world", "foo bar baz") {
+		t.Error("expected no keyword overlap for unrelated text")
+	}
+}
+
+func TestWarRoomHandoffTool(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	SetWarRoomCoordinator(c)
+	defer func() { SetWarRoomCoordinator(nil) }()
+
+	tool := &WarRoomHandoffTool{}
+	if tool.Name() != "warroom_handoff" {
+		t.Errorf("expected tool name 'warroom_handoff', got %q", tool.Name())
+	}
+
+	_, err := tool.Execute(context.Background(), map[string]any{})
+	if err == nil {
+		t.Error("expected error for missing session_id")
+	}
+}
+
+func TestWarRoomEvaluateTool(t *testing.T) {
+	c := NewWarRoomCoordinator()
+	SetWarRoomCoordinator(c)
+	defer func() { SetWarRoomCoordinator(nil) }()
+
+	tool := &WarRoomEvaluateTool{}
+	if tool.Name() != "warroom_evaluate" {
+		t.Errorf("expected tool name 'warroom_evaluate', got %q", tool.Name())
+	}
+
+	_, err := tool.Execute(context.Background(), map[string]any{})
+	if err == nil {
+		t.Error("expected error for missing session_id")
+	}
+}
+
+func TestRunAgentOptions(t *testing.T) {
+	opt := RunAgentOptions{
+		SessionID: "test-session",
+		BlackboardSnapshotFn: func() string {
+			return "snapshot data"
+		},
+	}
+	if opt.SessionID != "test-session" {
+		t.Errorf("expected session ID 'test-session', got %q", opt.SessionID)
+	}
+	if opt.BlackboardSnapshotFn() != "snapshot data" {
+		t.Error("expected blackboard snapshot function to return data")
+	}
+}
+
+func TestCrossReferenceStruct(t *testing.T) {
+	finding := Finding{
+		ID:          "f1",
+		AgentType:   AgentNetwork,
+		Category:    "root_cause",
+		Title:       "Test",
+		Description: "test",
+		Confidence:  0.8,
+		CrossReferences: []CrossReference{
+			{
+				FindingID:    "f2",
+				ReferencedBy: AgentInfra,
+				Agrees:       true,
+				Notes:        "Supports the network finding",
+			},
+		},
+		CreatedAt: time.Now(),
+	}
+	if len(finding.CrossReferences) != 1 {
+		t.Errorf("expected 1 cross-reference, got %d", len(finding.CrossReferences))
+	}
+	if !finding.CrossReferences[0].Agrees {
+		t.Error("expected cross-reference to agree")
 	}
 }

@@ -419,7 +419,7 @@ type AgentRunnerAdapter struct {
 	API *api.Client
 }
 
-func (a AgentRunnerAdapter) RunAgent(ctx context.Context, agentType warroom.DomainAgentType, task string, _ []string) (string, error) {
+func (a AgentRunnerAdapter) RunAgent(ctx context.Context, agentType warroom.DomainAgentType, task string, _ []string, _ ...warroom.RunAgentOptions) (string, error) {
 	if a.API == nil {
 		return "", fmt.Errorf("API client not configured")
 	}
