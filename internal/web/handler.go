@@ -480,6 +480,18 @@ func (h *Handler) HandleMessage(client *Client, raw []byte) {
 		h.handleGetRecentProjects(client)
 	case "browse_dirs":
 		h.handleBrowseDirs(client, msg)
+	case "warroom_start":
+		h.handleWarRoomStartWS(client, msg)
+	case "warroom_status":
+		h.handleWarRoomStatusWS(client, msg)
+	case "warroom_stop":
+		h.handleWarRoomStopWS(client, msg)
+	case "warroom_list":
+		h.handleWarRoomListWS(client)
+	case "warroom_assign_task":
+		h.handleWarRoomAssignTaskWS(client, msg)
+	case "warroom_broadcast":
+		h.handleWarRoomBroadcastWS(client, msg)
 	default:
 		h.sendError(client, fmt.Sprintf("Unknown message type: %s", msg.Type))
 	}
@@ -510,6 +522,8 @@ var validWSTypes = map[string]bool{
 	"arena_chat": true, "arena_vote": true,
 	"watchdog_status": true,
 	"change_project": true, "get_recent_projects": true, "browse_dirs": true,
+	"warroom_start": true, "warroom_status": true, "warroom_stop": true,
+	"warroom_list": true, "warroom_assign_task": true, "warroom_broadcast": true,
 }
 
 var typesRequiringData = map[string]bool{
@@ -533,6 +547,8 @@ var typesRequiringData = map[string]bool{
 	"cron_create": true, "cron_delete": true, "cron_toggle": true, "cron_run": true,
 	"arena_chat": true, "arena_vote": true,
 	"change_project": true,
+	"warroom_start": true, "warroom_status": true, "warroom_stop": true,
+	"warroom_assign_task": true, "warroom_broadcast": true,
 }
 
 func (h *Handler) validateWSMessage(msg WSMessage) error {

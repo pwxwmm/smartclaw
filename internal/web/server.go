@@ -255,6 +255,7 @@ func (s *WebServer) Start() error {
 	s.initWorkflowService()
 
 	s.handler.StartSessionCleanup(0)
+	s.handler.initWarRoomIfNeeded()
 
 	mux := http.NewServeMux()
 
