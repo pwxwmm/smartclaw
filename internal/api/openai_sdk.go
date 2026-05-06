@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-go/v3/azure"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/respjson"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 func newOpenAISDKClient(apiKey, baseURL string, providerHeaders map[string]string) openai.Client {
@@ -80,7 +81,6 @@ func sdkCompletionToResponse(comp *openai.ChatCompletion) *MessageResponse {
 		StopReason: choice.FinishReason,
 	}
 
-	// Handle reasoning_content from ExtraFields
 	if raw, ok := choice.Message.JSON.ExtraFields["reasoning_content"]; ok {
 		reasoningContent := extractStringFromRaw(raw)
 		if reasoningContent != "" {
@@ -91,10 +91,26 @@ func sdkCompletionToResponse(comp *openai.ChatCompletion) *MessageResponse {
 		}
 	}
 
-	result.Content = append(result.Content, ContentBlock{
-		Type: "text",
-		Text: content,
-	})
+	if content != "" {
+		result.Content = append(result.Content, ContentBlock{
+			Type: "text",
+			Text: content,
+		})
+	}
+
+	for _, tc := range choice.Message.ToolCalls {
+		fn := tc.AsFunction()
+		var input map[string]any
+		if err := json.Unmarshal([]byte(fn.Function.Arguments), &input); err != nil {
+			input = map[string]any{"raw": fn.Function.Arguments}
+		}
+		result.Content = append(result.Content, ContentBlock{
+			Type:  "tool_use",
+			ID:    fn.ID,
+			Name:  fn.Function.Name,
+			Input: input,
+		})
+	}
 
 	return result
 }
@@ -116,24 +132,83 @@ func buildSDKOpenAIMessages(messages []MessageParam, system any) []openai.ChatCo
 
 	// Convert messages
 	for _, msg := range messages {
-		content := ""
-		switch v := msg.Content.(type) {
-		case string:
-			content = v
-		case []ContentBlock:
-			for _, block := range v {
-				if block.Type == "text" {
-					content = block.Text
-					break
-				}
-			}
-		}
-
 		switch msg.Role {
 		case "user":
-			sdkMsgs = append(sdkMsgs, openai.UserMessage(content))
+			switch v := msg.Content.(type) {
+			case string:
+				sdkMsgs = append(sdkMsgs, openai.UserMessage(v))
+			case []ContentBlock:
+				var textParts []string
+				var toolResults []openai.ChatCompletionMessageParamUnion
+				for _, block := range v {
+					if block.Type == "text" && block.Text != "" {
+						textParts = append(textParts, block.Text)
+					}
+					if block.Type == "tool_result" {
+						contentStr := ""
+						switch cv := block.Content.(type) {
+						case string:
+							contentStr = cv
+						default:
+							if b, err := json.Marshal(cv); err == nil {
+								contentStr = string(b)
+							}
+						}
+						toolResults = append(toolResults, openai.ToolMessage(contentStr, block.ToolUseID))
+					}
+				}
+				if len(toolResults) > 0 {
+					sdkMsgs = append(sdkMsgs, toolResults...)
+				}
+				if len(textParts) > 0 && len(toolResults) == 0 {
+					sdkMsgs = append(sdkMsgs, openai.UserMessage(strings.Join(textParts, "\n")))
+				}
+			}
 		case "assistant":
-			sdkMsgs = append(sdkMsgs, openai.AssistantMessage(content))
+			switch v := msg.Content.(type) {
+			case string:
+				sdkMsgs = append(sdkMsgs, openai.AssistantMessage(v))
+			case []ContentBlock:
+				var textParts []string
+				var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
+				for _, block := range v {
+					if block.Type == "text" && block.Text != "" {
+						textParts = append(textParts, block.Text)
+					}
+					if block.Type == "tool_use" {
+						argsJSON := "{}"
+						if block.Input != nil {
+							if b, err := json.Marshal(block.Input); err == nil {
+								argsJSON = string(b)
+							}
+						}
+						toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+							OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+								ID: block.ID,
+								Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+									Name:      block.Name,
+									Arguments: argsJSON,
+								},
+							},
+						})
+					}
+				}
+				if len(toolCalls) > 0 {
+					assistantMsg := openai.ChatCompletionAssistantMessageParam{
+						ToolCalls: toolCalls,
+					}
+					if len(textParts) > 0 {
+						assistantMsg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+							OfString: openai.String(strings.Join(textParts, "\n")),
+						}
+					}
+					sdkMsgs = append(sdkMsgs, openai.ChatCompletionMessageParamUnion{
+						OfAssistant: &assistantMsg,
+					})
+				} else if len(textParts) > 0 {
+					sdkMsgs = append(sdkMsgs, openai.AssistantMessage(strings.Join(textParts, "\n")))
+				}
+			}
 		}
 	}
 
@@ -146,6 +221,23 @@ func buildSDKOpenAIParams(messages []MessageParam, system any, model string, max
 		MaxTokens: openai.Int(int64(maxTokens)),
 		Messages:  buildSDKOpenAIMessages(messages, system),
 	}
+}
+
+func buildSDKOpenAIParamsWithTools(messages []MessageParam, system any, model string, maxTokens int, tools []ToolDefinition) openai.ChatCompletionNewParams {
+	params := buildSDKOpenAIParams(messages, system, model, maxTokens)
+	if len(tools) > 0 {
+		sdkTools := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
+		for _, t := range tools {
+			paramsMap := shared.FunctionParameters(t.InputSchema)
+			sdkTools = append(sdkTools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+				Name:        t.Name,
+				Description: openai.String(t.Description),
+				Parameters:  paramsMap,
+			}))
+		}
+		params.Tools = sdkTools
+	}
+	return params
 }
 
 func streamWithOpenAISDK(ctx context.Context, sdkClient openai.Client, params openai.ChatCompletionNewParams, handler func(event string, data []byte) error) error {
