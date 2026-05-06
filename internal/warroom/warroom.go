@@ -27,6 +27,7 @@ type WarRoomCoordinator struct {
 	maxSessions int
 	blackboards map[string]*Blackboard
 	handoff     *HandoffManager
+	store       WarRoomStore
 }
 
 func NewWarRoomCoordinator() *WarRoomCoordinator {
@@ -64,6 +65,64 @@ func (c *WarRoomCoordinator) SetAgentRunner(runner AgentRunner) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.runner = runner
+}
+
+func (c *WarRoomCoordinator) SetStore(store WarRoomStore) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store = store
+}
+
+func (c *WarRoomCoordinator) RestoreSessions() error {
+	c.mu.Lock()
+	store := c.store
+	c.mu.Unlock()
+
+	if store == nil {
+		return nil
+	}
+
+	sessions, err := store.ListSessions()
+	if err != nil {
+		return fmt.Errorf("warroom: restore: list sessions: %w", err)
+	}
+
+	for _, s := range sessions {
+		if s.Status != WarRoomActive {
+			continue
+		}
+
+		full, err := store.LoadSession(s.ID)
+		if err != nil {
+			continue
+		}
+
+		bb, err := store.LoadBlackboard(s.ID)
+		if err != nil {
+			bb = NewBlackboard(s.ID)
+		}
+
+		c.mu.Lock()
+		c.sessions[full.ID] = full
+		c.blackboards[full.ID] = bb
+		c.handoff.CreateSession(full.ID)
+		c.mu.Unlock()
+	}
+
+	return nil
+}
+
+func (c *WarRoomCoordinator) FlushBlackboard(sessionID string) error {
+	c.mu.RLock()
+	store := c.store
+	bb, bbOK := c.blackboards[sessionID]
+	c.mu.RUnlock()
+
+	if store == nil || !bbOK || bb == nil {
+		return nil
+	}
+
+	return store.SaveBlackboard(sessionID, bb)
 }
 
 func (c *WarRoomCoordinator) getRunner() AgentRunner {
@@ -157,6 +216,10 @@ func (c *WarRoomCoordinator) StartWarRoom(ctx context.Context, req WarRoomReques
 	c.blackboards[sessionID] = NewBlackboard(sessionID)
 	c.handoff.CreateSession(sessionID)
 	c.mu.Unlock()
+
+	if c.store != nil {
+		c.store.SaveSession(session)
+	}
 
 	metricWarRoomSessionsActive.Inc()
 
@@ -269,6 +332,10 @@ func (c *WarRoomCoordinator) SubmitFinding(sessionID string, agentType DomainAge
 		Event:     "finding_submitted",
 		Details:   finding.Title,
 	})
+
+	if c.store != nil {
+		c.store.SaveSession(s)
+	}
 	c.mu.Unlock()
 
 	if bb, ok := c.GetBlackboard(sessionID); ok {
@@ -486,6 +553,13 @@ func (c *WarRoomCoordinator) CloseSession(sessionID string) (*InvestigationResul
 		Timestamp: now,
 		Event:     "war_room_closed",
 	})
+
+	if c.store != nil {
+		c.store.SaveSession(session)
+		if bb, ok := c.blackboards[sessionID]; ok {
+			c.store.SaveBlackboard(sessionID, bb)
+		}
+	}
 
 	if findingsCh, ok := c.findings[sessionID]; ok {
 		close(findingsCh)
@@ -856,6 +930,61 @@ func generateRecommendations(findings []Finding) []string {
 		recs = append(recs, "Continue monitoring and gather more evidence if the issue persists")
 	}
 	return recs
+}
+
+// StartWarRoomFromAlert creates a War Room session from an alert event.
+// It implements the alertengine.WarRoomTriggerCoordinator interface.
+func (c *WarRoomCoordinator) StartWarRoomFromAlert(ctx context.Context, source string, title string, description string, severity string, service string, labels map[string]string, annotations map[string]string) (*alertengineWarRoomTriggerResult, error) {
+	descriptionWithMeta := fmt.Sprintf("%s\n\nAlert Source: %s | Severity: %s | Service: %s",
+		description, source, severity, service)
+
+	contextData := map[string]any{
+		"alert_source":    source,
+		"alert_severity":  severity,
+		"alert_service":   service,
+		"auto_triggered":  true,
+	}
+	for k, v := range labels {
+		contextData["label_"+k] = v
+	}
+	for k, v := range annotations {
+		contextData["annotation_"+k] = v
+	}
+
+	session, err := c.StartWarRoom(ctx, WarRoomRequest{
+		Title:       title,
+		Description: descriptionWithMeta,
+		Context:     contextData,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &alertengineWarRoomTriggerResult{
+		SessionID: session.ID,
+		Title:     session.Title,
+		Triggered: true,
+	}, nil
+}
+
+// ActiveSessionCount returns the number of currently active War Room sessions.
+func (c *WarRoomCoordinator) ActiveSessionCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	count := 0
+	for _, s := range c.sessions {
+		if s.Status == WarRoomActive {
+			count++
+		}
+	}
+	return count
+}
+
+type alertengineWarRoomTriggerResult struct {
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`
+	Triggered bool   `json:"triggered"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func InitWarRoom(agentRunner AgentRunner) *WarRoomCoordinator {

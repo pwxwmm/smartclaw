@@ -230,4 +230,84 @@ CREATE TABLE IF NOT EXISTS team_memories (
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_memories_team ON team_memories(team_id);
+
+CREATE TABLE IF NOT EXISTS warroom_sessions (
+    id TEXT PRIMARY KEY,
+    incident_id TEXT DEFAULT '',
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    context TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS warroom_agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES warroom_sessions(id) ON DELETE CASCADE,
+    agent_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'spawning',
+    assigned_at TEXT NOT NULL,
+    last_active TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warroom_findings (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES warroom_sessions(id) ON DELETE CASCADE,
+    agent_type TEXT NOT NULL,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    evidence TEXT DEFAULT '[]',
+    cross_references TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warroom_timeline (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES warroom_sessions(id) ON DELETE CASCADE,
+    agent_type TEXT DEFAULT '',
+    event TEXT NOT NULL,
+    details TEXT DEFAULT '',
+    timestamp TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warroom_blackboard_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES warroom_sessions(id) ON DELETE CASCADE,
+    agent_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    entry_type TEXT DEFAULT 'observation',
+    timestamp TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warroom_hypotheses (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES warroom_sessions(id) ON DELETE CASCADE,
+    agent_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    confidence REAL NOT NULL DEFAULT 0.5,
+    evidence TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warroom_shared_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES warroom_sessions(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+    confirmation_count INTEGER DEFAULT 1,
+    confirming_agents TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_warroom_agents_session ON warroom_agents(session_id);
+CREATE INDEX IF NOT EXISTS idx_warroom_findings_session ON warroom_findings(session_id);
+CREATE INDEX IF NOT EXISTS idx_warroom_timeline_session ON warroom_timeline(session_id);
+CREATE INDEX IF NOT EXISTS idx_warroom_blackboard_session ON warroom_blackboard_entries(session_id);
+CREATE INDEX IF NOT EXISTS idx_warroom_hypotheses_session ON warroom_hypotheses(session_id);
+CREATE INDEX IF NOT EXISTS idx_warroom_facts_session ON warroom_shared_facts(session_id);
 `
